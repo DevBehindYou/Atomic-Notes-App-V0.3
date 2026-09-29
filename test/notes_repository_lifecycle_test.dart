@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:atomic_notes/api/atomic_notes_api.dart';
@@ -112,7 +113,6 @@ void main() {
     expect(repository.visible().single.id, plain.id);
   });
 
-
   test('R1 lock drains an asynchronous encrypted write before dropping the key', () async {
     vault.unlocked = true;
     vault.sealEntered = Completer<void>();
@@ -130,7 +130,6 @@ void main() {
     expect((box.get(note.id) as Map)['enc_v'], 1);
     expect(repository.count, 0);
   });
-
 
   test('R2 a busy sync is not proof that a later edit is backed up', () async {
     final entered = Completer<void>(), release = Completer<void>();
@@ -151,7 +150,6 @@ void main() {
     expect((box.get(later.id) as Map)['dirty'], isTrue);
   });
 
-
   test('R2 hidden sealed dirty rows also block destructive logout clearing', () async {
     vault.unlocked = true;
     final note = Note.create()..title = 'unsent protected note';
@@ -161,7 +159,6 @@ void main() {
     await expectLater(repository.clearLocal(), throwsStateError);
     expect(box.containsKey(note.id), isTrue);
   });
-
 
   test('R3 same-user re-login reloads clean and dirty disk rows and cursor', () async {
     final clean = Note.create()..title = 'already synced';
@@ -180,7 +177,6 @@ void main() {
     expect(box.get('__sync_cursor__'), cursor);
   });
 
-
   test('R3 another account never receives the prior owner cache', () async {
     await repository.save(Note.create()..title = 'account a');
     await repository.stop();
@@ -190,7 +186,6 @@ void main() {
     expect(repository.visible(), isEmpty);
     expect(box.get('__cache_owner__'), 'user-b');
   });
-
 
   test('R3 session expiry during decryption cannot repopulate cleared memory', () async {
     vault.unlocked = true;
@@ -208,7 +203,6 @@ void main() {
     expect(repository.count, 0);
   });
 
-
   test('R2 clean acknowledged notes can still be cleared for logout', () async {
     await repository.save(Note.create()..title = 'backed up');
     expect(await repository.syncNow(), isTrue);
@@ -216,7 +210,6 @@ void main() {
     await repository.clearLocal();
     expect(box.isEmpty, isTrue);
   });
-
 
   test('R4 deletion during the first upload stays dirty after acknowledgement', () async {
     final entered = Completer<void>(), release = Completer<void>();
@@ -237,7 +230,6 @@ void main() {
     expect(api.pushes.last.single['base_version'], 1);
   });
 
-
   test('R4 a genuinely never-uploaded deletion needs no cloud tombstone', () async {
     final note = Note.create()..title = 'local only';
     await repository.save(note);
@@ -246,7 +238,6 @@ void main() {
     expect(await repository.deleteForever([note.id]), 1);
     expect(api.pushes, isEmpty);
   });
-
 
   test('R4 deletion during snapshot sealing also requires a later tombstone', () async {
     final note = Note.create()..title = 'sealing race';
@@ -265,4 +256,31 @@ void main() {
     expect(repository.byId(note.id)!.serverVersion, 1);
   });
 
+  test('R7 UTF-8 payload budget includes the complete request envelope', () async {
+    for (var i = 0; i < 24; i++) {
+      await repository.save(Note.create()..body = List.filled(60000, '界').join());
+    }
+    expect(await repository.syncNow(instant: true), isTrue);
+    expect(api.pushes.length, greaterThan(1));
+    for (var i = 0; i < api.pushes.length; i++) {
+      final bytes = utf8.encode(jsonEncode({'rows': api.pushes[i],
+        'requestId': api.requestIds[i], 'mode': 'instant'})).length;
+      expect(bytes, lessThanOrEqualTo(2500000));
+      expect(api.pushes[i].length, lessThanOrEqualTo(50));
+    }
+  });
+
+  test('R7 an uncharged 413 forgets the poisoned request and resnapshots edits', () async {
+    final note = Note.create()..title = 'initial';
+    await repository.save(note);
+    api.beforePush = () async { throw ApiException('http_413', 413); };
+    expect(await repository.syncNow(), isFalse);
+    expect(box.get('__pending_sync_operation'), isNull);
+    note.title = 'corrected';
+    await repository.save(note);
+    api.beforePush = null;
+    expect(await repository.syncNow(), isTrue);
+    expect(api.requestIds.last, isNot(api.requestIds.first));
+    expect(api.pushes.last.single['title'], 'corrected');
+  });
 }
