@@ -86,7 +86,7 @@ void main() {
     await repository.start();
   });
   tearDown(() async {
-    await repository.stop();
+    await repository.stop(waitForSync: true);
     repository.dispose();
     await Hive.close();
     await directory.delete(recursive: true);
@@ -129,6 +129,92 @@ void main() {
     await locking;
     expect((box.get(note.id) as Map)['enc_v'], 1);
     expect(repository.count, 0);
+  });
+
+
+  test('R2 a busy sync is not proof that a later edit is backed up', () async {
+    final entered = Completer<void>(), release = Completer<void>();
+    api.beforePush = () { entered.complete(); return release.future; };
+    await repository.save(Note.create()..title = 'first');
+    final syncing = repository.syncNow();
+    await entered.future;
+    final later = Note.create()..title = 'later';
+    await repository.save(later);
+    var finished = false;
+    final logoutCheck = repository.syncNow().then((value) { finished = true; return value; });
+    await Future<void>.delayed(Duration.zero);
+    expect(finished, isFalse);
+    release.complete();
+    await syncing;
+    expect(await logoutCheck, isFalse);
+    await expectLater(repository.clearLocal(), throwsStateError);
+    expect((box.get(later.id) as Map)['dirty'], isTrue);
+  });
+
+
+  test('R2 hidden sealed dirty rows also block destructive logout clearing', () async {
+    vault.unlocked = true;
+    final note = Note.create()..title = 'unsent protected note';
+    await repository.save(note);
+    await repository.lockVault();
+    expect(repository.pendingCount, 0);
+    await expectLater(repository.clearLocal(), throwsStateError);
+    expect(box.containsKey(note.id), isTrue);
+  });
+
+
+  test('R3 same-user re-login reloads clean and dirty disk rows and cursor', () async {
+    final clean = Note.create()..title = 'already synced';
+    await repository.save(clean);
+    expect(await repository.syncNow(), isTrue);
+    final dirty = Note.create()..title = 'offline change';
+    await repository.save(dirty);
+    final cursor = box.get('__sync_cursor__');
+    await repository.stop();
+    repository.clearMemory();
+    expect(repository.count, 0);
+    await repository.start();
+    expect(repository.count, 2);
+    expect(repository.byId(dirty.id)!.dirty, isTrue);
+    expect(repository.byId(clean.id)!.dirty, isFalse);
+    expect(box.get('__sync_cursor__'), cursor);
+  });
+
+
+  test('R3 another account never receives the prior owner cache', () async {
+    await repository.save(Note.create()..title = 'account a');
+    await repository.stop();
+    repository.clearMemory();
+    api.user = 'user-b';
+    await repository.start();
+    expect(repository.visible(), isEmpty);
+    expect(box.get('__cache_owner__'), 'user-b');
+  });
+
+
+  test('R3 session expiry during decryption cannot repopulate cleared memory', () async {
+    vault.unlocked = true;
+    await repository.save(Note.create()..title = 'old account');
+    repository.clearMemory();
+    vault.openEntered = Completer<void>();
+    vault.openGate = Completer<void>();
+    final loading = repository.start();
+    await vault.openEntered!.future;
+    api.user = null;
+    await repository.stop();
+    repository.clearMemory();
+    vault.openGate!.complete();
+    await loading;
+    expect(repository.count, 0);
+  });
+
+
+  test('R2 clean acknowledged notes can still be cleared for logout', () async {
+    await repository.save(Note.create()..title = 'backed up');
+    expect(await repository.syncNow(), isTrue);
+    await repository.stop(waitForSync: true);
+    await repository.clearLocal();
+    expect(box.isEmpty, isTrue);
   });
 
 
