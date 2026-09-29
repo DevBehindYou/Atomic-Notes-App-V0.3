@@ -218,6 +218,26 @@ void main() {
   });
 
 
+  test('R4 deletion during the first upload stays dirty after acknowledgement', () async {
+    final entered = Completer<void>(), release = Completer<void>();
+    api.beforePush = () { entered.complete(); return release.future; };
+    final note = Note.create()..title = 'first upload';
+    await repository.save(note);
+    final syncing = repository.syncNow();
+    await entered.future;
+    await repository.deleteNotes([note.id]);
+    release.complete();
+    expect(await syncing, isFalse);
+    expect(repository.byId(note.id)!.serverVersion, 1);
+    expect(repository.byId(note.id)!.dirty, isTrue);
+    expect(repository.byId(note.id)!.deleted, isTrue);
+    api.beforePush = null;
+    expect(await repository.syncNow(instant: true), isTrue);
+    expect(api.pushes.last.single['deleted'], isTrue);
+    expect(api.pushes.last.single['base_version'], 1);
+  });
+
+
   test('R4 a genuinely never-uploaded deletion needs no cloud tombstone', () async {
     final note = Note.create()..title = 'local only';
     await repository.save(note);
@@ -225,6 +245,24 @@ void main() {
     expect(repository.pendingCount, 0);
     expect(await repository.deleteForever([note.id]), 1);
     expect(api.pushes, isEmpty);
+  });
+
+
+  test('R4 deletion during snapshot sealing also requires a later tombstone', () async {
+    final note = Note.create()..title = 'sealing race';
+    await repository.save(note);
+    vault.unlocked = true;
+    vault.sealEntered = Completer<void>();
+    vault.sealGate = Completer<void>();
+    final syncing = repository.syncNow();
+    await vault.sealEntered!.future;
+    final deleting = repository.deleteNotes([note.id]);
+    vault.sealGate!.complete();
+    await deleting;
+    await syncing;
+    expect(repository.byId(note.id)!.deleted, isTrue);
+    expect(repository.byId(note.id)!.dirty, isTrue);
+    expect(repository.byId(note.id)!.serverVersion, 1);
   });
 
 }
