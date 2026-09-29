@@ -191,8 +191,8 @@ class ApiClient {
     return (data['rows'] as List).map((row) => Map<String, dynamic>.from(row as Map)).toList();
   }
   Future<void> markNotificationRead(String id) async { await _request('POST', '/notifications/${Uri.encodeComponent(id)}/read'); }
-  Future<void> markAllNotificationsRead() async {
-    await _request('POST', '/notifications/read-all');
+  Future<void> markAllNotificationsRead({String? appVersion}) async {
+    await _request('POST', '/notifications/read-all', query: appVersion == null ? null : {'app_version': appVersion});
   }
   Future<void> dismissNotification(String id) async { await _request('POST', '/notifications/${Uri.encodeComponent(id)}/dismiss'); }
   Future<String> getUsername() async => (await _request('GET', '/atomicuser'))['username'] as String;

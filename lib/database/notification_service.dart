@@ -26,7 +26,7 @@ class _ServerNotificationsApi implements NotificationsApi {
   @override
   Future<void> markRead(String id) => _api.markNotificationRead(id);
   @override
-  Future<void> markAllRead() => _api.markAllNotificationsRead();
+  Future<void> markAllRead() => _api.markAllNotificationsRead(appVersion: AppInfoText.version);
   @override
   Future<void> dismiss(String id) => _api.dismissNotification(id);
 }

@@ -112,4 +112,15 @@ void main() {
       .having((e) => e.statusCode, 'status', 413)));
   });
 
+  test('read-all transmits the same App version used by feed reads', () async {
+    final paths = <Uri>[];
+    final api = await client((request) async {
+      paths.add(request.url);
+      return http.Response('{"rows":[],"ok":true}', 200);
+    });
+    await api.notificationsFeed(appVersion: '2.03.5');
+    await api.markAllNotificationsRead(appVersion: '2.03.5');
+    expect(paths.map((u) => u.queryParameters['app_version']), ['2.03.5', '2.03.5']);
+    expect(paths.last.path, '/api/notifications/read-all');
+  });
 }
