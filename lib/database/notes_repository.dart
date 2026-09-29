@@ -679,11 +679,15 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
       final sealed = await Future.wait(candidates.map((n) => _sealRemote(n, uid)));
       if (_stopped || _userId != uid) return false;
       // Keep one request under the Server's size limit; the rest goes in the next batch.
-      var bytes = 0;
+      var bytes = utf8.encode(jsonEncode({
+        'rows': <dynamic>[], 'requestId': '00000000-0000-0000-0000-000000000000',
+        'mode': instant ? 'instant' : 'standard',
+      })).length;
       var take = 0;
       for (final row in sealed) {
-        final size = jsonEncode(row).length;
+        final size = utf8.encode(jsonEncode(row)).length + (take == 0 ? 0 : 1);
         if (take > 0 && bytes + size > _maxPushBytes) break;
+        if (take == 0 && bytes + size > _maxPushBytes) throw ApiException('note_payload_too_large', 413);
         bytes += size;
         take++;
       }
@@ -711,7 +715,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
         return true;
       }
       // Validation happens before the operation is charged/recorded. Retry corrected data.
-      if (e.statusCode == 400 || ['note_limit_reached', 'insufficient_energy', 'note_id_conflict'].contains(e.code)) {
+      if (e.statusCode == 400 || e.statusCode == 413 || ['note_limit_reached', 'insufficient_energy', 'note_id_conflict'].contains(e.code)) {
         if (_userId == uid) await _box.delete(_pendingPushKey);
       }
       rethrow;
