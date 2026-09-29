@@ -1,0 +1,29 @@
+<svg width="200" height="200" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="ringGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6b6bff" />
+      <stop offset="100%" stop-color="#2e2eff" />
+    </linearGradient>
+    <radialGradient id="nucleus" cx="30%" cy="30%" r="70%">
+      <stop offset="0%" stop-color="#4a4a4a" />
+      <stop offset="100%" stop-color="#1a1a1a" />
+    </radialGradient>
+    <filter id="atomShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="4" dy="6" stdDeviation="4" flood-color="#000" flood-opacity="0.2"/>
+    </filter>
+  </defs>
+  <rect width="200" height="200" fill="#f4f4f4"/>
+  
+  <!-- Base Blue Platform Ring -->
+  <circle cx="100" cy="100" r="75" fill="none" stroke="url(#ringGrad)" stroke-width="12" filter="url(#atomShadow)" />
+  
+  <!-- Atom Rings (Intersecting) -->
+  <g stroke="#1a1a1a" stroke-width="3" fill="none" filter="url(#atomShadow)">
+    <ellipse cx="100" cy="100" rx="55" ry="20" transform="rotate(0 100 100)" />
+    <ellipse cx="100" cy="100" rx="55" ry="20" transform="rotate(60 100 100)" />
+    <ellipse cx="100" cy="100" rx="55" ry="20" transform="rotate(120 100 100)" />
+  </g>
+  
+  <!-- Center Nucleus -->
+  <circle cx="100" cy="100" r="20" fill="url(#nucleus)" filter="url(#atomShadow)" />
+</svg>

@@ -1,0 +1,14 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+  body { width: 340px; height: 720px; overflow: hidden; }
+  .phone { position: absolute; left: 8px; top: 8px; width: 316px; }
+</style></head>
+<body>
+<div class="phone"><div class="screen"><img id="s"></div></div>
+<script>
+  const q = new URLSearchParams(location.search);
+  document.getElementById('s').src = "../../Mockups/atomic-notes-mockup-image-" + q.get('n') + ".png";
+  if (q.get('ink')) document.querySelector('.phone').classList.add('inkshadow');
+</script>
+</body></html>

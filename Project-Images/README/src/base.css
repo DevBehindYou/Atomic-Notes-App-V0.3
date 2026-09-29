@@ -1,0 +1,67 @@
+@font-face { font-family: "Bebas"; src: url("../../../assets/fonts/BebasNeue-Regular.ttf"); }
+@font-face { font-family: "Hanken"; font-weight: 400; src: url("../../../assets/fonts/HankenGrotesk-Regular.ttf"); }
+@font-face { font-family: "Hanken"; font-weight: 500; src: url("../../../assets/fonts/HankenGrotesk-Medium.ttf"); }
+@font-face { font-family: "Hanken"; font-weight: 700; src: url("../../../assets/fonts/HankenGrotesk-Bold.ttf"); }
+@font-face { font-family: "Mono"; font-weight: 400; src: url("../../../assets/fonts/JetBrainsMono-Regular.ttf"); }
+@font-face { font-family: "Mono"; font-weight: 500; src: url("../../../assets/fonts/JetBrainsMono-Medium.ttf"); }
+
+:root {
+  --ink: #15171B;
+  --paper: #F4F5F1;
+  --signal: #3A2FF0;
+  --slate: #4A4D55;
+  --line: #C6C6CB;
+  --surface: #EDEEE8;
+  --onink: #F0F1EB;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { background: transparent; }
+body { font-family: "Hanken", sans-serif; color: var(--ink); -webkit-font-smoothing: antialiased; }
+.bebas { font-family: "Bebas", sans-serif; letter-spacing: .5px; }
+.mono { font-family: "Mono", monospace; }
+.sig { color: var(--signal); }
+.dots {
+  background-color: var(--paper);
+  background-image: radial-gradient(rgba(21,23,27,.13) 1.2px, transparent 1.3px);
+  background-size: 22px 22px;
+}
+
+/* A phone: ink body, thin bezel, solid print-offset shadow (the design system's only shadow, scaled up). */
+.phone {
+  position: relative;
+  background: var(--ink);
+  border-radius: 38px;
+  padding: 9px;
+  box-shadow: 10px 10px 0 var(--signal);
+}
+.phone.inkshadow { box-shadow: 10px 10px 0 var(--ink); background: var(--ink); }
+.phone .screen {
+  display: block;
+  width: 100%;
+  border-radius: 30px;
+  overflow: hidden;
+  background: var(--paper);
+}
+.phone .screen img { display: block; width: 100%; }
+.phone::before {
+  content: "";
+  position: absolute;
+  top: 17px; left: 50%;
+  width: 10px; height: 10px; margin-left: -5px;
+  border-radius: 50%;
+  background: #000;
+  box-shadow: 0 0 0 2px #25272c;
+  z-index: 2;
+}
+.chip {
+  display: inline-block;
+  font-family: "Mono", monospace;
+  font-size: 12.5px;
+  letter-spacing: 1.4px;
+  padding: 7px 11px;
+  border: 1.5px solid var(--ink);
+  border-radius: 999px;
+  background: var(--paper);
+  white-space: nowrap;
+}
+.chip.on { background: var(--ink); color: var(--paper); }

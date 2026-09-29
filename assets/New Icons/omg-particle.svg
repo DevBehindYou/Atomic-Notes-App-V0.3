@@ -1,0 +1,31 @@
+<svg width="200" height="200" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="omgCore" cx="30%" cy="30%" r="70%">
+      <stop offset="0%" stop-color="#ffffff" />
+      <stop offset="40%" stop-color="#6b6bff" />
+      <stop offset="100%" stop-color="#2e2eff" />
+    </radialGradient>
+    <linearGradient id="trailGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6b6bff" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#6b6bff" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="shadowO" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="5" dy="8" stdDeviation="5" flood-color="#000" flood-opacity="0.4"/>
+    </filter>
+    <filter id="glowO">
+      <feGaussianBlur stdDeviation="4" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <!-- High Speed Energy Trail -->
+  <path d="M 100 100 L 20 180 L 50 180 L 100 100 Z" fill="url(#trailGrad)" />
+  <path d="M 100 100 L 10 190 L 40 190 L 100 100 Z" fill="url(#trailGrad)" opacity="0.5"/>
+  
+  <!-- The Particle -->
+  <circle cx="100" cy="100" r="22" fill="url(#omgCore)" filter="url(#shadowO)" />
+  <circle cx="100" cy="100" r="22" fill="none" stroke="#ffffff" stroke-width="2" filter="url(#glowO)" opacity="0.8"/>
+</svg>

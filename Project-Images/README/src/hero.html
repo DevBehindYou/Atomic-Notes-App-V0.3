@@ -1,0 +1,46 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+  body { width: 1280px; height: 640px; overflow: hidden; }
+  .stage { position: relative; width: 1280px; height: 640px; border: 2px solid var(--ink); border-radius: 18px; overflow: hidden; }
+  .left { position: absolute; left: 64px; top: 58px; width: 590px; }
+  .brandrow { display: flex; align-items: center; gap: 16px; }
+  .brandrow img { width: 64px; height: 64px; border-radius: 16px; box-shadow: 4px 4px 0 var(--ink); }
+  .eyebrow { font-family: "Mono"; font-size: 13px; letter-spacing: 2.4px; color: var(--slate); }
+  h1 { font-family: "Bebas"; font-weight: 400; font-size: 132px; line-height: .86; margin-top: 26px; letter-spacing: 1px;
+       text-shadow: 5px 5px 0 var(--signal); }
+  h2 { font-family: "Bebas"; font-weight: 400; font-size: 44px; line-height: 1; margin-top: 22px; letter-spacing: .6px; }
+  p.lead { font-size: 19px; line-height: 1.5; color: #2b2e34; margin-top: 16px; max-width: 520px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 26px; max-width: 560px; }
+  .rule { position: absolute; left: 64px; right: 64px; bottom: 0; }
+  .phones { position: absolute; left: 700px; top: 0; width: 580px; height: 640px; }
+  .p1 { position: absolute; width: 196px; left: 10px; top: 150px; transform: rotate(-4deg); }
+  .p2 { position: absolute; width: 224px; left: 182px; top: 62px; z-index: 3; }
+  .p3 { position: absolute; width: 196px; left: 372px; top: 150px; transform: rotate(4deg); }
+  .stamp { position: absolute; right: 26px; top: 22px; font-family: "Mono"; font-size: 12px; letter-spacing: 2px; background: var(--ink); color: var(--paper); padding: 7px 11px; border-radius: 4px; z-index: 5; }
+</style></head>
+<body>
+<div class="stage dots">
+  <div class="left">
+    <div class="brandrow">
+      <img src="../../../assets/icon.png" alt="">
+      <div>
+        <div class="eyebrow">LOCAL-FIRST NOTES FOR ANDROID</div>
+        <div class="eyebrow" style="color:var(--signal);margin-top:4px">GOOGLE DRIVE SYNC · E2E VAULT</div>
+      </div>
+    </div>
+    <h1>ATOMIC NOTES</h1>
+    <h2>YOUR NOTES, YOUR DRIVE, <span class="sig">ALWAYS YOURS.</span></h2>
+    <p class="lead">Notes live on your phone first. Sync goes to a folder in your own Google Drive. Turn on the vault and they are sealed on the device before they leave it.</p>
+    <div class="chips">
+      <span class="chip on">NO AI</span><span class="chip">NO ADS</span><span class="chip">NO TRACKERS</span><span class="chip">AES-256-GCM</span><span class="chip">SOURCE AVAILABLE</span>
+    </div>
+  </div>
+  <div class="phones">
+    <div class="phone inkshadow p1"><div class="screen"><img src="../../Mockups/atomic-notes-mockup-image-12.png"></div></div>
+    <div class="phone p2"><div class="screen"><img src="../../Mockups/atomic-notes-mockup-image-03.png"></div></div>
+    <div class="phone inkshadow p3"><div class="screen"><img src="../../Mockups/atomic-notes-mockup-image-14.png"></div></div>
+  </div>
+  <div class="stamp">FOR ANDROID 9+</div>
+</div>
+</body></html>
