@@ -61,6 +61,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   int _lifecycleRevision = 0;
   bool _lockingVault = false;
   final Set<String> _protectedIds = {};
+  final Set<String> _inFlightIds = {};
 
   static const String boxName = 'notesBox';
 
@@ -437,7 +438,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
       if (n == null) continue;
       n.deleted = true;
       n.touch();
-      if (n.serverVersion == 0) {
+      if (n.serverVersion == 0 && !_mayHaveReachedCloud(id)) {
         // Never uploaded, so the cloud has nothing to delete: pushing this
         // would send a tombstone for a row it never had. settleDirty() would
         // not clear it either — it only matches a save back to already-synced
@@ -596,6 +597,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
               : text;
       return false;
     } finally {
+      _inFlightIds.clear();
       _syncing = false;
       final done = _syncDone;
       _syncDone = null;
@@ -612,6 +614,13 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     while (_syncing) {
       await (_syncDone ??= Completer<void>()).future;
     }
+  }
+
+  bool _mayHaveReachedCloud(String id) {
+    if (_inFlightIds.contains(id)) return true;
+    final saved = _box.get(_pendingPushKey);
+    return saved is Map && saved['userId'] == _userId && saved['rows'] is List &&
+        (saved['rows'] as List).any((row) => row is Map && row['id'] == id);
   }
 
   /// A push this account sent whose answer never arrived (app killed, connection lost).
@@ -666,6 +675,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
         if (settled) notifyListeners();
         return false;
       }
+      _inFlightIds.addAll(candidates.map((n) => n.id));
       final sealed = await Future.wait(candidates.map((n) => _sealRemote(n, uid)));
       if (_stopped || _userId != uid) return false;
       // Keep one request under the Server's size limit; the rest goes in the next batch.
@@ -735,8 +745,11 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
       if (sent is String) local.syncedSig = sent;
       final seq = (result['seq'] as num?)?.toInt();
       if (seq != null) writtenSeqs.add(seq);
-      if (local.updatedAt.toIso8601String() == versions[id]) {
-        local.dirty = false;
+      // A first-upload deletion or an edit during the request still needs
+      // delivery even though this acknowledgement establishes version one.
+      local.dirty = sent is String ? local.contentSig != sent
+          : local.updatedAt.toIso8601String() != versions[id];
+      if (!local.dirty) {
         local.updatedAt = DateTime.parse(result['updated_at'] as String).toUtc();
       }
       if (_stopped || _userId != uid) return false;
@@ -938,7 +951,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     if (targets.isEmpty) return 0;
     bool unsent() => targets.any((id) {
           final n = _notes[id];
-          return n != null && n.dirty && n.serverVersion > 0;
+          return n != null && n.dirty && (n.serverVersion > 0 || _mayHaveReachedCloud(id));
         });
     if (unsent()) {
       if (!SyncStatusHelper.isSyncOn) return 0;
