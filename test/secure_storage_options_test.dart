@@ -9,7 +9,8 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   test('every FlutterSecureStorage is built with the shared Android options',
       () {
-    final constructions = RegExp(r'FlutterSecureStorage\(([^;]*?)\);');
+    // Constructor calls also occur in initializer lists, followed by a comma.
+    final constructions = RegExp(r'\bFlutterSecureStorage\s*\(([^)]*)\)');
     final files = Directory('lib')
         .listSync(recursive: true)
         .whereType<File>()

@@ -45,7 +45,7 @@ class SessionGuard {
   /// Begin guarding. Idempotent — safe to call more than once.
   static void attach() {
     _sub ??= ApiClient.instance.onSessionEnded.listen((_) {
-      unawaited(_onSignedOut());
+      if (!ApiClient.instance.isSignedIn) unawaited(_onSignedOut());
     });
   }
 
