@@ -78,7 +78,7 @@ class _SettingsPageState extends State<SettingsPage> {
           return;
         }
         final synced = await repo.syncNow();
-        if (!synced) {
+        if (!synced || repo.pendingCount > 0) {
           if (!_isMounted) return;
           final next = repo.nextAutoSyncAt;
           MySnackBar(
@@ -92,7 +92,7 @@ class _SettingsPageState extends State<SettingsPage> {
           return;
         }
       }
-      await repo.stop();
+      await repo.stop(waitForSync: true);
       await repo.clearLocal();
       final authBox = await Hive.openBox<bool>('authBox');
       await authBox.put('isAuthOn', false);
@@ -107,10 +107,13 @@ class _SettingsPageState extends State<SettingsPage> {
       // the stack to the login screen.
       await _api.signOut();
     } catch (error) {
+      if (_api.isSignedIn) await repo.start();
       if (!_isMounted) return;
-      const MySnackBar(
-        text: "Unable to logout",
-        sec: 2000,
+      MySnackBar(
+        text: error is StateError
+            ? "Logout cancelled. Unlock your vault and sync all pending changes first."
+            : "Unable to logout",
+        sec: 4000,
       ).showMySnackBar(context);
     } finally {
       if (_isMounted) {

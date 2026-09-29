@@ -31,11 +31,37 @@ import 'package:hive_ce/hive_ce.dart';
 /// back to the foreground, when the network returns, a few seconds after a local
 /// change (or as soon as the Server's hourly window opens), and hourly.
 class NotesRepository extends ChangeNotifier with WidgetsBindingObserver implements NotesSource {
-  NotesRepository._() {
+  NotesRepository._({ApiClient? api, Vault? vault,
+    Future<List<ConnectivityResult>> Function()? checkConnectivity,
+    Future<void> Function()? refreshEnergy, bool automaticSync = true})
+      : _api = api ?? ApiClient.instance,
+        _vault = vault ?? Vault.instance,
+        _checkConnectivity = checkConnectivity ?? Connectivity().checkConnectivity,
+        _refreshEnergy = refreshEnergy ?? EnergyService.instance.refresh,
+        _automaticSync = automaticSync {
     // The note limit comes from the Server's wallet; the notes screens show it, so they must hear when it moves.
     NoteQuota.changes.addListener(notifyListeners);
   }
   static final NotesRepository instance = NotesRepository._();
+
+  @visibleForTesting
+  factory NotesRepository.forTest({required Box box, required ApiClient api,
+    required Vault vault, required Future<List<ConnectivityResult>> Function() checkConnectivity}) {
+    final repository = NotesRepository._(api: api, vault: vault,
+      checkConnectivity: checkConnectivity, refreshEnergy: () async {}, automaticSync: false);
+    repository._box = box;
+    return repository;
+  }
+
+  final Vault _vault;
+  final Future<List<ConnectivityResult>> Function() _checkConnectivity;
+  final Future<void> Function() _refreshEnergy;
+  final bool _automaticSync;
+  bool _stopped = false;
+  int _lifecycleRevision = 0;
+  bool _lockingVault = false;
+  final Set<String> _protectedIds = {};
+  final Set<String> _inFlightIds = {};
 
   static const String boxName = 'notesBox';
 
@@ -46,7 +72,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   static const String _ownerKey = '__cache_owner__';
 
   late Box _box;
-  final ApiClient _api = ApiClient.instance;
+  final ApiClient _api;
   String? get _userId => _api.currentUserId;
 
   StreamSubscription<List<ConnectivityResult>>? _connectivity;
@@ -83,9 +109,9 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   /// note from Google Drive.
   static const String _cursorKey = '__sync_cursor__';
 
-  /// A push carries at most this many notes (the most an account can hold, so
-  /// one upload of everything is one request) and roughly this many bytes, which
-  /// keeps a request under the Server's size limit. A sync sends up to
+  /// Each request carries at most 50 rows and this many UTF-8 bytes including
+  /// its JSON envelope. Larger accounts can require multiple charged requests.
+  /// A sync sends up to
   /// [_maxPushBatches] of them.
   static const int _maxPushRows = 50;
   static const int _maxPushBytes = 2500000;
@@ -137,7 +163,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   /// Sends local changes without a manual sync: a few seconds after the edits
   /// settle when automatic sync is open, else just after the window opens.
   void _scheduleAutoSync() {
-    if (_userId == null || !SyncStatusHelper.isSyncOn) return;
+    if (!_automaticSync || _stopped || _lockingVault || _userId == null || !SyncStatusHelper.isSyncOn) return;
     final blockedUntil = nextAutoSyncAt;
     final wait = blockedUntil == null
         ? _editSettle
@@ -147,6 +173,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   }
 
   Future<void> _loadFromDisk() async {
+    final lifecycle = _lifecycleRevision;
     _notes.clear();
     _syncCursor = null;
     // A cache written by a different account — a previous user whose session
@@ -163,6 +190,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     for (final raw in _box.values) {
       if (raw is Map && raw['id'] is String) {
         final opened = await _open(raw);
+        if (_userId != uid || lifecycle != _lifecycleRevision) return;
         if (opened == null) continue; // encrypted + locked: load after unlock
         final n = Note.fromMap(opened);
         _notes[n.id] = n;
@@ -173,7 +201,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   // ---- encryption boundary ---------------------------------------------
   // When the vault is unlocked, note content (title/body/items) is sealed into
   // `payload` and the plaintext fields are emptied before anything is written
-  // to Hive or Supabase, and re-opened on the way back. When encryption is off
+  // to Hive or the Server, and re-opened on the way back. When encryption is off
   // these are pass-throughs, so plaintext behaviour is unchanged.
 
   Future<Map<String, dynamic>> _sealLocal(Note n) => _seal(n.toMap());
@@ -181,14 +209,17 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
       _seal(n.toRemote(uid));
 
   Future<Map<String, dynamic>> _seal(Map<String, dynamic> m) async {
-    // T2T: the vault is off or locked on this device, so the note is stored in
-    // the clear and stays readable to any signed-in device.
-    if (!Vault.instance.isUnlocked) {
+    // A new T2T note is allowed while locked. A previously protected note
+    // can never be downgraded just because the key is absent.
+    final id = m['id'] as String;
+    if (!_vault.isUnlocked) {
+      if (_protectedIds.contains(id)) throw StateError('Unlock the vault to edit this note.');
       m['enc_v'] = 0;
       m['payload'] = null;
       return m;
     }
-    m['payload'] = await Vault.instance.encryptContent({
+    _protectedIds.add(id);
+    m['payload'] = await _vault.encryptContent({
       'title': m['title'] ?? '',
       'body': m['body'] ?? '',
       'items': m['items'] ?? const <dynamic>[],
@@ -208,9 +239,10 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     final encV = out['enc_v'] is int ? out['enc_v'] as int : 0;
     final payload = out['payload'];
     if (encV < 1 || payload is! String) return out;
-    if (!Vault.instance.isUnlocked) return null;
+    if (out['id'] is String) _protectedIds.add(out['id'] as String);
+    if (!_vault.isUnlocked) return null;
     try {
-      final content = await Vault.instance.decryptContent(payload);
+      final content = await _vault.decryptContent(payload);
       out['title'] = content['title'] ?? '';
       out['body'] = content['body'] ?? '';
       out['items'] = content['items'] ?? const <dynamic>[];
@@ -227,22 +259,31 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   /// actual network sync runs in the background. Nothing in the UI should
   /// ever wait for this.
   Future<void> start() async {
+    final lifecycle = _lifecycleRevision;
     final uid = _userId;
     if (uid == null) return;
+    await _whenIdle();
+    await _drainWrites();
+    if (_userId != uid || lifecycle != _lifecycleRevision) return;
     // Isolation on the hot path (logout/expiry then a different user signs in
     // without an app restart): if the disk cache belongs to another account,
     // drop it before this user's notes load in. Same user keeps their cache.
     final owner = _box.get(_ownerKey);
     if (owner is String && owner != uid) {
       _notes.clear();
+      _protectedIds.clear();
       _syncCursor = null;
       lastSyncedAt = null;
       await _drainWrites();
       await _box.clear();
       notifyListeners();
     }
-    _restoreCursor(uid);
+    await _loadFromDisk();
+    if (_userId != uid || lifecycle != _lifecycleRevision) return;
     await _box.put(_ownerKey, uid);
+    _stopped = false;
+    notifyListeners();
+    if (!_automaticSync) return;
     // MIGRATION NOTE: `_listenRealtime()` used to be called here — removed,
     // the new backend has no realtime endpoint (see class doc comment above).
     // Initial sync: fetches existing cloud notes (a free pull when there's
@@ -253,7 +294,9 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
         const Duration(hours: 1), (_) => unawaited(syncNow()));
   }
 
-  Future<void> stop() async {
+  Future<void> stop({bool waitForSync = false}) async {
+    _stopped = true;
+    _lifecycleRevision++;
     _hourly?.cancel();
     _hourly = null;
     _afterEdit?.cancel();
@@ -266,12 +309,46 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     _autoRetry?.cancel();
     _autoRetry = null;
     _standardBlockedUntil = null;
+    if (waitForSync) {
+      await _whenIdle();
+      await _drainWrites();
+    }
+  }
+
+  /// Quiesce writers before forgetting the key. Plaintext T2T creation remains
+  /// available after lock; existing protected rows remain sealed on disk.
+  Future<void> lockVault() async {
+    if (_lockingVault) return;
+    _lockingVault = true;
+    try {
+      await _whenIdle();
+      await _drainWrites();
+      await _vault.lockThisDevice();
+    } finally {
+      try {
+        if (!_vault.isUnlocked) {
+          clearMemory();
+          await _loadFromDisk();
+          notifyListeners();
+        }
+      } finally {
+        _lockingVault = false;
+      }
+    }
+  }
+
+  void _assertWritable([String? id]) {
+    if (_stopped || _lockingVault) throw StateError('Notes are changing session. Please retry.');
+    if (id != null && _protectedIds.contains(id) && !_vault.isUnlocked) {
+      throw StateError('Unlock the vault to edit this note.');
+    }
   }
 
   /// Drop the in-memory notes without touching the on-disk cache. Used by the
   /// session guard on sign-out so the UI can't show the previous user's notes,
   /// while a same-user re-login can still reuse the local cache.
   void clearMemory() {
+    _lifecycleRevision++;
     _notes.clear();
     _syncCursor = null;
     lastSyncedAt = null;
@@ -280,6 +357,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
 
   @override
   void dispose() {
+    NoteQuota.changes.removeListener(notifyListeners);
     unawaited(_connectivity?.cancel());
     WidgetsBinding.instance.removeObserver(this);
     _hourly?.cancel();
@@ -341,6 +419,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
 
   @override
   Future<void> save(Note note) async {
+    _assertWritable(note.id);
     note.touch();
     // Saved without a real change (or edited back to what the cloud holds): nothing to upload.
     note.settleDirty();
@@ -353,12 +432,13 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   /// Soft delete, so the removal can reach other devices.
   @override
   Future<void> deleteNotes(Iterable<String> ids) async {
+    _assertWritable();
     for (final id in ids) {
       final n = _notes[id];
       if (n == null) continue;
       n.deleted = true;
       n.touch();
-      if (n.serverVersion == 0) {
+      if (n.serverVersion == 0 && !_mayHaveReachedCloud(id)) {
         // Never uploaded, so the cloud has nothing to delete: pushing this
         // would send a tombstone for a row it never had. settleDirty() would
         // not clear it either — it only matches a save back to already-synced
@@ -375,6 +455,14 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
 
   /// Wipes the local cache only — used on logout. Does not touch the server.
   Future<void> clearLocal() async {
+    await _whenIdle();
+    await _drainWrites();
+    // Include sealed rows omitted from memory and an unanswered operation.
+    // A UI count of zero is not proof that the on-disk cache is backed up.
+    if (_hasUnansweredPush(_userId ?? '') ||
+        _box.values.any((raw) => raw is Map && raw['dirty'] == true) || pendingCount > 0) {
+      throw StateError('Sync all pending changes before logging out.');
+    }
     _notes.clear();
     _syncCursor = null;
     // Let an in-flight write finish first: it would otherwise land after the
@@ -399,7 +487,10 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     final write = _writeChain.then((_) async {
       final note = _notes[id];
       if (note == null || _userId != uid) return;
-      await _box.put(id, await _sealLocal(note));
+      final sealed = await _sealLocal(note);
+      // Encryption can yield while session teardown or account switching runs.
+      if (_userId != uid || !_notes.containsKey(id)) return;
+      await _box.put(id, sealed);
     });
     _writeChain = write.catchError((_) {});
     return write;
@@ -438,25 +529,31 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   /// reach the cloud until energy is topped up.
   @override
   Future<bool> syncNow({bool instant = false}) async {
-    if (_syncing) return true;
+    final waitingUser = _userId;
+    if (_syncing) {
+      await _whenIdle();
+      return waitingUser != null && waitingUser == _userId &&
+          pendingCount == 0 && !_hasUnansweredPush(waitingUser) && lastError == null;
+    }
+    if (_stopped || _lockingVault) return false;
     final uid = _userId;
     if (uid == null) return false;
     if (!SyncStatusHelper.isSyncOn) return false;
 
     // Don't sit on a dead socket when we already know there's no network.
-    final conn = await Connectivity().checkConnectivity();
+    final conn = await _checkConnectivity();
     if (conn.contains(ConnectivityResult.none)) {
       lastError = 'Offline — changes are saved on this device';
       return false;
     }
 
-    if (_syncing || _userId != uid) return false;
+    if (_syncing || _stopped || _lockingVault || _userId != uid) return false;
     // Acquire locally before the first await that starts a sync operation.
     _syncing = true;
     lastError = null;
     notifyListeners();
     try {
-      // A push carries at most 20 notes: keep sending until nothing is waiting,
+      // A push carries at most 50 notes: keep sending until nothing is waiting,
       // so a completed sync means every queued change reached the server.
       var drained = false;
       for (var batch = 0; batch < _maxPushBatches && !drained; batch++) {
@@ -469,7 +566,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
         drained = !await _push(uid, instant: instant);
       }
       await _pull(uid);
-      unawaited(EnergyService.instance.refresh());
+      unawaited(_refreshEnergy());
       _networkRetries = 0;
       if (!drained) {
         if (!instant && nextAutoSyncAt != null) {
@@ -500,6 +597,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
               : text;
       return false;
     } finally {
+      _inFlightIds.clear();
       _syncing = false;
       final done = _syncDone;
       _syncDone = null;
@@ -518,6 +616,13 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     }
   }
 
+  bool _mayHaveReachedCloud(String id) {
+    if (_inFlightIds.contains(id)) return true;
+    final saved = _box.get(_pendingPushKey);
+    return saved is Map && saved['userId'] == _userId && saved['rows'] is List &&
+        (saved['rows'] as List).any((row) => row is Map && row['id'] == id);
+  }
+
   /// A push this account sent whose answer never arrived (app killed, connection lost).
   bool _hasUnansweredPush(String uid) {
     final saved = _box.get(_pendingPushKey);
@@ -527,6 +632,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   /// Tries again a little later after the network dropped mid-sync, a few times, so a
   /// push the Server already took is collected without waiting for the next edit or resume.
   void _retryAfterNetworkFailure() {
+    if (!_automaticSync || _stopped) return;
     final delay = networkRetryDelay(_networkRetries);
     if (delay == null) return;
     _networkRetries++;
@@ -542,6 +648,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
         seconds: (seconds ?? EnergyService.instance.limits.syncStandardIntervalSeconds).clamp(1, 7200));
     _standardBlockedUntil = DateTime.now().add(wait);
     _autoRetry?.cancel();
+    if (!_automaticSync || _stopped) return;
     _autoRetry = Timer(wait + const Duration(seconds: 5), () {
       _standardBlockedUntil = null;
       unawaited(syncNow());
@@ -551,7 +658,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
 
   /// Sends one batch. Returns true when more changes are still waiting.
   Future<bool> _push(String uid, {required bool instant}) async {
-    if (_userId != uid) return false;
+    if (_stopped || _userId != uid) return false;
     Map<String, dynamic>? pending = _hasUnansweredPush(uid)
         ? Map<String, dynamic>.from(_box.get(_pendingPushKey) as Map) : null;
     if (pending == null) {
@@ -568,14 +675,19 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
         if (settled) notifyListeners();
         return false;
       }
+      _inFlightIds.addAll(candidates.map((n) => n.id));
       final sealed = await Future.wait(candidates.map((n) => _sealRemote(n, uid)));
-      if (_userId != uid) return false;
+      if (_stopped || _userId != uid) return false;
       // Keep one request under the Server's size limit; the rest goes in the next batch.
-      var bytes = 0;
+      var bytes = utf8.encode(jsonEncode({
+        'rows': <dynamic>[], 'requestId': '00000000-0000-0000-0000-000000000000',
+        'mode': instant ? 'instant' : 'standard',
+      })).length;
       var take = 0;
       for (final row in sealed) {
-        final size = jsonEncode(row).length;
+        final size = utf8.encode(jsonEncode(row)).length + (take == 0 ? 0 : 1);
         if (take > 0 && bytes + size > _maxPushBytes) break;
+        if (take == 0 && bytes + size > _maxPushBytes) throw ApiException('note_payload_too_large', 413);
         bytes += size;
         take++;
       }
@@ -603,12 +715,12 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
         return true;
       }
       // Validation happens before the operation is charged/recorded. Retry corrected data.
-      if (e.statusCode == 400 || ['note_limit_reached', 'insufficient_energy', 'note_id_conflict'].contains(e.code)) {
+      if (e.statusCode == 400 || e.statusCode == 413 || ['note_limit_reached', 'insufficient_energy', 'note_id_conflict'].contains(e.code)) {
         if (_userId == uid) await _box.delete(_pendingPushKey);
       }
       rethrow;
     }
-    if (_userId != uid) return false;
+    if (_stopped || _userId != uid) return false;
     final versions = pending['versions'] as Map;
     var conflicted = false;
     var failed = false;
@@ -637,14 +749,17 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
       if (sent is String) local.syncedSig = sent;
       final seq = (result['seq'] as num?)?.toInt();
       if (seq != null) writtenSeqs.add(seq);
-      if (local.updatedAt.toIso8601String() == versions[id]) {
-        local.dirty = false;
+      // A first-upload deletion or an edit during the request still needs
+      // delivery even though this acknowledgement establishes version one.
+      local.dirty = sent is String ? local.contentSig != sent
+          : local.updatedAt.toIso8601String() != versions[id];
+      if (!local.dirty) {
         local.updatedAt = DateTime.parse(result['updated_at'] as String).toUtc();
       }
-      if (_userId != uid) return false;
+      if (_stopped || _userId != uid) return false;
       await _persist(id);
     }
-    if (_userId != uid) return false;
+    if (_stopped || _userId != uid) return false;
     await _box.delete(_pendingPushKey);
     await _skipOwnPushedRows(writtenSeqs);
     // The Server takes a standard sync once per hour, so the next one is not open yet. A replayed
@@ -685,11 +800,11 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
 
   Future<void> _pull(String uid) async {
     var more = true;
-    while (more && _userId == uid) {
-      final response = await _api.pullNotes(after: _syncCursor, encOnly: !Vault.instance.isUnlocked);
-      if (_userId != uid) return;
+    while (more && !_stopped && _userId == uid) {
+      final response = await _api.pullNotes(after: _syncCursor, encOnly: !_vault.isUnlocked);
+      if (_stopped || _userId != uid) return;
       await _mergeAll(List<Map<String, dynamic>>.from(response['rows'] as List), uid);
-      if (_userId != uid) return;
+      if (_stopped || _userId != uid) return;
       _syncCursor = (response['nextCursor'] as num).toInt();
       await _box.put(_cursorKey, _syncCursor);
       more = response['hasMore'] == true;
@@ -704,12 +819,12 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   /// flight), the rows are dropped rather than merged — otherwise a late fetch
   /// would repopulate the UI with the previous user's notes after sign-out.
   Future<void> _mergeAll(List<Map<String, dynamic>> rows, String forUid) async {
-    if (_userId != forUid) return;
+    if (_stopped || _userId != forUid) return;
     var changed = false;
     for (final row in rows) {
-      if (_userId != forUid) return; // session ended mid-merge
+      if (_stopped || _userId != forUid) return; // session ended mid-merge
       // Read before the row is opened: is the cloud copy plain while the vault is unlocked?
-      final plainInCloud = rowNeedsSealing(row, vaultUnlocked: Vault.instance.isUnlocked);
+      final plainInCloud = rowNeedsSealing(row, vaultUnlocked: _vault.isUnlocked);
       final opened = await _open(row);
       if (opened == null) continue; // encrypted + locked: retry after unlock
       final remote = Note.fromRemote(opened);
@@ -754,7 +869,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   /// to be sent sealed (0 when the migration finished; more when the Server refused
   /// for now, for example without enough energy).
   Future<int> migrateToVault() async {
-    if (!Vault.instance.isUnlocked) return 0;
+    if (!_vault.isUnlocked) return 0;
     await _whenIdle();
     if (_notes.isEmpty) return 0;
     debugPrint('NotesRepository: migrating ${_notes.length} notes into the vault');
@@ -816,6 +931,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   /// limit leaves no room for it.
   @override
   Future<bool> restoreNote(String id) async {
+    _assertWritable(id);
     final n = _notes[id];
     if (n == null || !n.deleted || isAtLimit) return false;
     n.deleted = false;
@@ -834,11 +950,12 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   /// removed; 0 means nothing was, for example because that sync failed.
   @override
   Future<int> deleteForever(Iterable<String> ids) async {
+    _assertWritable();
     final targets = ids.where((id) => _notes[id]?.deleted == true).toList();
     if (targets.isEmpty) return 0;
     bool unsent() => targets.any((id) {
           final n = _notes[id];
-          return n != null && n.dirty && n.serverVersion > 0;
+          return n != null && n.dirty && (n.serverVersion > 0 || _mayHaveReachedCloud(id));
         });
     if (unsent()) {
       if (!SyncStatusHelper.isSyncOn) return 0;
@@ -933,6 +1050,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   /// them to the cloud. Used to refill a cloud that was wiped.
   @override
   Future<int> markAllForUpload() async {
+    _assertWritable();
     var marked = 0;
     for (final n in _notes.values.toList()) {
       if (n.deleted) continue;
