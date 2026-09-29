@@ -1,0 +1,14 @@
+<svg width="200" height="200" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <filter id="targetShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="4" dy="6" stdDeviation="4" flood-color="#000" flood-opacity="0.15"/>
+    </filter>
+  </defs>
+  <rect width="200" height="200" fill="#f4f4f4"/>
+  <!-- Outer Light Purple Base -->
+  <circle cx="100" cy="100" r="80" fill="#d0d0ff" filter="url(#targetShadow)" />
+  <!-- Middle Blue Raised Cylinder -->
+  <circle cx="100" cy="100" r="55" fill="#2e2eff" filter="url(#targetShadow)" />
+  <!-- Center Black Tall Cylinder -->
+  <circle cx="100" cy="100" r="30" fill="#1a1a1a" filter="url(#targetShadow)" />
+</svg>

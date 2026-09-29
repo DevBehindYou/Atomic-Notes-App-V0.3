@@ -1,0 +1,14 @@
+<svg width="200" height="200" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <filter id="ffShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="4" dy="6" stdDeviation="3" flood-color="#000" flood-opacity="0.2"/>
+    </filter>
+  </defs>
+  <rect width="200" height="200" fill="#f4f4f4"/>
+  <!-- Lines (Receding) -->
+  <rect x="50" y="70" width="40" height="10" rx="5" fill="#a0a0ff" filter="url(#ffShadow)"/>
+  <rect x="60" y="90" width="40" height="10" rx="5" fill="#6b6bff" filter="url(#ffShadow)"/>
+  <rect x="70" y="110" width="40" height="10" rx="5" fill="#a0a0ff" filter="url(#ffShadow)"/>
+  <!-- Extruded Triangle -->
+  <polygon points="110,60 110,140 170,100" fill="#1a1a1a" filter="url(#ffShadow)" />
+</svg>

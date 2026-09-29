@@ -1,0 +1,379 @@
+// ignore_for_file: use_build_context_synchronously, use_super_parameters
+
+
+import 'package:atomic_notes/authentication/auth_services/auth_service.dart';
+import 'package:atomic_notes/utility/component/profile_avatar.dart';
+import 'package:atomic_notes/page/home_page.dart';
+import 'package:atomic_notes/page/settings_page.dart';
+import 'package:atomic_notes/state/notes/notes_bloc.dart';
+import 'package:atomic_notes/state/notifications/notifications_cubit.dart';
+import 'package:atomic_notes/state/profile/profile_cubit.dart';
+import 'package:atomic_notes/theme/app_tokens.dart';
+import 'package:atomic_notes/theme/editorial.dart';
+import 'package:atomic_notes/utility/intropages/energy_intro_screen.dart';
+import 'package:hive_ce/hive_ce.dart';
+import 'package:atomic_notes/utility/component/cloud_button.dart';
+import 'package:atomic_notes/utility/component/energy_popup.dart';
+import 'package:atomic_notes/utility/component/my_snackbar.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:google_nav_bar/google_nav_bar.dart';
+
+class MainPage extends StatefulWidget {
+  const MainPage({Key? key}) : super(key: key);
+
+  @override
+  State<MainPage> createState() => _MainPageState();
+}
+
+class _MainPageState extends State<MainPage> {
+  final AuthServices serve = AuthServices();
+  String? username = AuthServices.cachedHandle;
+  bool _isLoading2 = false;
+  int currentIndex = 0;
+
+  // Explicitly List<Widget>. As a bare `List` this is List<dynamic>, which the
+  // old `body: _pages[currentIndex]` accepted (dynamic -> Widget is an
+  // implicit downcast) but IndexedStack's `children` does not — so switching
+  // to IndexedStack turned this into a hard compile error.
+  final List<Widget> _pages = [
+    // home page
+    const HomePage(),
+
+    // settings page
+    const SettingsPage(),
+  ];
+
+  @override
+  void initState() {
+    // Sign-out handling lives in SessionGuard now, not per screen — the shell
+    // used to push a replacement route here, which left itself alive underneath
+    // the login page so Back walked straight back into the authenticated app.
+    _getUserName();
+    super.initState();
+    // The picture is kept per account and nothing announces a new sign-in, so read it afresh.
+    context.read<ProfileCubit>().refresh();
+    _maybeShowEnergyIntro();
+  }
+
+  /// Show the Atomic Energy feature tour once, the first time the home screen
+  /// is reached after this update. This is the universal post-auth landing
+  /// (biometric/vault gates route here too), so hooking it here covers every
+  /// entry path. Pushed (not replaced) so it pops back to the notes screen.
+  void _maybeShowEnergyIntro() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      bool seen;
+      try {
+        seen = Hive.box<bool>('authBox')
+                .get(EnergyIntroScreen.seenFlag, defaultValue: false) ??
+            false;
+      } catch (_) {
+        seen = true; // if the box isn't ready, don't nag; skip this launch
+      }
+      if (!seen && mounted) {
+        Navigator.of(context).pushNamed('/energyintro');
+      }
+    });
+  }
+
+  // get the user name
+  Future<void> _getUserName() async {
+    if (!mounted) return;
+    setState(() {
+      _isLoading2 = true;
+    });
+
+    try {
+      username = await serve.getUserInfo();
+    } catch (e) {
+      // error
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading2 = false;
+        });
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _isLoading2 = false;
+    super.dispose();
+  }
+
+  // sync notes data to cloud: the Bloc checks the switch and the connection, runs the sync and
+  // answers with a notice, which the listener in build shows.
+  //
+  // Manual button = INSTANT sync (10 energy). The energy gate lives inside the sync: it charges
+  // only when there are changes to upload, and refuses when the balance is short. Automatic and
+  // background syncs go through the same gate at the standard cost (5).
+  void _syncData() =>
+      context.read<NotesBloc>().add(const NotesSyncRequested(instant: true));
+
+  void goToPage(index) {
+    setState(() {
+      currentIndex = index;
+    });
+  }
+
+  // ---- back button: press twice to exit -----------------------------------
+
+  DateTime? _lastBackPress;
+
+  /// This is the app's root screen, so a back press here used to just drop
+  /// the app into the background (Android's default for a screen with
+  /// nothing to pop). The second press within the window actually exits.
+  void _handleBack() {
+    final now = DateTime.now();
+    final last = _lastBackPress;
+    if (last != null && now.difference(last) < const Duration(seconds: 2)) {
+      SystemNavigator.pop();
+      return;
+    }
+    _lastBackPress = now;
+    const MySnackBar(text: 'Press back again to exit', sec: 1500)
+        .showMySnackBar(context);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        _handleBack();
+      },
+      child: BlocListener<NotesBloc, NotesState>(
+        // The answer to the sync button; the notes list shows its own.
+        listenWhen: (previous, current) =>
+            previous.notice != current.notice &&
+            current.notice != null &&
+            current.notice!.fromSync,
+        listener: (context, state) => MySnackBar(
+          text: state.notice!.text,
+          sec: state.notice!.millis,
+        ).showMySnackBar(context),
+        child: _scaffold(context),
+      ),
+    );
+  }
+
+  Widget _scaffold(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppColors.paper,
+      appBar: AppBar(
+        toolbarHeight: 64,
+        titleSpacing: AppSpace.md,
+        backgroundColor: AppColors.paper,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        // Masthead: avatar in an Ink frame, mono account line. Tap to refresh
+        // the username, same as before.
+        title: GestureDetector(
+          onTap: () {
+            _getUserName();
+          },
+          behavior: HitTestBehavior.opaque,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const ProfileAvatar(size: 34, frame: 2),
+              const SizedBox(width: AppSpace.sm + 2),
+              ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: MediaQuery.sizeOf(context).width * 0.45,
+                ),
+                child: _isLoading2
+                    ? Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            height: 8,
+                            width: 44,
+                            decoration: const BoxDecoration(
+                              color: AppColors.surfaceHighest,
+                              borderRadius: AppRadius.sm,
+                            ),
+                          ),
+                          const SizedBox(height: 5),
+                          Container(
+                            height: 11,
+                            width: 88,
+                            decoration: const BoxDecoration(
+                              color: AppColors.surfaceHighest,
+                              borderRadius: AppRadius.sm,
+                            ),
+                          ),
+                        ],
+                      )
+                    : Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const MonoLabel('Atomic Notes', small: true),
+                          Text(
+                            username!,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: AppType.headlineSm.copyWith(height: 1.1),
+                          ),
+                        ],
+                      ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          const _NotificationBell(),
+          const SizedBox(width: AppSpace.sm),
+          // Tap = sync (unchanged). Long-press = Atomic Energy popup.
+          GestureDetector(
+            onLongPress: () => showEnergyPopup(context),
+            child: BlocSelector<NotesBloc, NotesState, bool>(
+              selector: (state) => state.syncing,
+              builder: (context, syncing) => CloudButton(
+                ico: "assets/sync.svg",
+                action: _syncData,
+                clr: 0xff5F5EF7,
+                isLoading: syncing,
+              ),
+            ),
+          ),
+          const SizedBox(width: AppSpace.md),
+        ],
+        bottom: const PreferredSize(
+          preferredSize: Size.fromHeight(AppStroke.rule),
+          child: HairRule(color: AppColors.ink),
+        ),
+      ),
+      // pages to show in body — IndexedStack keeps both pages'
+      // State alive (scroll position, loaded notes list) instead of
+      // destroying and rebuilding them every time the tab changes.
+      body: IndexedStack(
+        index: currentIndex,
+        children: _pages,
+      ),
+
+      // bottom Navigation bar section — the active tab becomes a solid Ink
+      // block, which is how the reference marks the current nav item.
+      bottomNavigationBar: Container(
+        decoration: const BoxDecoration(
+          color: AppColors.paper,
+          border: Border(
+            top: BorderSide(color: AppColors.ink, width: AppStroke.rule),
+          ),
+        ),
+        child: SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(
+                horizontal: AppSpace.md, vertical: AppSpace.sm + 2),
+            child: GNav(
+              mainAxisAlignment: MainAxisAlignment.center,
+              onTabChange: (index) => goToPage(index),
+              backgroundColor: AppColors.paper,
+              color: AppColors.slateData,
+              activeColor: AppColors.paper,
+              tabBackgroundColor: AppColors.ink,
+              rippleColor: AppColors.surfaceHighest,
+              hoverColor: AppColors.surfaceHigh,
+              iconSize: 18,
+              gap: AppSpace.sm,
+              tabBorderRadius: 4,
+              padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpace.md, vertical: 12),
+              tabs: const [
+                GButton(
+                  icon: Icons.article_outlined,
+                  text: 'NOTES',
+                  textStyle: TextStyle(
+                    fontFamily: AppFonts.mono,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                    letterSpacing: 0.9,
+                    color: AppColors.paper,
+                  ),
+                ),
+                GButton(
+                  icon: Icons.tune,
+                  text: 'SETTINGS',
+                  textStyle: TextStyle(
+                    fontFamily: AppFonts.mono,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                    letterSpacing: 0.9,
+                    color: AppColors.paper,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// App-bar bell with an unread badge; opens the Notification Center. Rebuilds
+/// with the feed so the badge stays live.
+class _NotificationBell extends StatelessWidget {
+  const _NotificationBell();
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocSelector<NotificationsCubit, NotificationsState, int>(
+      selector: (state) => state.unreadCount,
+      builder: (context, count) {
+        return GestureDetector(
+          onTap: () => Navigator.pushNamed(context, '/notifications'),
+          behavior: HitTestBehavior.opaque,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Container(
+                height: 38,
+                width: 46,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: AppColors.paper,
+                  borderRadius: AppRadius.std,
+                  border:
+                      Border.all(color: AppColors.ink, width: AppStroke.rule),
+                ),
+                child: const Icon(Icons.notifications_none,
+                    size: 20, color: AppColors.ink),
+              ),
+              if (count > 0)
+                Positioned(
+                  top: -4,
+                  right: -4,
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                    constraints: const BoxConstraints(minWidth: 16),
+                    decoration: BoxDecoration(
+                      color: AppColors.signal,
+                      borderRadius: AppRadius.chip,
+                      border: Border.all(
+                          color: AppColors.paper, width: AppStroke.rule),
+                    ),
+                    child: Text(
+                      count > 9 ? '9+' : '$count',
+                      textAlign: TextAlign.center,
+                      style: AppType.labelMonoSm
+                          .copyWith(color: Colors.white, height: 1.1),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}

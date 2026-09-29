@@ -1,0 +1,22 @@
+<svg width="200" height="200" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="blackSphere" cx="30%" cy="30%" r="70%">
+      <stop offset="0%" stop-color="#4a4a4a" />
+      <stop offset="100%" stop-color="#1a1a1a" />
+    </radialGradient>
+    <radialGradient id="blueSphere" cx="30%" cy="30%" r="70%">
+      <stop offset="0%" stop-color="#6b6bff" />
+      <stop offset="100%" stop-color="#2e2eff" />
+    </radialGradient>
+    <filter id="userShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="4" dy="8" stdDeviation="4" flood-color="#000" flood-opacity="0.2"/>
+    </filter>
+  </defs>
+  <rect width="200" height="200" fill="#f4f4f4"/>
+  <!-- Left Body -->
+  <circle cx="70" cy="120" r="40" fill="url(#blackSphere)" filter="url(#userShadow)" />
+  <!-- Right Body -->
+  <circle cx="130" cy="120" r="40" fill="url(#blackSphere)" filter="url(#userShadow)" />
+  <!-- Head (Blue Sphere on top) -->
+  <circle cx="100" cy="70" r="35" fill="url(#blueSphere)" filter="url(#userShadow)" />
+</svg>

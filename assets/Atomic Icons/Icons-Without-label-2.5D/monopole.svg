@@ -1,0 +1,36 @@
+<svg width="200" height="200" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="magnetBlue" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#2e2eff" />
+      <stop offset="100%" stop-color="#6b6bff" />
+    </linearGradient>
+    <linearGradient id="magnetBlack" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#333" />
+      <stop offset="100%" stop-color="#111" />
+    </linearGradient>
+    <filter id="shadowM" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="5" dy="8" stdDeviation="4" flood-color="#000" flood-opacity="0.4"/>
+    </filter>
+  </defs>
+  <!-- Radiating decay particles -->
+  <g fill="#333">
+    <circle cx="60" cy="50" r="5" filter="url(#shadowM)"/>
+    <circle cx="140" cy="45" r="4" filter="url(#shadowM)"/>
+    <circle cx="45" cy="140" r="6" filter="url(#shadowM)"/>
+    <circle cx="155" cy="150" r="5" filter="url(#shadowM)"/>
+    <circle cx="100" cy="35" r="4" filter="url(#shadowM)"/>
+    <circle cx="35" cy="100" r="5" filter="url(#shadowM)"/>
+  </g>
+  
+  <!-- Magnet Body (Isometric) -->
+  <ellipse cx="100" cy="140" rx="45" ry="18" fill="#111" filter="url(#shadowM)"/>
+  <path d="M 55 100 L 55 140 A 45 18 0 0 0 145 140 L 145 100 Z" fill="url(#magnetBlack)" filter="url(#shadowM)"/>
+  <path d="M 100 100 L 100 158 A 45 18 0 0 0 145 140 L 145 100 Z" fill="url(#magnetBlue)" />
+  
+  <!-- Magnet Top Face -->
+  <ellipse cx="100" cy="100" rx="45" ry="18" fill="url(#magnetBlue)" filter="url(#shadowM)"/>
+  <path d="M 55 100 A 45 18 0 0 0 100 118 L 100 100 A 45 18 0 0 1 55 82 Z" fill="#111" />
+  
+  <!-- Magnetic Field Ring -->
+  <ellipse cx="100" cy="120" rx="80" ry="30" fill="none" stroke="#6b6bff" stroke-width="3" opacity="0.4" transform="rotate(10 100 120)"/>
+</svg>

@@ -1,0 +1,26 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+  body { width: 1280px; height: 372px; overflow: hidden; }
+  .stage { width: 1280px; height: 372px; border: 2px solid var(--ink); border-radius: 18px; padding: 34px 40px; }
+  .head { display: flex; justify-content: space-between; align-items: baseline; }
+  .head h3 { font-family: "Bebas"; font-weight: 400; font-size: 44px; letter-spacing: .5px; }
+  .head span { font-family: "Mono"; font-size: 13px; letter-spacing: 2px; color: var(--slate); }
+  .row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 22px; margin-top: 22px; }
+  .card { background: #fff; border: 1.5px solid var(--ink); border-radius: 6px; padding: 18px 18px 16px; box-shadow: 6px 6px 0 var(--ink); position: relative; }
+  .card.free { box-shadow: 6px 6px 0 var(--signal); }
+  .card img { width: 96px; height: 96px; display: block; }
+  .name { font-family: "Bebas"; font-size: 38px; margin-top: 6px; line-height: 1; }
+  .meta { display: flex; justify-content: space-between; margin-top: 10px; font-family: "Mono"; font-size: 13px; letter-spacing: 1.4px; border-top: 1.5px solid var(--ink); padding-top: 10px; }
+  .price { color: var(--signal); }
+  .tag { position: absolute; right: 14px; top: 14px; font-family: "Mono"; font-size: 11px; letter-spacing: 1.6px; background: var(--ink); color: var(--paper); padding: 5px 8px; border-radius: 3px; }
+</style></head>
+<body><div class="stage dots">
+  <div class="head"><h3>NOTE CAPACITY <span class="sig" style="font-family:Bebas;font-size:44px;letter-spacing:.5px;color:var(--signal)">TIERS</span></h3><span>NOTES AND CHECKLISTS COUNT THE SAME</span></div>
+  <div class="row">
+    <div class="card free"><span class="tag">DEFAULT</span><img src="../../../assets/Atomic%20Icons/Icons-Without-label-2.5D/tachyon.svg"><div class="name">TACHYON</div><div class="meta"><span>30 NOTES</span><span class="price">FREE</span></div></div>
+    <div class="card"><img src="../../../assets/Atomic%20Icons/Icons-Without-label-2.5D/antimatter.svg"><div class="name">ANTIMATTER</div><div class="meta"><span>40 NOTES</span><span class="price">10 COINS</span></div></div>
+    <div class="card"><img src="../../../assets/Atomic%20Icons/Icons-Without-label-2.5D/monopole.svg"><div class="name">MONOPOLE</div><div class="meta"><span>50 NOTES</span><span class="price">20 COINS</span></div></div>
+    <div class="card"><img src="../../../assets/Atomic%20Icons/Icons-Without-label-2.5D/strangelet.svg"><div class="name">STRANGELET</div><div class="meta"><span>100 NOTES</span><span class="price">30 COINS</span></div></div>
+  </div>
+</div></body></html>

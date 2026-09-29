@@ -1,0 +1,284 @@
+import 'dart:convert';
+import 'dart:math';
+
+/// A note.
+///
+/// Replaces the old `[title, body, when]` three-element list, which had no id,
+/// no type and no modification time — so there was nothing to check off,
+/// nothing to filter on, nothing to select, and nothing to merge between
+/// devices.
+///
+/// Ids are generated on the client so a note has a stable identity from the
+/// moment it is created, before it has ever reached the server.
+enum NoteKind { text, todo }
+
+class TodoItem {
+  String text;
+  bool done;
+
+  TodoItem({required this.text, this.done = false});
+
+  Map<String, dynamic> toMap() => {'t': text, 'd': done};
+
+  factory TodoItem.fromMap(Map<dynamic, dynamic> m) => TodoItem(
+        text: (m['t'] ?? m['text'] ?? '').toString(),
+        done: (m['d'] ?? m['done']) == true,
+      );
+
+  TodoItem copy() => TodoItem(text: text, done: done);
+}
+
+class Note {
+  final String id;
+  NoteKind kind;
+  String title;
+  String body;
+  List<TodoItem> items;
+  bool pinned;
+
+  /// Tombstone. Deleting sets this rather than dropping the record: without a
+  /// tombstone, a delete on one device can never reach another device, which
+  /// would simply re-upload the copy it still holds.
+  bool deleted;
+
+  DateTime createdAt;
+
+  /// Server-authoritative once synced — Postgres sets it via trigger, so a
+  /// device with a wrong clock can't win a conflict with a future timestamp.
+  DateTime updatedAt;
+
+  /// Local-only: this note has changes that haven't been pushed yet.
+  bool dirty;
+  int serverVersion;
+
+  /// Local-only: [contentSig] of what the cloud holds for this note, as of the
+  /// last upload or download. Empty when unknown (a note from an older app).
+  String syncedSig;
+
+  Note({
+    required this.id,
+    this.kind = NoteKind.text,
+    this.title = '',
+    this.body = '',
+    List<TodoItem>? items,
+    this.pinned = false,
+    this.deleted = false,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+    this.dirty = false,
+    this.serverVersion = 0,
+    this.syncedSig = '',
+  })  : items = items ?? [],
+        createdAt = createdAt ?? DateTime.now().toUtc(),
+        updatedAt = updatedAt ?? DateTime.now().toUtc();
+
+  factory Note.create({NoteKind kind = NoteKind.text}) =>
+      Note(id: newId(), kind: kind, dirty: true);
+
+  /// True when the note holds nothing worth keeping.
+  bool get isEmpty =>
+      title.trim().isEmpty &&
+      body.trim().isEmpty &&
+      items.every((i) => i.text.trim().isEmpty);
+
+  int get doneCount => items.where((i) => i.done).length;
+
+  /// One-line preview for the card.
+  String get preview {
+    if (kind == NoteKind.todo) {
+      return items
+          .where((i) => i.text.trim().isNotEmpty)
+          .map((i) => i.text)
+          .join(', ');
+    }
+    return body;
+  }
+
+  void touch() {
+    updatedAt = DateTime.now().toUtc();
+    dirty = true;
+  }
+
+  /// A short fingerprint of everything that is synced: kind, title, body, items,
+  /// pinned and deleted. Two notes with the same fingerprint hold the same thing.
+  /// It is a change detector, not a security measure.
+  String get contentSig {
+    final text = jsonEncode([
+      kind.name,
+      title,
+      body,
+      items.map((i) => i.toMap()).toList(),
+      pinned,
+      deleted,
+    ]);
+    // Two independent 32-bit hashes and the length, so an accidental match is not a realistic worry.
+    var a = 0x811c9dc5;
+    var b = 0x9e3779b9;
+    for (final unit in text.codeUnits) {
+      a = ((a ^ unit) * 0x01000193) & 0xffffffff;
+      b = ((b + unit) * 0x85ebca6b) & 0xffffffff;
+      b ^= b >> 13;
+    }
+    return '${text.length.toRadixString(16)}-${a.toRadixString(16)}-${b.toRadixString(16)}';
+  }
+
+  /// Clears [dirty] when the note holds exactly what the cloud already holds,
+  /// for example after an edit that was undone, or a delete that was restored
+  /// before it synced. Nothing is sent for such a note. Returns true if it did.
+  bool settleDirty() {
+    if (dirty && serverVersion > 0 && syncedSig.isNotEmpty && contentSig == syncedSig) {
+      dirty = false;
+      return true;
+    }
+    return false;
+  }
+
+  /// Marks the note as waiting to be sent again, even though its content is what
+  /// the cloud already holds. Used when the cloud copy is in the wrong form (plain
+  /// text while the vault is unlocked), so the next sync must rewrite it sealed.
+  /// [settleDirty] leaves such a note alone because [syncedSig] is empty.
+  void requireResend() {
+    dirty = true;
+    syncedSig = '';
+  }
+
+  // ---- Hive (local) ----------------------------------------------------
+  Map<String, dynamic> toMap() => {
+        'id': id,
+        'kind': kind.name,
+        'title': title,
+        'body': body,
+        'items': items.map((i) => i.toMap()).toList(),
+        'pinned': pinned,
+        'deleted': deleted,
+        'createdAt': createdAt.toIso8601String(),
+        'updatedAt': updatedAt.toIso8601String(),
+        'dirty': dirty,
+        'serverVersion': serverVersion,
+        'syncedSig': syncedSig,
+      };
+
+  factory Note.fromMap(Map<dynamic, dynamic> m) => Note(
+        id: (m['id'] ?? newId()).toString(),
+        kind: (m['kind'] ?? 'text') == 'todo' ? NoteKind.todo : NoteKind.text,
+        title: (m['title'] ?? '').toString(),
+        body: (m['body'] ?? '').toString(),
+        items: ((m['items'] as List?) ?? const [])
+            .whereType<Map>()
+            .map(TodoItem.fromMap)
+            .toList(),
+        pinned: m['pinned'] == true,
+        deleted: m['deleted'] == true,
+        createdAt: _parseDate(m['createdAt']),
+        updatedAt: _parseDate(m['updatedAt']),
+        dirty: m['dirty'] == true,
+        serverVersion: (m['serverVersion'] as num?)?.toInt() ?? 0,
+        syncedSig: (m['syncedSig'] ?? '').toString(),
+      );
+
+  // ---- Supabase (remote) -----------------------------------------------
+  /// `updated_at` is intentionally omitted — the server trigger owns it.
+  Map<String, dynamic> toRemote(String userId) => {
+        'id': id,
+        'user_id': userId,
+        'base_version': serverVersion,
+        'kind': kind.name,
+        'title': title,
+        'body': body,
+        'items': items.map((i) => i.toMap()).toList(),
+        'pinned': pinned,
+        'deleted': deleted,
+        'created_at': createdAt.toIso8601String(),
+      };
+
+  factory Note.fromRemote(Map<dynamic, dynamic> m) {
+    final note = Note(
+      id: m['id'].toString(),
+      kind: (m['kind'] ?? 'text') == 'todo' ? NoteKind.todo : NoteKind.text,
+      title: (m['title'] ?? '').toString(),
+      body: (m['body'] ?? '').toString(),
+      items: _decodeItems(m['items']),
+      pinned: m['pinned'] == true,
+      deleted: m['deleted'] == true,
+      createdAt: _parseDate(m['created_at']),
+      updatedAt: _parseDate(m['updated_at']),
+      // Anything from the server is by definition already pushed.
+      dirty: false,
+      serverVersion: (m['version'] as num?)?.toInt() ?? 0,
+    );
+    note.syncedSig = note.contentSig;
+    return note;
+  }
+
+  static List<TodoItem> _decodeItems(dynamic raw) {
+    if (raw is List) {
+      return raw.whereType<Map>().map(TodoItem.fromMap).toList();
+    }
+    return [];
+  }
+
+  static DateTime _parseDate(dynamic v) {
+    if (v is DateTime) return v.toUtc();
+    if (v is String) {
+      return DateTime.tryParse(v)?.toUtc() ?? DateTime.now().toUtc();
+    }
+    return DateTime.now().toUtc();
+  }
+
+  Note copy() => Note(
+        id: id,
+        kind: kind,
+        title: title,
+        body: body,
+        items: items.map((i) => i.copy()).toList(),
+        pinned: pinned,
+        deleted: deleted,
+        createdAt: createdAt,
+        updatedAt: updatedAt,
+        dirty: dirty,
+        serverVersion: serverVersion,
+        syncedSig: syncedSig,
+      );
+}
+
+/// RFC 4122 v4. Written out rather than pulling in the `uuid` package for
+/// fifteen lines of work.
+String newId() {
+  final r = Random.secure();
+  final b = List<int>.generate(16, (_) => r.nextInt(256));
+  b[6] = (b[6] & 0x0f) | 0x40; // version 4
+  b[8] = (b[8] & 0x3f) | 0x80; // variant 10
+  String h(int i) => b[i].toRadixString(16).padLeft(2, '0');
+  final s = StringBuffer();
+  for (int i = 0; i < 16; i++) {
+    if (i == 4 || i == 6 || i == 8 || i == 10) s.write('-');
+    s.write(h(i));
+  }
+  return s.toString();
+}
+
+/// How the notes list is ordered / narrowed on the home screen.
+enum NoteFilter { newest, oldest, todos, notes }
+
+extension NoteFilterLabel on NoteFilter {
+  String get label => switch (this) {
+        NoteFilter.newest => 'Newest',
+        NoteFilter.oldest => 'Oldest',
+        NoteFilter.todos => 'To-dos',
+        NoteFilter.notes => 'Notes',
+      };
+}
+
+/// True when a row pulled from the cloud holds its content as plain text while
+/// this device has the vault unlocked. Such a row is a note that was written before
+/// encryption was on (or by a device that had it locked): it has to be sent again
+/// sealed, or it stays readable by the Server for good.
+///
+/// Decided per row, at the moment the row is merged, so it does not matter which
+/// rows the unlock happened to find: a row that arrives a moment later is treated
+/// the same way.
+bool rowNeedsSealing(Map<dynamic, dynamic> row, {required bool vaultUnlocked}) {
+  if (!vaultUnlocked) return false;
+  final encV = row['enc_v'];
+  return !(encV is int && encV >= 1);
+}
