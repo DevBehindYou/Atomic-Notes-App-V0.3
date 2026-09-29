@@ -120,10 +120,24 @@ class _EncryptionPageState extends State<EncryptionPage> {
   }
 
   Future<void> _lockDevice() async {
-    await Vault.instance.lockThisDevice();
-    if (!mounted) return;
-    setState(() {});
-    _toast('Locked on this device. Your phrase is needed to open it here.');
+    if (_loading) return;
+    setState(() => _loading = true);
+    try {
+      await NotesRepository.instance.lockVault();
+      if (!mounted) return;
+      // Dispose old editors and routes that may retain decrypted Note objects.
+      Navigator.pushNamedAndRemoveUntil(context, '/vaultunlock', (route) => false,
+          arguments: true);
+    } catch (_) {
+      if (!mounted) return;
+      if (!Vault.instance.isUnlocked) {
+        Navigator.pushNamedAndRemoveUntil(context, '/vaultunlock', (route) => false,
+            arguments: true);
+      } else {
+        setState(() => _loading = false);
+        _toast('Could not finish locking. Please retry.');
+      }
+    }
   }
 
   Widget _pad(Widget c) => Padding(
@@ -211,7 +225,7 @@ class _EncryptionPageState extends State<EncryptionPage> {
         _pad(GhostButton(
             label: 'Lock on this device',
             icon: Icons.lock_outline,
-            onTap: _lockDevice)),
+            onTap: _loading ? null : _lockDevice)),
       ];
 
   // ---- vault exists, this device cannot open it -------------------------
