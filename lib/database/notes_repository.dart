@@ -589,6 +589,10 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
         lastError = 'Connection lost. Your changes are saved on this device and finish syncing when you are back online.';
         return false;
       }
+      if (e is ApiException && e.code == 'note_content_mismatch') {
+        lastError = 'A cloud note could not be read safely. Try syncing again.';
+        return false;
+      }
       final text = e.toString();
       lastError = text.contains('note_limit_reached')
           ? 'Note limit reached — delete a note or add capacity in Atomic Energy'
