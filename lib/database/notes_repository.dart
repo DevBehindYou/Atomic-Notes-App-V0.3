@@ -589,6 +589,10 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
         lastError = 'Connection lost. Your changes are saved on this device and finish syncing when you are back online.';
         return false;
       }
+      if (e is ApiException && e.code == 'note_content_unavailable') {
+        lastError = 'A cloud note is missing or unreadable in Google Drive. Sync cannot finish until it is restored.';
+        return false;
+      }
       if (e is ApiException && e.code == 'note_content_mismatch') {
         lastError = 'A cloud note could not be read safely. Try syncing again.';
         return false;
