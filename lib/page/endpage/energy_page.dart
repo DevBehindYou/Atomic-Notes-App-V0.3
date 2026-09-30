@@ -131,7 +131,7 @@ class _EnergyViewState extends State<_EnergyView> {
       showDragHandle: true,
       isScrollControlled: true,
       builder: (ctx) => SafeArea(
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(
               AppSpace.lg, 0, AppSpace.lg, AppSpace.xl),
           child: Column(
