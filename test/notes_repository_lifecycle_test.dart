@@ -20,6 +20,8 @@ class TestApi implements ApiClient {
   Future<void> Function()? beforePush;
   int sequence = 0;
   List<Map<String, dynamic>> pullRows = [];
+  Object? pullFailure;
+  final pullCursors = <int?>[];
   @override
   String? get currentUserId => user;
   @override
@@ -34,10 +36,14 @@ class TestApi implements ApiClient {
     }).toList();
   }
   @override
-  Future<Map<String, dynamic>> pullNotes({int? after, bool encOnly = false}) async => {
-    'rows': pullRows, 'nextCursor': sequence, 'hasMore': false,
-    'cursor': DateTime.now().toUtc().toIso8601String(),
-  };
+  Future<Map<String, dynamic>> pullNotes({int? after, bool encOnly = false}) async {
+    pullCursors.add(after);
+    if (pullFailure != null) throw pullFailure!;
+    return {
+      'rows': pullRows, 'nextCursor': sequence, 'hasMore': false,
+      'cursor': DateTime.now().toUtc().toIso8601String(),
+    };
+  }
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
@@ -92,6 +98,30 @@ void main() {
     repository.dispose();
     await Hive.close();
     await directory.delete(recursive: true);
+  });
+
+  test('R11 inconsistent cloud read preserves the cache and cursor and explains retry', () async {
+    final note = Note.create()..title = 'committed copy';
+    final row = {...note.toRemote(api.user!), 'version': 1,
+      'updated_at': DateTime.now().toUtc().toIso8601String()};
+    api.pullRows = [row]; api.sequence = 1;
+    expect(await repository.syncNow(), isTrue);
+    final stored = Map.from(box.get(note.id) as Map);
+    api.pullRows = [{...row, 'version': 2, 'title': 'consistent new copy'}];
+    api.sequence = 2;
+    api.pullFailure = ApiException('note_content_mismatch', 409);
+    expect(await repository.syncNow(), isFalse);
+    expect(repository.byId(note.id)!.title, 'committed copy');
+    expect(box.get(note.id), stored);
+    expect(box.get('__sync_cursor__'), 1);
+    expect(repository.lastError, 'A cloud note could not be read safely. Try syncing again.');
+    api.pullFailure = null;
+    expect(await repository.syncNow(), isTrue);
+    expect(api.pullCursors, [null, 1, 1]);
+    expect(repository.byId(note.id)!.title, 'consistent new copy');
+    expect(box.get('__sync_cursor__'), 2);
+    expect(repository.lastError, isNull);
+    expect(api.pushes, isEmpty);
   });
 
   test('R5 empty cloud preserves local notes and a newer recreation replaces a clean copy', () async {
