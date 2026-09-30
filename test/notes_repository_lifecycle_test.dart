@@ -100,6 +100,37 @@ void main() {
     await directory.delete(recursive: true);
   });
 
+  test('R16 unavailable cloud note keeps the cursor and cached notes until retry succeeds', () async {
+    final cached = Note.create()..title = 'already downloaded';
+    final missing = Note.create()..title = 'recovered cloud note';
+    final cachedRow = {...cached.toRemote(api.user!), 'version': 1,
+      'updated_at': DateTime.now().toUtc().toIso8601String()};
+    final missingRow = {...missing.toRemote(api.user!), 'version': 2,
+      'updated_at': DateTime.now().toUtc().toIso8601String()};
+    api.pullRows = [cachedRow]; api.sequence = 1;
+    expect(await repository.syncNow(), isTrue);
+    final stored = Map.from(box.get(cached.id) as Map);
+    api.pullFailure = ApiException('note_content_unavailable', 409);
+    for (var attempt = 0; attempt < 2; attempt++) {
+      expect(await repository.syncNow(), isFalse);
+      expect(repository.byId(cached.id)!.title, 'already downloaded');
+      expect(box.get(cached.id), stored);
+      expect(repository.byId(missing.id), isNull);
+      expect(box.get('__sync_cursor__'), 1);
+      expect(repository.lastError,
+        'A cloud note is missing or unreadable in Google Drive. Sync cannot finish until it is restored.');
+    }
+    api.pullFailure = null;
+    api.pullRows = [missingRow]; api.sequence = 2;
+    expect(await repository.syncNow(), isTrue);
+    expect(api.pullCursors, [null, 1, 1, 1]);
+    expect(repository.byId(missing.id)!.title, 'recovered cloud note');
+    expect(box.get(cached.id), stored);
+    expect(box.get('__sync_cursor__'), 2);
+    expect(repository.lastError, isNull);
+    expect(api.pushes, isEmpty);
+  });
+
   test('R11 inconsistent cloud read preserves the cache and cursor and explains retry', () async {
     final note = Note.create()..title = 'committed copy';
     final row = {...note.toRemote(api.user!), 'version': 1,
