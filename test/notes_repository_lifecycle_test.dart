@@ -19,6 +19,7 @@ class TestApi implements ApiClient {
   final requestIds = <String>[];
   Future<void> Function()? beforePush;
   int sequence = 0;
+  List<Map<String, dynamic>> pullRows = [];
   @override
   String? get currentUserId => user;
   @override
@@ -34,7 +35,7 @@ class TestApi implements ApiClient {
   }
   @override
   Future<Map<String, dynamic>> pullNotes({int? after, bool encOnly = false}) async => {
-    'rows': <Map<String, dynamic>>[], 'nextCursor': sequence, 'hasMore': false,
+    'rows': pullRows, 'nextCursor': sequence, 'hasMore': false,
     'cursor': DateTime.now().toUtc().toIso8601String(),
   };
   @override
@@ -91,6 +92,46 @@ void main() {
     repository.dispose();
     await Hive.close();
     await directory.delete(recursive: true);
+  });
+
+  test('R5 empty cloud preserves local notes and a newer recreation replaces a clean copy', () async {
+    final note = Note.create()..title = 'cached before wipe';
+    final before = {...note.toRemote(api.user!), 'version': 5,
+      'updated_at': DateTime.now().toUtc().toIso8601String()};
+    api.pullRows = [before]; api.sequence = 5;
+    expect(await repository.syncNow(), isTrue);
+    expect(repository.byId(note.id)!.serverVersion, 5);
+    api.pullRows = [];
+    expect(await repository.syncNow(), isTrue);
+    expect(repository.byId(note.id)!.title, 'cached before wipe');
+    expect(box.containsKey(note.id), isTrue);
+    api.pullRows = [{...before, 'version': 6, 'title': 'recreated on another device'}];
+    api.sequence = 6;
+    expect(await repository.syncNow(), isTrue);
+    expect(repository.byId(note.id)!.title, 'recreated on another device');
+    expect(repository.byId(note.id)!.serverVersion, 6);
+    expect((box.get(note.id) as Map)['serverVersion'], 6);
+    expect(box.get('__sync_cursor__'), 6);
+    expect(api.pushes, isEmpty);
+  });
+
+  test('R5 newer recreation never overwrites an unsent local edit', () async {
+    final note = Note.create()..title = 'cached before wipe';
+    final before = {...note.toRemote(api.user!), 'version': 5,
+      'updated_at': DateTime.now().toUtc().toIso8601String()};
+    api.pullRows = [before]; api.sequence = 5;
+    expect(await repository.syncNow(), isTrue);
+    final local = repository.byId(note.id)!..title = 'unsent edit';
+    await repository.save(local);
+    api.beforePush = () async { throw ApiException('sync_cooldown', 429, retryAfterSeconds: 3600); };
+    api.pullRows = [{...before, 'version': 6, 'title': 'recreated on another device'}];
+    api.sequence = 6;
+    expect(await repository.syncNow(), isFalse);
+    expect(repository.byId(note.id)!.title, 'unsent edit');
+    expect(repository.byId(note.id)!.serverVersion, 5);
+    expect(repository.byId(note.id)!.dirty, isTrue);
+    expect((box.get(note.id) as Map)['dirty'], isTrue);
+    expect(api.pushes.length, 1, reason: 'cooldown refused the attempted upload');
   });
 
   test('R1 lock hides protected rows and stale editors cannot downgrade them', () async {
