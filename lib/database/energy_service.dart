@@ -18,7 +18,10 @@ import 'package:flutter/foundation.dart';
 /// [upgradeNoteLimit] without importing the Energy screen. Sync is charged by
 /// the Server itself when it runs, so nothing here spends energy.
 class EnergyService extends ChangeNotifier implements EnergyStore {
-  EnergyService._();
+  EnergyService._([ApiClient? api]) : _api = api ?? ApiClient.instance;
+
+  @visibleForTesting
+  factory EnergyService.forTest(ApiClient api) => EnergyService._(api);
   static final EnergyService instance = EnergyService._();
 
   // Economy constants, mirrored from the server so the UI can explain them.
@@ -30,7 +33,9 @@ class EnergyService extends ChangeNotifier implements EnergyStore {
   static const int syncStandardCost = 5; // automatic sync, once an hour (4 per grant)
   static const int syncInstantCost = 10; // instant sync (2 per grant)
 
-  final ApiClient _api = ApiClient.instance;
+  final ApiClient _api;
+  int _generation = 0;
+  int _refreshRequest = 0;
   String? get _uid => _api.currentUserId;
 
   Wallet _wallet = Wallet.empty;
@@ -91,6 +96,7 @@ class EnergyService extends ChangeNotifier implements EnergyStore {
     final uid = _uid;
     // A different account must never see the previous user's balances.
     if (uid != _boundUser) {
+      _generation++;
       _wallet = Wallet.empty;
       _history = const [];
       _error = null;
@@ -102,6 +108,9 @@ class EnergyService extends ChangeNotifier implements EnergyStore {
 
   /// Drop in-memory balances (called on logout by SessionGuard).
   void clear() {
+    _generation++;
+    _refreshRequest++;
+    _loading = false;
     _wallet = Wallet.empty;
     _limits = const EnergyLimits();
     _history = const [];
@@ -117,11 +126,18 @@ class EnergyService extends ChangeNotifier implements EnergyStore {
   Future<void> refresh() async {
     final uid = _uid;
     if (uid == null) return;
+    final generation = _generation;
+    final revision = _api.sessionRevision;
+    final request = ++_refreshRequest;
+    bool current() => uid == _uid && generation == _generation &&
+        revision == _api.sessionRevision && request == _refreshRequest;
     _loading = true;
     _error = null;
     notifyListeners();
     try {
       final state = await _api.energyState();
+      if (!current()) return;
+      _boundUser = uid;
       if (state['wallet'] != null) {
         _adopt(state);
       }
@@ -129,11 +145,14 @@ class EnergyService extends ChangeNotifier implements EnergyStore {
           .map((e) => EnergyTx.fromMap(Map<String, dynamic>.from(e as Map)))
           .toList();
     } catch (e) {
+      if (!current()) return;
       _error = _friendly(e);
       debugPrint('EnergyService.refresh failed: $e');
     } finally {
-      _loading = false;
-      notifyListeners();
+      if (current()) {
+        _loading = false;
+        notifyListeners();
+      }
     }
   }
 
@@ -143,12 +162,18 @@ class EnergyService extends ChangeNotifier implements EnergyStore {
   /// user-facing error string (insufficient coins, cap overflow, ...).
   @override
   Future<String?> convertCoins(int coins) async {
-    if (_uid == null) return 'You are signed out.';
+    final uid = _uid;
+    final revision = _api.sessionRevision;
+    final generation = _generation;
+    bool current() => uid == _uid && revision == _api.sessionRevision && generation == _generation;
+    if (uid == null) return 'You are signed out.';
     try {
       await _api.energyConvert(coins);
+      if (!current()) return 'Your session changed. Please retry.';
       await refresh();
       return null;
     } catch (e) {
+      if (!current()) return 'Your session changed. Please retry.';
       return _friendly(e);
     }
   }
@@ -157,15 +182,21 @@ class EnergyService extends ChangeNotifier implements EnergyStore {
   /// user-facing message. Safe to repeat: the Server charges a step only once.
   @override
   Future<String?> upgradeNoteLimit() async {
-    if (_uid == null) return 'You are signed out.';
+    final uid = _uid;
+    final revision = _api.sessionRevision;
+    final generation = _generation;
+    bool current() => uid == _uid && revision == _api.sessionRevision && generation == _generation;
+    if (uid == null) return 'You are signed out.';
     if (!canRaiseNoteLimit) return 'You already have the most notes possible.';
     try {
       final state = await _api.upgradeNoteLimit(noteLimit);
+      if (!current()) return 'Your session changed. Please retry.';
       _adopt(state);
       notifyListeners();
       await refresh();
       return null;
     } catch (e) {
+      if (!current()) return 'Your session changed. Please retry.';
       if (e.toString().contains('invalid_amount')) {
         // The limit this device showed is not the Server's any more.
         await refresh();
