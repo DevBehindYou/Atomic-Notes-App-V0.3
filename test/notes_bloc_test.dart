@@ -37,6 +37,40 @@ List<String> _ids(NotesState s) => s.notes.map((n) => n.id).toList();
 
 void main() {
   group('what is shown', () {
+    test('clearing a source cooldown emits an open window without losing view state', () async {
+      final deadline = DateTime.utc(2030, 1, 1);
+      final source = _source()..nextAutoSyncAt = deadline;
+      final bloc = _bloc(source);
+      addTearDown(bloc.close);
+      final queried = bloc.stream.firstWhere((s) => s.query == 'Trip');
+      bloc.add(const NotesQueryChanged('Trip'));
+      await queried;
+      final selected = bloc.stream.firstWhere((s) => s.selected.contains('c'));
+      bloc.add(const NoteSelectionToggled('c'));
+      await selected;
+      expect(bloc.state.nextAutoSyncAt, deadline);
+
+      final states = <NotesState>[];
+      final subscription = bloc.stream.listen(states.add);
+      addTearDown(subscription.cancel);
+      source.changeBehindTheScenes(() => source.nextAutoSyncAt = null);
+      await Future<void>.delayed(Duration.zero);
+      expect(bloc.state.nextAutoSyncAt, isNull);
+      expect(states, hasLength(1));
+      expect(bloc.state.query, 'Trip');
+      expect(bloc.state.selected, {'c'});
+      expect(_ids(bloc.state), ['c']);
+
+      source.poke();
+      await Future<void>.delayed(Duration.zero);
+      expect(states, hasLength(1), reason: 'unchanged open window must not rebuild');
+      final replacement = deadline.add(const Duration(hours: 1));
+      source.changeBehindTheScenes(() => source.nextAutoSyncAt = replacement);
+      await Future<void>.delayed(Duration.zero);
+      expect(bloc.state.nextAutoSyncAt, replacement);
+      expect(states, hasLength(2));
+    });
+
     test('starts from the store: newest first, with the counts', () {
       final bloc = _bloc(_source());
       addTearDown(bloc.close);
