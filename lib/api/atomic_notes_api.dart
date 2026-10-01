@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:http/http.dart' as http;
+import 'package:atomic_notes/database/note.dart' show newId;
 
 class ApiException implements Exception {
   final String code;
@@ -181,8 +182,61 @@ class ApiClient {
     await _request('POST', '/vault', body: {'verifier': verifier, 'kdfMemory': kdfMemory,
       'kdfIterations': kdfIterations, 'kdfParallelism': kdfParallelism});
   }
-  Future<Map<String, dynamic>> energyState() async => await _request('GET', '/energy') as Map<String, dynamic>;
-  Future<void> energyConvert(int coins) async { await _request('POST', '/energy/convert', body: {'coins': coins}); }
+  int _coinReplayRevision = -1;
+  bool _coinReplaySupported = false;
+  Future<Map<String, dynamic>> energyState() async {
+    final state = await _request('GET', '/energy') as Map<String, dynamic>;
+    _coinReplayRevision = sessionRevision;
+    _coinReplaySupported = state['coin_request_replay'] == true;
+    return state;
+  }
+  Future<int?> pendingCoinConversion() async {
+    final user = currentUserId, revision = sessionRevision;
+    if (user == null) return null;
+    final saved = await _storage.read(key: 'atomic_coin_conversion_$user');
+    if (revision != sessionRevision) throw ApiException('session_changed', 409);
+    return saved == null ? null : (jsonDecode(saved) as Map)['coins'] as int;
+  }
+
+  bool _converting = false;
+
+  /// Save before sending. An ambiguous response survives process restart and account switching.
+  Future<void> energyConvert(int coins) async {
+    if (_converting) throw ApiException('coin_conversion_busy', 409);
+    final user = currentUserId;
+    final revision = sessionRevision;
+    if (user == null) throw ApiException('missing_token', 401);
+    _converting = true;
+    final key = 'atomic_coin_conversion_$user';
+    try {
+      if (_coinReplayRevision != revision || !_coinReplaySupported) await energyState();
+      if (revision != sessionRevision) throw ApiException('session_changed', 409);
+      if (!_coinReplaySupported) throw ApiException('coin_replay_unavailable', 409);
+      final saved = await _storage.read(key: key);
+      final pending = saved == null ? <String, dynamic>{
+        'coins': coins, 'request_id': newId(),
+      } : Map<String, dynamic>.from(jsonDecode(saved) as Map);
+      if (pending['coins'] != coins) {
+        throw ApiException('coin_conversion_pending_${pending['coins']}', 409);
+      }
+      await _queueStorage(() => _storage.write(key: key, value: jsonEncode(pending)));
+      if (revision != sessionRevision) throw ApiException('session_changed', 409);
+      try {
+        await _request('POST', '/energy/convert', body: pending);
+      } on ApiException catch (e) {
+        // Only explicit no-write refusals clear the request. Timeouts/5xx/401/unknown outcomes retain it.
+        if (['insufficient_coins', 'energy_cap_exceeded', 'invalid_amount'].contains(e.code)) {
+          await _queueStorage(() => _storage.delete(key: key));
+        }
+        rethrow;
+      }
+      await _queueStorage(() => _storage.delete(key: key));
+    } finally {
+      _converting = false;
+    }
+  }
+  Future<Map<String, dynamic>> coinBatches({String? cursor}) async =>
+    await _request('GET', '/energy/coins', query: cursor == null ? null : {'cursor': cursor}) as Map<String, dynamic>;
   Future<Map<String, dynamic>> upgradeNoteLimit(int fromLimit) async =>
     await _request('POST', '/energy/note-limit', body: {'from_limit': fromLimit}) as Map<String, dynamic>;
   Future<List<Map<String, dynamic>>> notificationsFeed({String? appVersion}) async {

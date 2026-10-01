@@ -31,6 +31,12 @@ class FakeEnergyStore extends ChangeNotifier implements EnergyStore {
   @override
   String? error;
 
+  @override
+  Future<String?> loadMoreCoinBatches() async => null;
+
+  @override
+  Future<String?> retryPendingConversion() async => 'No unconfirmed conversion.';
+
   int refreshCalls = 0;
   final List<int> converted = [];
   int upgrades = 0;

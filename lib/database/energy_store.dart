@@ -23,6 +23,9 @@ abstract interface class EnergyStore implements Listenable {
   /// Reads the balance and the history again.
   Future<void> refresh();
 
+  Future<String?> loadMoreCoinBatches();
+  Future<String?> retryPendingConversion();
+
   /// Converts [coins] Atomic Coins into energy. Null on success, else a message for the user.
   Future<String?> convertCoins(int coins);
 
