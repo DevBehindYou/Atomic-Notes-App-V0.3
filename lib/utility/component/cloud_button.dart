@@ -10,6 +10,7 @@ import 'package:flutter_svg/svg.dart';
 /// from the design system instead.
 class CloudButton extends StatefulWidget {
   final VoidCallback action;
+  final VoidCallback? onLongPress;
   final String ico;
   final int clr;
   final bool isLoading;
@@ -18,6 +19,7 @@ class CloudButton extends StatefulWidget {
     required this.action,
     required this.clr,
     required this.isLoading,
+    this.onLongPress,
     super.key,
   });
 
@@ -28,34 +30,50 @@ class CloudButton extends StatefulWidget {
 class _CloudButtonState extends State<CloudButton> {
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
+    return Semantics(
+      container: true,
+      excludeSemantics: true,
+      button: true,
+      // Busy disables sync, but the optional Energy action remains available.
+      enabled: !widget.isLoading || widget.onLongPress != null,
+      label: 'Sync now',
+      value: widget.isLoading ? 'Syncing' : null,
+      hint: widget.onLongPress == null
+          ? null
+          : 'Long press to open Atomic Energy',
       onTap: widget.isLoading ? null : widget.action,
-      behavior: HitTestBehavior.opaque,
-      child: Container(
-        height: 38,
-        width: 46,
-        padding: const EdgeInsets.all(AppSpace.sm),
-        decoration: BoxDecoration(
-          color: widget.isLoading ? AppColors.surfaceHigh : AppColors.signal,
-          borderRadius: AppRadius.std,
-          border: Border.all(color: AppColors.ink, width: AppStroke.rule),
-        ),
-        child: widget.isLoading
-            ? const Center(
-                child: SizedBox(
-                  height: 15,
-                  width: 15,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: AppColors.signal,
+      onLongPress: widget.onLongPress,
+      child: GestureDetector(
+        excludeFromSemantics: true,
+        onTap: widget.isLoading ? null : widget.action,
+        onLongPress: widget.onLongPress,
+        behavior: HitTestBehavior.opaque,
+        child: Container(
+          height: 38,
+          width: 46,
+          padding: const EdgeInsets.all(AppSpace.sm),
+          decoration: BoxDecoration(
+            color: widget.isLoading ? AppColors.surfaceHigh : AppColors.signal,
+            borderRadius: AppRadius.std,
+            border: Border.all(color: AppColors.ink, width: AppStroke.rule),
+          ),
+          child: widget.isLoading
+              ? const Center(
+                  child: SizedBox(
+                    height: 15,
+                    width: 15,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: AppColors.signal,
+                    ),
                   ),
+                )
+              : SvgPicture.asset(
+                  widget.ico,
+                  colorFilter:
+                      const ColorFilter.mode(Colors.white, BlendMode.srcIn),
                 ),
-              )
-            : SvgPicture.asset(
-                widget.ico,
-                colorFilter:
-                    const ColorFilter.mode(Colors.white, BlendMode.srcIn),
-              ),
+        ),
       ),
     );
   }
