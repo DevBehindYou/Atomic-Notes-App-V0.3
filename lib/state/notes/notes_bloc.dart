@@ -74,6 +74,7 @@ class NotesBloc extends Bloc<NotesEvent, NotesState> {
     // as a tombstone). The same set is kept when nothing was dropped.
     final stillThere =
         base.selected.where((id) => !(source.byId(id)?.deleted ?? true)).toSet();
+    final nextAutoSyncAt = source.nextAutoSyncAt;
     return base.copyWith(
       notes: List<Note>.unmodifiable(shown),
       signature: noteSignature(shown),
@@ -82,7 +83,9 @@ class NotesBloc extends Bloc<NotesEvent, NotesState> {
       limit: source.limit,
       pending: source.pendingCount,
       binCount: source.binNotes.length,
-      nextAutoSyncAt: source.nextAutoSyncAt,
+      nextAutoSyncAt: nextAutoSyncAt,
+      // A cleared source deadline is a change, not an omitted state update.
+      clearNextAutoSyncAt: nextAutoSyncAt == null,
     );
   }
 

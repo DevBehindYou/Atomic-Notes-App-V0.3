@@ -56,6 +56,26 @@ Future<NotesBloc> _open(WidgetTester tester, FakeNotesSource source) async {
 
 void main() {
   group('what the screen shows', () {
+    testWidgets('the mascot drops a future wait when the source clears its cooldown', (tester) async {
+      final source = _source()
+        ..nextAutoSyncAt = DateTime.now().add(const Duration(minutes: 40));
+      await _open(tester, source);
+      await tester.tap(find.byType(Image));
+      await tester.pump();
+      expect(find.text('All synced. Next sync in 40 min.'), findsOneWidget);
+      await tester.tap(find.byType(Image));
+      await tester.pump();
+
+      source.changeBehindTheScenes(() => source.nextAutoSyncAt = null);
+      await tester.pump();
+      await tester.pump();
+      await tester.tap(find.byType(Image));
+      await tester.pump();
+      expect(find.text('All notes synced.'), findsOneWidget);
+      expect(find.textContaining('Next sync in'), findsNothing);
+      await tester.pump(const Duration(seconds: 4));
+    });
+
     testWidgets('a card for each note and the usage in the header', (tester) async {
       await _open(tester, _source());
       expect(find.byType(NotesBulder), findsNWidgets(3));

@@ -90,6 +90,7 @@ final class NotesState extends Equatable {
     bool? syncing,
     NotesNotice? notice,
     DateTime? nextAutoSyncAt,
+    bool clearNextAutoSyncAt = false,
   }) =>
       NotesState(
         notes: notes ?? this.notes,
@@ -103,7 +104,8 @@ final class NotesState extends Equatable {
         binCount: binCount ?? this.binCount,
         syncing: syncing ?? this.syncing,
         notice: notice ?? this.notice,
-        nextAutoSyncAt: nextAutoSyncAt ?? this.nextAutoSyncAt,
+        nextAutoSyncAt:
+            clearNextAutoSyncAt ? null : (nextAutoSyncAt ?? this.nextAutoSyncAt),
       );
 
   @override
