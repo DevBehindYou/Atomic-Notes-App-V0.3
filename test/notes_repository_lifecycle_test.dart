@@ -17,6 +17,8 @@ class TestApi implements ApiClient {
   String? user = 'user-a';
   final pushes = <List<Map<String, dynamic>>>[];
   final requestIds = <String>[];
+  final pushModes = <bool>[];
+  List<Map<String, dynamic>>? pushResults;
   Future<void> Function()? beforePush;
   int sequence = 0;
   List<Map<String, dynamic>> pullRows = [];
@@ -29,7 +31,9 @@ class TestApi implements ApiClient {
       {required String requestId, bool instant = false}) async {
     pushes.add(rows);
     requestIds.add(requestId);
+    pushModes.add(instant);
     await beforePush?.call();
+    if (pushResults != null) return pushResults!;
     return rows.map((row) => <String, dynamic>{
       'id': row['id'], 'ok': true, 'version': (row['base_version'] as int) + 1,
       'seq': ++sequence, 'updated_at': DateTime.now().toUtc().toIso8601String(),
@@ -98,6 +102,142 @@ void main() {
     repository.dispose();
     await Hive.close();
     await directory.delete(recursive: true);
+  });
+
+  for (final encrypted in [false, true]) {
+    test('conflict contract preserves both contents and uploads the copy later (encrypted=$encrypted)', () async {
+      vault.unlocked = encrypted;
+      final seed = Note.create(kind: NoteKind.todo)
+        ..title = 'shared'
+        ..body = 'base content'
+        ..items = [TodoItem(text: 'base task', done: false)];
+      Future<Map<String, dynamic>> wire(Note note, int version) async {
+        final row = {...note.toRemote(api.user!), 'version': version,
+          'updated_at': DateTime.utc(2026, 9, 1).toIso8601String()};
+        if (encrypted) {
+          row['payload'] = await vault.encryptContent({
+            'title': note.title, 'body': note.body,
+            'items': note.items.map((i) => i.toMap()).toList(),
+          });
+          row['enc_v'] = 1;
+          row['title'] = ''; row['body'] = ''; row['items'] = <dynamic>[];
+        }
+        return row;
+      }
+      api.pullRows = [await wire(seed, 3)]; api.sequence = 3;
+      expect(await repository.syncNow(), isTrue);
+      final local = repository.byId(seed.id)!
+        ..body = 'offline device B'
+        ..items = [TodoItem(text: 'B task', done: true)];
+      await repository.save(local);
+      local.updatedAt = DateTime.utc(2099); // skew does not decide the version conflict
+      final remote = seed.copy()..body = 'device A accepted';
+      api.pullRows = [await wire(remote, 4)]; api.sequence = 4;
+      api.pushResults = [{'id': seed.id, 'ok': false, 'error': 'note_conflict', 'version': 4}];
+
+      expect(await repository.syncNow(instant: true), isFalse);
+      expect(api.pushes.single.single['base_version'], 3);
+      expect(api.pullCursors, [null, null], reason: 'conflict resets the old cursor');
+      expect(repository.byId(seed.id)!.body, 'device A accepted');
+      expect(repository.byId(seed.id)!.serverVersion, 4);
+      final copy = repository.visible().singleWhere((n) => n.id != seed.id);
+      expect(copy.title, 'shared (conflict copy)');
+      expect(copy.body, 'offline device B');
+      expect(copy.items.single.text, 'B task');
+      expect(copy.items.single.done, isTrue);
+      expect(copy.dirty, isTrue, reason: 'conflict copy is initially local, not uploaded');
+      expect(copy.serverVersion, 0);
+      expect(repository.pendingCount, 1);
+      final stored = box.get(copy.id) as Map;
+      expect(stored['dirty'], isTrue);
+      if (encrypted) {
+        expect(stored['enc_v'], 1);
+        expect(stored['body'], '');
+        expect((await vault.decryptContent(stored['payload'] as String))['body'], 'offline device B');
+      } else {
+        expect(stored['body'], 'offline device B');
+      }
+      await repository.stop(); repository.clearMemory(); await repository.start();
+      expect(repository.byId(copy.id)!.body, 'offline device B');
+      api.pushResults = null;
+      expect(await repository.syncNow(instant: true), isTrue);
+      expect(api.pushes.last.single['id'], copy.id);
+      expect(repository.pendingCount, 0);
+      expect(repository.byId(seed.id)!.body, 'device A accepted');
+    });
+  }
+
+  test('conflict contract preserves the local copy even when the following pull fails', () async {
+    final note = Note.create()..body = 'base';
+    final row = {...note.toRemote(api.user!), 'version': 3,
+      'updated_at': DateTime.now().toUtc().toIso8601String()};
+    api.pullRows = [row]; api.sequence = 3;
+    expect(await repository.syncNow(), isTrue);
+    await repository.save(repository.byId(note.id)!..body = 'B saved edit');
+    api.pushResults = [{'id': note.id, 'ok': false, 'error': 'note_conflict', 'version': 4}];
+    api.pullFailure = ApiException('note_content_unavailable', 409);
+    expect(await repository.syncNow(instant: true), isFalse);
+    final copy = repository.visible().singleWhere((n) => n.id != note.id);
+    expect(copy.body, 'B saved edit');
+    expect((box.get(copy.id) as Map)['dirty'], isTrue);
+    expect(box.get('__sync_cursor__'), isNull);
+    await repository.stop(); repository.clearMemory(); await repository.start();
+    expect(repository.byId(copy.id)!.body, 'B saved edit');
+    expect(repository.byId(copy.id)!.dirty, isTrue);
+  });
+
+  test('conflict contract stale deletion becomes a live copy while the remote edit survives', () async {
+    final note = Note.create()..title = 'shared'..body = 'base';
+    final row = {...note.toRemote(api.user!), 'version': 3,
+      'updated_at': DateTime.now().toUtc().toIso8601String()};
+    api.pullRows = [row]; api.sequence = 3;
+    expect(await repository.syncNow(), isTrue);
+    await repository.deleteNotes([note.id]);
+    api.pushResults = [{'id': note.id, 'ok': false, 'error': 'note_conflict', 'version': 4}];
+    api.pullRows = [{...row, 'version': 4, 'body': 'remote edit'}]; api.sequence = 4;
+    expect(await repository.syncNow(instant: true), isFalse);
+    expect(api.pushes.single.single['deleted'], isTrue);
+    expect(repository.byId(note.id)!.body, 'remote edit');
+    expect(repository.byId(note.id)!.deleted, isFalse);
+    final copy = repository.visible().singleWhere((n) => n.id != note.id);
+    expect(copy.body, 'base');
+    expect(copy.deleted, isFalse, reason: 'current implementation preserves content, not deletion intent');
+    expect(copy.dirty, isTrue);
+  });
+
+  test('billing contract instant sync with 100 small notes sends two distinct requests', () async {
+    for (var i = 0; i < 100; i++) {
+      await repository.save(Note.create()..title = 'fixture $i');
+    }
+    expect(await repository.syncNow(instant: true), isTrue);
+    expect(api.pushes.map((rows) => rows.length), [50, 50]);
+    expect(api.requestIds.toSet().length, 2);
+    expect(api.pushModes, [true, true]);
+    expect(repository.pendingCount, 0);
+  });
+
+  test('billing contract standard sync sends 50 of 100 notes then waits for the hourly window', () async {
+    for (var i = 0; i < 100; i++) {
+      await repository.save(Note.create()..title = 'fixture $i');
+    }
+    expect(await repository.syncNow(), isFalse);
+    expect(api.pushes.single.length, 50);
+    expect(api.pushModes, [false]);
+    expect(repository.pendingCount, 50);
+    expect(repository.nextAutoSyncAt, isNotNull);
+    expect(await repository.syncNow(), isFalse);
+    expect(api.pushes.length, 1, reason: 'second standard request waits');
+    expect(repository.pendingCount, 50);
+  });
+
+  test('billing contract receive-only sync makes no push request', () async {
+    final note = Note.create()..title = 'other device';
+    api.pullRows = [{...note.toRemote(api.user!), 'version': 1,
+      'updated_at': DateTime.now().toUtc().toIso8601String()}];
+    api.sequence = 1;
+    expect(await repository.syncNow(instant: true), isTrue);
+    expect(repository.byId(note.id)!.title, 'other device');
+    expect(api.pushes, isEmpty);
   });
 
   test('R16 unavailable cloud note keeps the cursor and cached notes until retry succeeds', () async {
