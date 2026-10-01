@@ -232,16 +232,14 @@ class _MainPageState extends State<MainPage> {
           const _NotificationBell(),
           const SizedBox(width: AppSpace.sm),
           // Tap = sync (unchanged). Long-press = Atomic Energy popup.
-          GestureDetector(
-            onLongPress: () => showEnergyPopup(context),
-            child: BlocSelector<NotesBloc, NotesState, bool>(
-              selector: (state) => state.syncing,
-              builder: (context, syncing) => CloudButton(
-                ico: "assets/sync.svg",
-                action: _syncData,
-                clr: 0xff5F5EF7,
-                isLoading: syncing,
-              ),
+          BlocSelector<NotesBloc, NotesState, bool>(
+            selector: (state) => state.syncing,
+            builder: (context, syncing) => CloudButton(
+              ico: "assets/sync.svg",
+              action: _syncData,
+              clr: 0xff5F5EF7,
+              isLoading: syncing,
+              onLongPress: () => showEnergyPopup(context),
             ),
           ),
           const SizedBox(width: AppSpace.md),
