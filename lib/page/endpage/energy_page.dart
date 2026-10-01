@@ -225,6 +225,10 @@ class _EnergyViewState extends State<_EnergyView> {
                 const SizedBox(height: AppSpace.sm),
                 _coinsModule(state),
                 const SizedBox(height: AppSpace.sm),
+                if (state.wallet.coinDetails != null) ...[
+                  _coinBatches(state.wallet.coinDetails!),
+                  const SizedBox(height: AppSpace.sm),
+                ],
                 _capacityModule(state),
                 const SizedBox(height: AppSpace.md),
                 GhostButton(
@@ -328,9 +332,39 @@ class _EnergyViewState extends State<_EnergyView> {
             icon: Icons.bolt,
             onTap: noCoins ? null : _convert,
           ),
+          GhostButton(label: 'Retry unconfirmed conversion', onTap: () async {
+            final error = await _cubit.retryPendingConversion();
+            if (mounted) MySnackBar(text: error ?? 'Conversion confirmed. Balance refreshed.', sec: 3000).showMySnackBar(context);
+          }),
         ],
       ),
     );
+  }
+
+  Widget _coinBatches(CoinDetails details) {
+    String date(DateTime value) => '${value.year}-${value.month.toString().padLeft(2, '0')}-${value.day.toString().padLeft(2, '0')} '
+        '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
+    return EditorialModule(child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      const MonoLabel('COIN EXPIRY'),
+      const SizedBox(height: AppSpace.sm),
+      const Text('New coins expire six calendar months after credit. Coins expiring soonest are used first. '
+        'Existing coins from before the policy do not expire. Energy and capacity already obtained are unchanged.', style: AppType.bodySm),
+      const SizedBox(height: AppSpace.sm),
+      Text('${details.nonExpiring} coins never expire.', style: AppType.bodyMd),
+      if (details.nextExpiryAt != null)
+        Text('${details.nextExpiryCoins} coins next expire ${date(details.nextExpiryAt!)} (local time).', style: AppType.bodyMd),
+      Text('Last checked ${date(details.serverTime)}. Refresh for the current balance; the Server confirms spending.', style: AppType.bodySm),
+      Material(color: Colors.transparent, child: ExpansionTile(title: const Text('Credit batches'), children: [
+        for (final batch in details.rows)
+          ListTile(isThreeLine: true, title: Text('${batch.remaining} of ${batch.amount} coins remaining'),
+            subtitle: Text('Credited ${date(batch.creditedAt)}\n'
+              '${batch.expiresAt == null ? 'Never expires' : 'Expiry ${date(batch.expiresAt!)}'} · local time')),
+        if (details.nextCursor != null) GhostButton(label: 'Load more batches', onTap: () async {
+          final message = await _cubit.loadMoreCoinBatches();
+          if (message != null && mounted) MySnackBar(text: message, sec: 3000).showMySnackBar(context);
+        }),
+      ])),
+    ]));
   }
 
   /// The asset name for a tier's particle icon: the tier names are already exactly the

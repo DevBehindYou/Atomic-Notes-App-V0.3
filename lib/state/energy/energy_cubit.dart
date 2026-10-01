@@ -95,6 +95,8 @@ class EnergyCubit extends Cubit<EnergyState> {
   }
 
   Future<void> refresh() => _store.refresh();
+  Future<String?> retryPendingConversion() => _store.retryPendingConversion();
+  Future<String?> loadMoreCoinBatches() => _store.loadMoreCoinBatches();
 
   /// Null on success, else the message to show.
   Future<String?> convertCoins(int coins) => _store.convertCoins(coins);

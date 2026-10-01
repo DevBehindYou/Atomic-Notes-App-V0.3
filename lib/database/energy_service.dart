@@ -156,6 +156,40 @@ class EnergyService extends ChangeNotifier implements EnergyStore {
     }
   }
 
+  bool _loadingBatches = false;
+  @override
+  Future<String?> loadMoreCoinBatches() async {
+    final details = _wallet.coinDetails;
+    if (_loadingBatches || details?.nextCursor == null) return null;
+    final uid = _uid, revision = _api.sessionRevision, generation = _generation;
+    final refreshRequest = _refreshRequest;
+    _loadingBatches = true;
+    try {
+      final result = await _api.coinBatches(cursor: details!.nextCursor);
+      if (uid != _uid || revision != _api.sessionRevision || generation != _generation || refreshRequest != _refreshRequest) {
+        return 'Your balance changed. Refresh and try again.';
+      }
+      _wallet = _wallet.withCoinDetails(details.append(CoinDetails.fromMap(result)), (result['coins'] as num).toInt());
+      notifyListeners();
+      return null;
+    } catch (e) {
+      return _friendly(e);
+    } finally {
+      _loadingBatches = false;
+    }
+  }
+
+  @override
+  Future<String?> retryPendingConversion() async {
+    final uid = _uid, revision = _api.sessionRevision, generation = _generation;
+    try {
+      final amount = await _api.pendingCoinConversion();
+      if (uid != _uid || revision != _api.sessionRevision || generation != _generation) return 'Your session changed. Please retry.';
+      if (amount == null) return 'No unconfirmed conversion.';
+      return await convertCoins(amount);
+    } catch (e) { return _friendly(e); }
+  }
+
   // ---- mutations (server-authoritative) --------------------------------
 
   /// Convert [coins] Atomic Coins into Energy. Returns null on success, or a
@@ -211,7 +245,7 @@ class EnergyService extends ChangeNotifier implements EnergyStore {
   void _adopt(Map<String, dynamic> state) {
     final wallet = state['wallet'];
     if (wallet is Map) {
-      _wallet = Wallet.fromMap(Map<String, dynamic>.from(wallet));
+      _wallet = Wallet.fromMap({...Map<String, dynamic>.from(wallet), 'coin_details': state['coin_details']});
       unawaited(NoteQuota.setLimit(_wallet.noteLimit));
     }
     final limits = state['limits'];
@@ -238,6 +272,12 @@ class EnergyService extends ChangeNotifier implements EnergyStore {
   /// deliberately returns the same code strings the old RPCs raised.
   String _friendly(Object e) {
     final s = e.toString();
+    if (s.startsWith('coin_conversion_pending_')) {
+      return 'Retry your pending conversion of ${s.substring('coin_conversion_pending_'.length)} coins first.';
+    }
+    if (s == 'coin_replay_unavailable') return 'Coin conversion is waiting for a Server update. Please try later.';
+    if (s == 'coin_conversion_busy') return 'A conversion is already in progress.';
+    if (s == 'coin_request_id_required') return 'Update the app before converting coins.';
     if (s.contains('insufficient_coins')) return 'Not enough Atomic Coins.';
     if (s.contains('insufficient_energy')) return 'Not enough Atomic Energy.';
     if (s.contains('note_limit_ceiling')) {

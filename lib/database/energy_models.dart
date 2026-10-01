@@ -103,6 +103,45 @@ class EnergyTx extends Equatable {
   }
 }
 
+/// Server-authoritative batch snapshot. Dates are displayed locally, never used to authorize spending.
+class CoinBatch extends Equatable {
+  const CoinBatch({required this.id, required this.source, required this.amount,
+    required this.remaining, required this.creditedAt, this.expiresAt});
+  final String id, source;
+  final int amount, remaining;
+  final DateTime creditedAt;
+  final DateTime? expiresAt;
+  factory CoinBatch.fromMap(Map<String, dynamic> m) => CoinBatch(
+    id: m['id'] as String, source: m['source'] as String,
+    amount: (m['amount'] as num).toInt(), remaining: (m['remaining'] as num).toInt(),
+    creditedAt: DateTime.parse(m['credited_at'] as String).toLocal(),
+    expiresAt: m['expires_at'] == null ? null : DateTime.parse(m['expires_at'] as String).toLocal());
+  @override
+  List<Object?> get props => [id, source, amount, remaining, creditedAt, expiresAt];
+}
+
+class CoinDetails extends Equatable {
+  const CoinDetails({required this.nonExpiring, required this.nextExpiryCoins,
+    required this.serverTime, required this.rows, this.nextExpiryAt, this.nextCursor});
+  final int nonExpiring, nextExpiryCoins;
+  final DateTime serverTime;
+  final DateTime? nextExpiryAt;
+  final List<CoinBatch> rows;
+  final String? nextCursor;
+  factory CoinDetails.fromMap(Map<String, dynamic> m) => CoinDetails(
+    nonExpiring: (m['non_expiring_coins'] as num).toInt(),
+    nextExpiryCoins: (m['next_expiry_coins'] as num).toInt(),
+    serverTime: DateTime.parse(m['server_time'] as String).toLocal(),
+    nextExpiryAt: m['next_expiry_at'] == null ? null : DateTime.parse(m['next_expiry_at'] as String).toLocal(),
+    rows: (m['rows'] as List).map((r) => CoinBatch.fromMap(Map<String, dynamic>.from(r as Map))).toList(),
+    nextCursor: m['next_cursor'] as String?);
+  CoinDetails append(CoinDetails next) => CoinDetails(nonExpiring: next.nonExpiring,
+    nextExpiryCoins: next.nextExpiryCoins, serverTime: next.serverTime, nextExpiryAt: next.nextExpiryAt,
+    rows: [...rows, ...next.rows.where((n) => !rows.any((old) => old.id == n.id))], nextCursor: next.nextCursor);
+  @override
+  List<Object?> get props => [nonExpiring, nextExpiryCoins, serverTime, nextExpiryAt, rows, nextCursor];
+}
+
 /// The current balances, read from the `atomicuser` row.
 class Wallet extends Equatable {
   final int coins;
@@ -112,6 +151,7 @@ class Wallet extends Equatable {
 
   /// How many notes this account may hold, as the Server enforces it.
   final int noteLimit;
+  final CoinDetails? coinDetails;
 
   const Wallet({
     required this.coins,
@@ -119,11 +159,16 @@ class Wallet extends Equatable {
     required this.energyCap,
     required this.lastDailyGrantAt,
     this.noteLimit = 30,
+    this.coinDetails,
   });
 
   @override
   List<Object?> get props =>
-      [coins, energy, energyCap, lastDailyGrantAt, noteLimit];
+      [coins, energy, energyCap, lastDailyGrantAt, noteLimit, coinDetails];
+
+  Wallet withCoinDetails(CoinDetails details, int currentCoins) => Wallet(coins: currentCoins,
+    energy: energy, energyCap: energyCap, lastDailyGrantAt: lastDailyGrantAt,
+    noteLimit: noteLimit, coinDetails: details);
 
   /// Empty wallet used before the first load / for a fresh account.
   static const Wallet empty =
@@ -137,6 +182,8 @@ class Wallet extends Equatable {
     int asInt(dynamic v, [int fallback = 0]) =>
         v is int ? v : int.tryParse('${v ?? fallback}') ?? fallback;
     return Wallet(
+      coinDetails: m['coin_details'] is Map && m['coin_details']['enabled'] == true
+          ? CoinDetails.fromMap(Map<String, dynamic>.from(m['coin_details'] as Map)) : null,
       coins: asInt(m['coins']),
       energy: asInt(m['energy']),
       energyCap: asInt(m['energy_cap'], 120),
