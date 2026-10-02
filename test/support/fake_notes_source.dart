@@ -17,6 +17,8 @@ class FakeNotesSource extends ChangeNotifier implements NotesSource {
   @override
   int limit;
 
+  bool isSyncing = false;
+
   @override
   String? lastError;
 
