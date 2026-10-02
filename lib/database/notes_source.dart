@@ -23,6 +23,9 @@ abstract interface class NotesSource implements Listenable {
   /// How many notes wait to be sent to the cloud.
   int get pendingCount;
 
+  /// A repository sync is running, whether requested by a timer or by the user.
+  bool get isSyncing;
+
   /// The reason the last sync failed, in words for the user.
   String? get lastError;
 

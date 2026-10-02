@@ -45,6 +45,7 @@ class NotesBloc extends Bloc<NotesEvent, NotesState> {
   final int Function() _instantSyncCost;
 
   int _noticeCount = 0;
+  bool _manualSyncInProgress = false;
 
   void _sourceChanged() {
     if (!isClosed) add(const _NotesSourceChanged());
@@ -59,7 +60,8 @@ class NotesBloc extends Bloc<NotesEvent, NotesState> {
   // ---- the snapshot -----------------------------------------------------
 
   /// The state for [base]'s filter, search and selection, read from [source] now.
-  static NotesState _snapshot(NotesSource source, NotesState base) {
+  static NotesState _snapshot(NotesSource source, NotesState base,
+      {bool manualSyncInProgress = false}) {
     final all = source.visible(filter: base.filter);
     final q = base.query.trim().toLowerCase();
     final shown = q.isEmpty
@@ -72,16 +74,20 @@ class NotesBloc extends Bloc<NotesEvent, NotesState> {
             .toList();
     // Drop selections for notes that vanished under us (deleted on another device, or pulled in
     // as a tombstone). The same set is kept when nothing was dropped.
-    final stillThere =
-        base.selected.where((id) => !(source.byId(id)?.deleted ?? true)).toSet();
+    final stillThere = base.selected
+        .where((id) => !(source.byId(id)?.deleted ?? true))
+        .toSet();
     final nextAutoSyncAt = source.nextAutoSyncAt;
     return base.copyWith(
       notes: List<Note>.unmodifiable(shown),
       signature: noteSignature(shown),
-      selected: stillThere.length == base.selected.length ? base.selected : stillThere,
+      selected: stillThere.length == base.selected.length
+          ? base.selected
+          : stillThere,
       count: source.count,
       limit: source.limit,
       pending: source.pendingCount,
+      syncing: manualSyncInProgress || source.isSyncing,
       binCount: source.binNotes.length,
       nextAutoSyncAt: nextAutoSyncAt,
       // A cleared source deadline is a change, not an omitted state update.
@@ -101,21 +107,22 @@ class NotesBloc extends Bloc<NotesEvent, NotesState> {
 
   // ---- events -----------------------------------------------------------
 
+  NotesState _currentSnapshot(NotesState base) =>
+      _snapshot(_source, base, manualSyncInProgress: _manualSyncInProgress);
+
   void _onSourceChanged(_NotesSourceChanged event, Emitter<NotesState> emit) =>
-      _put(emit, _snapshot(_source, state));
+      _put(emit, _currentSnapshot(state));
 
   void _onViewReset(NotesViewReset event, Emitter<NotesState> emit) => _put(
       emit,
-      _snapshot(
-          _source,
-          state.copyWith(
-              filter: NoteFilter.newest, query: '', selected: const {})));
+      _currentSnapshot(state
+          .copyWith(filter: NoteFilter.newest, query: '', selected: const {})));
 
   void _onFilterChanged(NotesFilterChanged event, Emitter<NotesState> emit) =>
-      _put(emit, _snapshot(_source, state.copyWith(filter: event.filter)));
+      _put(emit, _currentSnapshot(state.copyWith(filter: event.filter)));
 
   void _onQueryChanged(NotesQueryChanged event, Emitter<NotesState> emit) =>
-      _put(emit, _snapshot(_source, state.copyWith(query: event.query)));
+      _put(emit, _currentSnapshot(state.copyWith(query: event.query)));
 
   void _onSelectionToggled(
       NoteSelectionToggled event, Emitter<NotesState> emit) {
@@ -166,38 +173,44 @@ class NotesBloc extends Bloc<NotesEvent, NotesState> {
 
   Future<void> _onSyncRequested(
       NotesSyncRequested event, Emitter<NotesState> emit) async {
-    if (state.syncing) return;
+    if (_manualSyncInProgress || _source.isSyncing) return;
     // Read the switch at the moment of use: it can be flipped on the settings screen at any time.
     if (!_isSyncEnabled()) {
       emit(state.copyWith(
           notice: _notice('Cloud Sync is Off', 1000, fromSync: true)));
       return;
     }
+    _manualSyncInProgress = true;
     emit(state.copyWith(syncing: true));
-    if (!await _isOnline()) {
+    try {
+      if (!await _isOnline()) {
+        emit(state.copyWith(
+            syncing: _source.isSyncing,
+            notice: _notice('No Internet Connection!', 1000, fromSync: true)));
+        return;
+      }
+      // The energy gate lives inside the sync: it charges only when there is something to upload
+      // and refuses when the balance is short.
+      final hadPending = _source.pendingCount > 0;
+      final ok = await _source.syncNow(instant: event.instant);
       emit(state.copyWith(
-          syncing: false,
-          notice: _notice('No Internet Connection!', 1000, fromSync: true)));
-      return;
+        syncing: _source.isSyncing,
+        notice: ok
+            ? _notice(
+                hadPending
+                    ? 'Instant sync  ·  -${_instantSyncCost()} energy'
+                    : 'Already up to date',
+                1600,
+                fromSync: true)
+            : _notice(
+                _source.lastError ??
+                    'Sync failed — changes are still only on this device',
+                3000,
+                fromSync: true),
+      ));
+    } finally {
+      _manualSyncInProgress = false;
+      if (!emit.isDone) _put(emit, state.copyWith(syncing: _source.isSyncing));
     }
-    // The energy gate lives inside the sync: it charges only when there is something to upload
-    // and refuses when the balance is short.
-    final hadPending = _source.pendingCount > 0;
-    final ok = await _source.syncNow(instant: event.instant);
-    emit(state.copyWith(
-      syncing: false,
-      notice: ok
-          ? _notice(
-              hadPending
-                  ? 'Instant sync  ·  -${_instantSyncCost()} energy'
-                  : 'Already up to date',
-              1600,
-              fromSync: true)
-          : _notice(
-              _source.lastError ??
-                  'Sync failed — changes are still only on this device',
-              3000,
-              fromSync: true),
-    ));
   }
 }

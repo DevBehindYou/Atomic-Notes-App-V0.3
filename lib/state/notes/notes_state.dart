@@ -22,7 +22,7 @@ final class NotesNotice extends Equatable {
 }
 
 /// What the notes screens show. Immutable, and equal to the previous state when nothing that is
-/// shown changed, so a store that only says "I am syncing" rebuilds nothing.
+/// shown changed. Sync activity changes the status controls without changing the note signature.
 final class NotesState extends Equatable {
   const NotesState({
     this.notes = const [],
@@ -59,7 +59,7 @@ final class NotesState extends Equatable {
   /// Notes in the Recycle Bin.
   final int binCount;
 
-  /// The sync button was pressed and has not finished.
+  /// A repository sync or the manual button's connectivity check is in progress.
   final bool syncing;
   final NotesNotice? notice;
 
