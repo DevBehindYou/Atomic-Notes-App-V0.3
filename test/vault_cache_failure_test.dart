@@ -117,24 +117,30 @@ void main() {
       expect(subject.isLocked, isTrue);
       expect(subject.isUnlocked, isFalse);
       await expectLater(
-          subject.encryptContent({'title': 'fixture'}), throwsStateError);
+          () => subject.encryptContent({'title': 'fixture'}), throwsStateError);
       expect(store.values, before);
       expect(store.writes, 0);
       expect(store.deletes, 0);
     });
   }
 
-  test('startup malformed cached key stays locked without overwriting it',
-      () async {
-    final store = _DeviceStore();
-    store.values[entry] = 'not valid base64!';
-    final subject = await vault(store);
-    await subject.init();
-    expect(subject.isLocked, isTrue);
-    expect(store.values[entry], 'not valid base64!');
-    expect(store.writes, 0);
-    expect(store.deletes, 0);
-  });
+  for (final cached in [
+    'not valid base64!',
+    base64Encode([1, 2, 3])
+  ]) {
+    test(
+        'startup invalid cached key stays locked without overwriting it ($cached)',
+        () async {
+      final store = _DeviceStore();
+      store.values[entry] = cached;
+      final subject = await vault(store);
+      await subject.init();
+      expect(subject.isLocked, isTrue);
+      expect(store.values[entry], cached);
+      expect(store.writes, 0);
+      expect(store.deletes, 0);
+    });
+  }
 
   test('startup unavailable key can be retried without a destructive reset',
       () async {
