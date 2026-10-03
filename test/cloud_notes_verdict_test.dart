@@ -42,12 +42,17 @@ void main() {
         ..cloudNotes = cloud;
       addTearDown(source.dispose);
       await _open(tester, source);
-      final labels = tester.widgetList<GhostButton>(find.byType(GhostButton))
-          .map((button) => button.label).toList();
+      final labels = tester
+          .widgetList<GhostButton>(find.byType(GhostButton))
+          .map((button) => button.label)
+          .toList();
       expect(labels, contains('Sync now  ·  10 energy / batch'));
-      if (cloud == 0) expect(labels, contains('Upload all  ·  10 energy / batch'));
+      if (cloud == 0)
+        expect(labels, contains('Upload all  ·  10 energy / batch'));
       expect(find.textContaining('Each charged upload batch'), findsOneWidget);
-      expect(find.textContaining('Upload all marks every live note for upload.'), findsOneWidget);
+      expect(
+          find.textContaining('Upload all marks every live note for upload.'),
+          findsOneWidget);
       expect(source.markAllCalls, 0);
       expect(source.syncCalls, 0);
       await tester.pumpWidget(const SizedBox.shrink());

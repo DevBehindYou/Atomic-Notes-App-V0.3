@@ -41,7 +41,7 @@ class _CloudNotesView extends StatefulWidget {
 class _CloudNotesViewState extends State<_CloudNotesView> {
   Future<void> _sync({required bool uploadAll}) async {
     final cubit = context.read<CloudNotesCubit>();
-    // Both buttons on this page are instant sync: they send now and cost 10 energy when there is something to send.
+    // Both actions use instant sync. Existing Server pricing applies per charged upload batch.
     final message = await cubit.sync(uploadAll: uploadAll);
     if (message == null || !mounted) return;
     MySnackBar(text: message.text, sec: message.millis).showMySnackBar(context);
@@ -65,7 +65,8 @@ class _CloudNotesViewState extends State<_CloudNotesView> {
     final int onDevice = state.onDevice;
     final int waiting = state.waiting;
     if (!SyncStatusHelper.isSyncOn) {
-      return const _Verdict('Sync off',
+      return const _Verdict(
+          'Sync off',
           'Cloud Sync is turned off, so notes stay on this device only.',
           AppColors.outline);
     }
@@ -75,7 +76,8 @@ class _CloudNotesViewState extends State<_CloudNotesView> {
           'Checking', 'Counting the notes in your cloud…', AppColors.outline);
     }
     if (cloud == null) {
-      return const _Verdict('Check failed',
+      return const _Verdict(
+          'Check failed',
           'The cloud note count could not be checked. Your local notes remain on this device. Try Check cloud again.',
           AppColors.error);
     }
@@ -89,7 +91,8 @@ class _CloudNotesViewState extends State<_CloudNotesView> {
       );
     }
     if (cloud == onDevice) {
-      return const _Verdict('Counts match',
+      return const _Verdict(
+          'Counts match',
           'This device and the cloud hold the same number of notes. This check does not compare note contents.',
           AppColors.signal);
     }
@@ -99,7 +102,8 @@ class _CloudNotesViewState extends State<_CloudNotesView> {
           'The cloud has fewer notes than this device. This check does not compare note contents. Sync to check for changes.',
           AppColors.error);
     }
-    return const _Verdict('More in cloud',
+    return const _Verdict(
+        'More in cloud',
         'The cloud has more notes than this device. This check does not compare note contents. Sync to check for changes.',
         AppColors.signal);
   }
@@ -225,7 +229,9 @@ class _CloudNotesViewState extends State<_CloudNotesView> {
                       const SizedBox(height: AppSpace.sm),
                       _LedgerRow(
                           label: 'Last check',
-                          value: state.checkedAt == null ? '—' : _stamp(state.checkedAt!)),
+                          value: state.checkedAt == null
+                              ? '—'
+                              : _stamp(state.checkedAt!)),
                       const SizedBox(height: AppSpace.sm),
                       const HairRule(),
                       const SizedBox(height: AppSpace.sm),
@@ -251,7 +257,8 @@ class _CloudNotesViewState extends State<_CloudNotesView> {
                 ),
                 const SizedBox(height: AppSpace.sm + 2),
                 GhostButton(
-                  label: 'Sync now  ·  ${EnergyService.syncInstantCost} energy',
+                  label:
+                      'Sync now  ·  ${EnergyService.syncInstantCost} energy / batch',
                   icon: Icons.sync,
                   onTap: (!syncOn || working || checking)
                       ? null
@@ -260,7 +267,8 @@ class _CloudNotesViewState extends State<_CloudNotesView> {
                 if (syncOn && cloud != null && cloud < onDevice) ...[
                   const SizedBox(height: AppSpace.sm + 2),
                   GhostButton(
-                    label: 'Upload all  ·  ${EnergyService.syncInstantCost} energy',
+                    label:
+                        'Upload all  ·  ${EnergyService.syncInstantCost} energy / batch',
                     icon: Icons.cloud_upload_outlined,
                     onTap: (working || checking)
                         ? null
@@ -272,10 +280,13 @@ class _CloudNotesViewState extends State<_CloudNotesView> {
                 const SizedBox(height: AppSpace.md),
                 const Text(
                   'Checking the cloud only counts its notes. It never changes '
-                  'what is on this device. Sync now and Upload all send only '
-                  'the notes you edited and cost ${EnergyService.syncInstantCost} '
-                  'energy; with nothing to send they are free. Automatic sync '
-                  'runs once an hour and costs ${EnergyService.syncStandardCost}.',
+                  'what is on this device. Sync now sends waiting changes. '
+                  'Upload all marks every live note for upload. Each charged upload batch '
+                  'costs ${EnergyService.syncInstantCost} energy and carries up to 50 '
+                  'changes, subject to the size limit. Larger uploads can cost more. '
+                  'With nothing to upload, sync is free. Standard uploads cost '
+                  '${EnergyService.syncStandardCost} energy per batch, with one '
+                  'standard upload window per account per hour.',
                   style: AppType.bodySm,
                 ),
               ],
