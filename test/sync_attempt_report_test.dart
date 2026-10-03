@@ -181,6 +181,48 @@ void main() {
     });
   }
 
+  test('R8 a later batch with a lost response makes the overall cost unknown', () async {
+    api.pushReceipt = const PushReceipt(charged: 10, refunded: 0);
+    for (var i = 0; i < 100; i++) { await addNote('note $i'); }
+    api.beforePush = () async {
+      if (api.pushes.length == 2) throw TimeoutException('second batch response lost');
+    };
+    final report = await repository.syncWithReport(instant: true);
+    expect(report.completed, isFalse);
+    expect(report.operations.length, 2);
+    expect(report.operations.first.charged, 10);
+    expect(report.operations.last.charged, isNull);
+    expect(report.netCharge, isNull);
+    expect(repository.pendingCount, 50);
+  });
+
+  test('R8 session revision alone retires the report before repository teardown', () async {
+    await addNote('session');
+    api.pushReceipt = const PushReceipt(charged: 10, refunded: 0);
+    final entered = Completer<void>(), gate = Completer<void>();
+    api.beforePush = () { entered.complete(); return gate.future; };
+    final running = repository.syncWithReport(instant: true);
+    await entered.future;
+    api.sessionRevision++;
+    gate.complete();
+    final report = await running;
+    expect(report.activity, SyncAttemptActivity.retired);
+    expect(report.completed, isFalse);
+    expect(report.operations, isEmpty);
+    expect(report.netCharge, isNull);
+  });
+
+  test('R8 completion listeners cannot replace the caller error snapshot', () async {
+    api.pullFailure = ApiException('note_content_unavailable', 409);
+    repository.addListener(() {
+      if (!repository.isSyncing && repository.lastError != null) repository.lastError = null;
+    });
+    final report = await repository.syncWithReport(instant: true);
+    expect(report.completed, isFalse);
+    expect(report.errorMessage, contains('missing or unreadable'));
+    expect(repository.lastError, isNull);
+  });
+
   test('R8 offline attempt never repeats the preceding receipt', () async {
     await addNote('first');
     api.pushReceipt = const PushReceipt(charged: 10, refunded: 0);

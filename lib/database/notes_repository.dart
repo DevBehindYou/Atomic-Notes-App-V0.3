@@ -15,6 +15,27 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart' show AppLifecycleState, WidgetsBinding, WidgetsBindingObserver;
 import 'package:hive_ce/hive_ce.dart';
 
+/// Call-local receipt collection; no result is retained across callers/accounts.
+class _SyncAttemptCollector {
+  SyncAttemptActivity activity = SyncAttemptActivity.notStarted;
+  String? errorMessage;
+  final operations = <String, SyncOperationReport>{};
+
+  void submitted(String requestId, bool instant, bool recovered) {
+    operations.putIfAbsent(requestId, () => SyncOperationReport(
+      requestId: requestId, instant: instant, recovered: recovered));
+  }
+
+  void received(PushReply reply) {
+    final previous = operations[reply.requestId];
+    final receipt = reply.receipt;
+    if (previous == null || previous.instant != reply.instant || receipt == null) return;
+    operations[reply.requestId] = SyncOperationReport(requestId: previous.requestId,
+      instant: previous.instant, recovered: previous.recovered,
+      charged: receipt.charged, refunded: receipt.refunded);
+  }
+}
+
 /// Single source of truth for notes, and the sync engine.
 ///
 /// Replaces the old model where seven screens each built their own
@@ -531,15 +552,26 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   /// nothing is pushed — so at zero energy local notes keep working but don't
   /// reach the cloud until energy is topped up.
   Future<SyncAttemptReport> syncWithReport({bool instant = false}) async {
-    final completed = await syncNow(instant: instant);
-    return SyncAttemptReport(completed: completed, activity: SyncAttemptActivity.notStarted);
+    final uid = _userId, lifecycle = _lifecycleRevision;
+    final session = _api.sessionRevision;
+    final report = _SyncAttemptCollector();
+    final completed = await _syncNow(instant: instant, report: report);
+    if (uid != _userId || lifecycle != _lifecycleRevision || session != _api.sessionRevision) {
+      return SyncAttemptReport(completed: false, activity: SyncAttemptActivity.retired);
+    }
+    return SyncAttemptReport(completed: completed, activity: report.activity,
+      operations: report.operations.values, errorMessage: report.errorMessage);
   }
 
   @override
-  Future<bool> syncNow({bool instant = false}) async {
+  Future<bool> syncNow({bool instant = false}) => _syncNow(instant: instant);
+
+  Future<bool> _syncNow({required bool instant, _SyncAttemptCollector? report}) async {
     final waitingUser = _userId;
     if (_syncing) {
+      report?.activity = SyncAttemptActivity.joined;
       await _whenIdle();
+      report?.errorMessage = lastError;
       return waitingUser != null && waitingUser == _userId &&
           pendingCount == 0 && !_hasUnansweredPush(waitingUser) && lastError == null;
     }
@@ -557,12 +589,14 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     }
     if (conn.contains(ConnectivityResult.none)) {
       lastError = 'Offline — changes are saved on this device';
+      report?.errorMessage = lastError;
       notifyListeners();
       return false;
     }
 
     // Acquire locally before the first await that starts a sync operation.
     _syncing = true;
+    report?.activity = SyncAttemptActivity.started;
     lastError = null;
     notifyListeners();
     try {
@@ -576,7 +610,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
             hasUnansweredPush: _hasUnansweredPush(uid))) {
           break;
         }
-        drained = !await _push(uid, instant: instant);
+        drained = !await _push(uid, instant: instant, report: report);
       }
       await _pull(uid);
       unawaited(_refreshEnergy());
@@ -620,6 +654,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
               : text;
       return false;
     } finally {
+      report?.errorMessage = lastError;
       _inFlightIds.clear();
       _syncing = false;
       final done = _syncDone;
@@ -680,10 +715,11 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   }
 
   /// Sends one batch. Returns true when more changes are still waiting.
-  Future<bool> _push(String uid, {required bool instant}) async {
+  Future<bool> _push(String uid, {required bool instant, _SyncAttemptCollector? report}) async {
     if (_stopped || _userId != uid) return false;
     Map<String, dynamic>? pending = _hasUnansweredPush(uid)
         ? Map<String, dynamic>.from(_box.get(_pendingPushKey) as Map) : null;
+    final recovered = pending != null;
     if (pending == null) {
       // A note edited back to what the cloud holds needs no upload.
       var settled = false;
@@ -727,8 +763,10 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     }
     final rows = (pending['rows'] as List).map((row) => Map<String, dynamic>.from(row as Map)).toList();
     final List<Map<String, dynamic>> results;
+    final PushReply reply;
     try {
-      final reply = await _api.pushNotes(rows, requestId: pending['requestId'] as String, instant: pending['instant'] == true);
+      report?.submitted(pending['requestId'] as String, pending['instant'] == true, recovered);
+      reply = await _api.pushNotes(rows, requestId: pending['requestId'] as String, instant: pending['instant'] == true);
       results = reply.results;
     } on ApiException catch (e) {
       if (e.code == 'sync_cooldown') {
@@ -745,6 +783,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
       rethrow;
     }
     if (_stopped || _userId != uid) return false;
+    report?.received(reply);
     final versions = pending['versions'] as Map;
     var conflicted = false;
     var failed = false;

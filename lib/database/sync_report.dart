@@ -24,7 +24,9 @@ class SyncAttemptReport {
 
   int? _total(int? Function(SyncOperationReport) amount) {
     if (activity != SyncAttemptActivity.started ||
-        operations.any((operation) => amount(operation) == null)) return null;
+        operations.any((operation) => amount(operation) == null)) {
+      return null;
+    }
     return operations.fold<int>(0, (total, operation) => total + amount(operation)!);
   }
 
