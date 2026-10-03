@@ -35,6 +35,7 @@ final class NotesState extends Equatable {
     this.pending = 0,
     this.binCount = 0,
     this.syncing = false,
+    this.syncError,
     this.notice,
     this.nextAutoSyncAt,
   });
@@ -61,6 +62,9 @@ final class NotesState extends Equatable {
 
   /// A repository sync or the manual button's connectivity check is in progress.
   final bool syncing;
+
+  /// The latest repository failure, including automatic attempts; null after a retry starts.
+  final String? syncError;
   final NotesNotice? notice;
 
   /// When the next automatic sync can send changes, or null when it is open now.
@@ -88,6 +92,8 @@ final class NotesState extends Equatable {
     int? pending,
     int? binCount,
     bool? syncing,
+    String? syncError,
+    bool clearSyncError = false,
     NotesNotice? notice,
     DateTime? nextAutoSyncAt,
     bool clearNextAutoSyncAt = false,
@@ -103,6 +109,7 @@ final class NotesState extends Equatable {
         pending: pending ?? this.pending,
         binCount: binCount ?? this.binCount,
         syncing: syncing ?? this.syncing,
+        syncError: clearSyncError ? null : (syncError ?? this.syncError),
         notice: notice ?? this.notice,
         nextAutoSyncAt:
             clearNextAutoSyncAt ? null : (nextAutoSyncAt ?? this.nextAutoSyncAt),
@@ -119,6 +126,7 @@ final class NotesState extends Equatable {
         pending,
         binCount,
         syncing,
+        syncError,
         notice,
         nextAutoSyncAt,
       ];

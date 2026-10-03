@@ -88,6 +88,8 @@ class NotesBloc extends Bloc<NotesEvent, NotesState> {
       limit: source.limit,
       pending: source.pendingCount,
       syncing: manualSyncInProgress || source.isSyncing,
+      syncError: source.lastError,
+      clearSyncError: source.lastError == null,
       binCount: source.binNotes.length,
       nextAutoSyncAt: nextAutoSyncAt,
       // A cleared source deadline is a change, not an omitted state update.
