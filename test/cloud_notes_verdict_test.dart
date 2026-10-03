@@ -47,8 +47,9 @@ void main() {
           .map((button) => button.label)
           .toList();
       expect(labels, contains('Sync now  ·  10 energy / batch'));
-      if (cloud == 0)
+      if (cloud == 0) {
         expect(labels, contains('Upload all  ·  10 energy / batch'));
+      }
       expect(find.textContaining('Each charged upload batch'), findsOneWidget);
       expect(
           find.textContaining('Upload all marks every live note for upload.'),
