@@ -19,7 +19,6 @@ NotesBloc _bloc(
       source: source,
       isSyncEnabled: () => syncOn,
       isOnline: () async => online,
-      instantSyncCost: () => 10,
     );
 
 FakeNotesSource _source() => FakeNotesSource(notes: [
@@ -369,7 +368,7 @@ void main() {
       final source = _source();
       final online = Completer<bool>();
       final bloc = NotesBloc(source: source, isSyncEnabled: () => true,
-        isOnline: () => online.future, instantSyncCost: () => 10);
+        isOnline: () => online.future);
       addTearDown(bloc.close);
       bloc.add(const NotesSyncRequested(instant: true));
       await Future<void>.delayed(Duration.zero);

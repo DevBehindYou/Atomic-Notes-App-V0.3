@@ -1,4 +1,3 @@
-import 'package:atomic_notes/database/energy_service.dart';
 import 'package:atomic_notes/database/notes_repository.dart';
 import 'package:atomic_notes/database/notification_service.dart';
 import 'package:atomic_notes/database/sync_status.dart';
@@ -25,7 +24,6 @@ class AppBlocs extends StatelessWidget {
               source: NotesRepository.instance,
               isSyncEnabled: () => SyncStatusHelper.isSyncOn,
               isOnline: _hasConnection,
-              instantSyncCost: () => EnergyService.syncInstantCost,
             ),
           ),
           BlocProvider<ProfileCubit>(

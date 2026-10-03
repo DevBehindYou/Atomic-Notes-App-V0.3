@@ -44,7 +44,6 @@ Future<NotesBloc> _open(WidgetTester tester, FakeNotesSource source) async {
     source: source,
     isSyncEnabled: () => true,
     isOnline: () async => true,
-    instantSyncCost: () => 10,
   );
   addTearDown(bloc.close);
   await tester.pumpWidget(MaterialApp(
@@ -151,7 +150,6 @@ void main() {
         source: _source(),
         isSyncEnabled: () => true,
         isOnline: () async => true,
-        instantSyncCost: () => 10,
       );
       addTearDown(bloc.close);
       await tester.pumpWidget(MaterialApp(

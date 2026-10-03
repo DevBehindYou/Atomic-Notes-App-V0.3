@@ -285,8 +285,11 @@ class _EnergyViewState extends State<_EnergyView> {
           ),
           const SizedBox(height: AppSpace.sm),
           Text(
-            '+20 energy every 24h, up to 120. Automatic sync 5 (once an hour), '
-            'instant sync 10. Local notes are always free.',
+            '+20 energy every 24h, up to 120. Each automatic upload batch costs '
+            '${state.limits.syncStandardCost} energy; the hourly window is shared '
+            'across your account. Each instant upload batch costs '
+            '${state.limits.syncInstantCost}. Large syncs can use multiple batches. '
+            'Receive-only sync is free. Local notes are always free.',
             style: AppType.bodySm.copyWith(color: AppColors.outlineVariant),
           ),
         ],
