@@ -7,6 +7,7 @@ import 'package:atomic_notes/database/note.dart';
 import 'package:atomic_notes/database/note_quota.dart';
 import 'package:atomic_notes/database/notes_source.dart';
 import 'package:atomic_notes/database/sync_policy.dart';
+import 'package:atomic_notes/database/sync_report.dart';
 import 'package:atomic_notes/database/sync_status.dart';
 import 'package:atomic_notes/security/vault.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -529,6 +530,11 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   /// cover the upload, the notes stay safely on the device (still dirty) and
   /// nothing is pushed — so at zero energy local notes keep working but don't
   /// reach the cloud until energy is topped up.
+  Future<SyncAttemptReport> syncWithReport({bool instant = false}) async {
+    final completed = await syncNow(instant: instant);
+    return SyncAttemptReport(completed: completed, activity: SyncAttemptActivity.notStarted);
+  }
+
   @override
   Future<bool> syncNow({bool instant = false}) async {
     final waitingUser = _userId;
