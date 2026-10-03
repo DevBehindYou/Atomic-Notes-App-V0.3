@@ -111,14 +111,18 @@ class _EnergyIntroScreenState extends State<EnergyIntroScreen> {
               ),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(AppSpace.screenMargin, 0,
-                  AppSpace.screenMargin, AppSpace.lg),
+              padding: const EdgeInsets.fromLTRB(
+                  AppSpace.screenMargin, 0, AppSpace.screenMargin, AppSpace.lg),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   const HairRule(color: AppColors.ink),
                   const SizedBox(height: AppSpace.md),
-                  Row(
+                  Wrap(
+                    alignment: WrapAlignment.spaceBetween,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: AppSpace.sm,
+                    runSpacing: AppSpace.sm,
                     children: [
                       GestureDetector(
                         onTap: _finish,
@@ -129,7 +133,6 @@ class _EnergyIntroScreenState extends State<EnergyIntroScreen> {
                           child: MonoLabel('SKIP'),
                         ),
                       ),
-                      const Spacer(),
                       SmoothPageIndicator(
                         controller: _controller,
                         count: _slides.length,
@@ -141,7 +144,6 @@ class _EnergyIntroScreenState extends State<EnergyIntroScreen> {
                           activeDotColor: AppColors.signal,
                         ),
                       ),
-                      const Spacer(),
                       _onLastPage
                           ? InkActionButton(
                               label: 'Got it',
@@ -201,7 +203,8 @@ class _EnergyIntroPage extends StatelessWidget {
         children: [
           Row(
             children: [
-              Expanded(child: MonoLabel(slide.eyebrow, color: AppColors.signal)),
+              Expanded(
+                  child: MonoLabel(slide.eyebrow, color: AppColors.signal)),
               MonoLabel(step, small: true),
             ],
           ),
