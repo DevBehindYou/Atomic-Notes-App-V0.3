@@ -56,6 +56,18 @@ Future<NotesBloc> _open(WidgetTester tester, FakeNotesSource source) async {
 
 void main() {
   group('what the screen shows', () {
+    testWidgets('R19 automatic sync reaches the mascot without a button press', (tester) async {
+      final source = _source();
+      source.byId('c')!.touch();
+      await _open(tester, source);
+      source.changeBehindTheScenes(() => source.isSyncing = true);
+      await tester.pump();
+      await tester.pump();
+      await tester.tap(find.byType(Image));
+      await tester.pump();
+      expect(find.text('Syncing 1 change now.'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 4));
+    });
     testWidgets('the mascot drops a future wait when the source clears its cooldown', (tester) async {
       final source = _source()
         ..nextAutoSyncAt = DateTime.now().add(const Duration(minutes: 40));

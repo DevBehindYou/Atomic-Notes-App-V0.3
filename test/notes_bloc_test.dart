@@ -1,6 +1,8 @@
 // The notes state: what the screens show, and when it changes. The store is a fake in memory,
 // so these need neither Hive nor the network.
 
+import 'dart:async';
+
 import 'package:atomic_notes/database/note.dart';
 import 'package:atomic_notes/state/notes/notes_bloc.dart';
 import 'package:bloc_test/bloc_test.dart';
@@ -327,6 +329,61 @@ void main() {
   });
 
   group('the sync button', () {
+    test('R19 starts busy when automatic sync already runs', () {
+      final source = _source()..isSyncing = true;
+      final bloc = _bloc(source);
+      addTearDown(bloc.close);
+      expect(bloc.state.syncing, isTrue);
+      expect(bloc.state.notice, isNull);
+    });
+
+    test('R19 automatic activity reaches state without losing the view or starting another sync', () async {
+      final source = _source();
+      final bloc = _bloc(source);
+      addTearDown(bloc.close);
+      bloc.add(const NotesQueryChanged('Trip'));
+      bloc.add(const NoteSelectionToggled('c'));
+      await Future<void>.delayed(Duration.zero);
+      final states = <NotesState>[];
+      final subscription = bloc.stream.listen(states.add);
+      addTearDown(subscription.cancel);
+      source.changeBehindTheScenes(() => source.isSyncing = true);
+      await Future<void>.delayed(Duration.zero);
+      expect(bloc.state.syncing, isTrue);
+      expect(bloc.state.query, 'Trip');
+      expect(bloc.state.selected, {'c'});
+      source.poke();
+      await Future<void>.delayed(Duration.zero);
+      expect(states, hasLength(1));
+      bloc.add(const NotesSyncRequested(instant: true));
+      await Future<void>.delayed(Duration.zero);
+      expect(source.syncCalls, 0);
+      source.changeBehindTheScenes(() => source.isSyncing = false);
+      await Future<void>.delayed(Duration.zero);
+      expect(bloc.state.syncing, isFalse);
+      expect(states, hasLength(2));
+      expect(bloc.state.notice, isNull, reason: 'automatic activity is not a manual billing notice');
+    });
+
+    test('R19 source and view changes do not clear a manual connectivity check', () async {
+      final source = _source();
+      final online = Completer<bool>();
+      final bloc = NotesBloc(source: source, isSyncEnabled: () => true,
+        isOnline: () => online.future, instantSyncCost: () => 10);
+      addTearDown(bloc.close);
+      bloc.add(const NotesSyncRequested(instant: true));
+      await Future<void>.delayed(Duration.zero);
+      source.poke();
+      bloc.add(const NotesQueryChanged('Trip'));
+      await Future<void>.delayed(Duration.zero);
+      expect(bloc.state.syncing, isTrue);
+      expect(source.syncCalls, 0);
+      online.complete(false);
+      await Future<void>.delayed(Duration.zero);
+      expect(bloc.state.syncing, isFalse);
+      expect(bloc.state.notice?.text, 'No Internet Connection!');
+    });
+
     Future<NotesState> press(
       FakeNotesSource source, {
       bool syncOn = true,

@@ -95,6 +95,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   int _networkRetries = 0;
 
   bool _syncing = false;
+  @override
   bool get isSyncing => _syncing;
 
   @override
