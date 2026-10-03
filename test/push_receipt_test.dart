@@ -40,10 +40,15 @@ void main() {
     (name: 'instant', instant: true, status: 200, charged: 10, refunded: 0),
     (name: 'partial failure', instant: true, status: 502, charged: 10, refunded: 0),
     (name: 'all-failed refund', instant: true, status: 502, charged: 10, refunded: 10),
+    (name: 'cap-limited refund', instant: true, status: 502, charged: 10, refunded: 3),
     (name: 'zero-cost operation', instant: false, status: 200, charged: 0, refunded: 0),
   ]) {
     test('R8 preserves ${scenario.name} operation receipt and row results', () async {
-      final results = scenario.status == 502 ? rejected : accepted;
+      final mixed = scenario.name == 'partial failure';
+      final sentRows = mixed ? [...rows, {'id': 'note-b', 'base_version': 2}] : rows;
+      final results = mixed
+          ? [...accepted, {'id': 'note-b', 'ok': false, 'error': 'note_write_failed'}]
+          : scenario.status == 502 ? rejected : accepted;
       late http.Request sent;
       final api = await client((request) async {
         sent = request;
@@ -53,16 +58,16 @@ void main() {
           'charged': scenario.charged, 'refunded': scenario.refunded,
         }), scenario.status);
       });
-      final dynamic reply = await api.pushNotes(rows,
+      final reply = await api.pushNotes(sentRows,
         requestId: 'fixture-request', instant: scenario.instant);
       expect(reply, isNot(isA<List>()), reason: 'Do not discard operation metadata');
       expect(reply.results, results);
       expect(reply.requestId, 'fixture-request');
       expect(reply.instant, scenario.instant);
-      expect(reply.receipt.charged, scenario.charged);
-      expect(reply.receipt.refunded, scenario.refunded);
-      expect(reply.receipt.netCharge, scenario.charged - scenario.refunded);
-      expect(jsonDecode(sent.body), {'rows': rows, 'requestId': 'fixture-request',
+      expect(reply.receipt!.charged, scenario.charged);
+      expect(reply.receipt!.refunded, scenario.refunded);
+      expect(reply.receipt!.netCharge, scenario.charged - scenario.refunded);
+      expect(jsonDecode(sent.body), {'rows': sentRows, 'requestId': 'fixture-request',
         'mode': scenario.instant ? 'instant' : 'standard'});
       expect(sent.headers['Authorization'], 'Bearer fixture-session-a');
     });
@@ -81,7 +86,7 @@ void main() {
       final api = await client((_) async => http.Response(jsonEncode({
         'results': accepted, ...scenario.value,
       }), 200));
-      final dynamic reply = await api.pushNotes(rows, requestId: 'fixture-request');
+      final reply = await api.pushNotes(rows, requestId: 'fixture-request');
       expect(reply, isNot(isA<List>()), reason: 'Unknown cost differs from free');
       expect(reply.results, accepted);
       expect(reply.receipt, isNull);
@@ -96,11 +101,11 @@ void main() {
         'results': accepted, 'charged': 10, 'refunded': 0,
       }), 200);
     });
-    final dynamic first = await api.pushNotes(rows, requestId: 'fixture-replay', instant: true);
-    final dynamic replay = await api.pushNotes(rows, requestId: 'fixture-replay', instant: true);
+    final first = await api.pushNotes(rows, requestId: 'fixture-replay', instant: true);
+    final replay = await api.pushNotes(rows, requestId: 'fixture-replay', instant: true);
     expect(first, isNot(isA<List>()));
     expect(replay.requestId, first.requestId);
-    expect(replay.receipt.charged, first.receipt.charged);
+    expect(replay.receipt!.charged, first.receipt!.charged);
     expect(sentIds, ['fixture-replay', 'fixture-replay']);
     // This transport test makes no claim that a replay debits the wallet again.
   });
