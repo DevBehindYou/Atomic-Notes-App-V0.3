@@ -19,7 +19,6 @@ NotesBloc _bloc(
       source: source,
       isSyncEnabled: () => syncOn,
       isOnline: () async => online,
-      instantSyncCost: () => 10,
     );
 
 FakeNotesSource _source() => FakeNotesSource(notes: [
@@ -369,7 +368,7 @@ void main() {
       final source = _source();
       final online = Completer<bool>();
       final bloc = NotesBloc(source: source, isSyncEnabled: () => true,
-        isOnline: () => online.future, instantSyncCost: () => 10);
+        isOnline: () => online.future);
       addTearDown(bloc.close);
       bloc.add(const NotesSyncRequested(instant: true));
       await Future<void>.delayed(Duration.zero);
@@ -388,10 +387,11 @@ void main() {
       FakeNotesSource source, {
       bool syncOn = true,
       bool online = true,
+      bool instant = true,
     }) async {
       final bloc = _bloc(source, syncOn: syncOn, online: online);
       addTearDown(bloc.close);
-      bloc.add(const NotesSyncRequested(instant: true));
+      bloc.add(NotesSyncRequested(instant: instant));
       await Future<void>.delayed(const Duration(milliseconds: 30));
       return bloc.state;
     }
@@ -414,24 +414,24 @@ void main() {
       expect(source.syncCalls, 0);
     });
 
-    test('with changes waiting it syncs instantly and names the price', () async {
+    test('R8 successful upload confirms completion without guessing a debit', () async {
       final source = _source();
       source.byId('c')!.touch();
       final state = await press(source);
       expect(source.syncCalls, 1);
       expect(source.lastSyncInstant, isTrue);
-      expect(state.notice?.text, 'Instant sync  ·  -10 energy');
+      expect(state.notice?.text, 'Sync finished');
       expect(state.notice?.millis, 1600);
       expect(state.pending, 0);
       expect(state.syncing, isFalse);
     });
 
-    test('with nothing waiting it says the notes are up to date', () async {
+    test('R8 receive-only completion does not claim no remote changes arrived', () async {
       final state = await press(_source());
-      expect(state.notice?.text, 'Already up to date');
+      expect(state.notice?.text, 'Sync finished');
     });
 
-    test('a failed sync shows the reason the store gave', () async {
+    test('R8 failure keeps the reason the store gave', () async {
       final source = _source()
         ..syncResult = false
         ..lastError = 'Not enough Atomic Energy for this sync.';
@@ -440,10 +440,18 @@ void main() {
       expect(state.notice?.millis, 3000);
     });
 
-    test('a failed sync with no reason gets the general words', () async {
+    test('R8 incomplete sync does not claim every change is device-only', () async {
       final state = await press(_source()..syncResult = false);
       expect(state.notice?.text,
-          'Sync failed — changes are still only on this device');
+          'Sync did not finish. Your notes are saved on this device.');
+    });
+
+    test('R8 standard sync confirmation does not claim an instant charge', () async {
+      final source = _source();
+      source.byId('c')!.touch();
+      final state = await press(source, instant: false);
+      expect(source.lastSyncInstant, isFalse);
+      expect(state.notice?.text, 'Sync finished');
     });
 
     test('the button shows its spinner from the press until the sync ends', () async {

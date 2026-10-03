@@ -19,11 +19,9 @@ class NotesBloc extends Bloc<NotesEvent, NotesState> {
     required NotesSource source,
     required bool Function() isSyncEnabled,
     required Future<bool> Function() isOnline,
-    required int Function() instantSyncCost,
   })  : _source = source,
         _isSyncEnabled = isSyncEnabled,
         _isOnline = isOnline,
-        _instantSyncCost = instantSyncCost,
         super(_snapshot(source, const NotesState())) {
     on<_NotesSourceChanged>(_onSourceChanged);
     on<NotesViewReset>(_onViewReset);
@@ -42,7 +40,6 @@ class NotesBloc extends Bloc<NotesEvent, NotesState> {
   final NotesSource _source;
   final bool Function() _isSyncEnabled;
   final Future<bool> Function() _isOnline;
-  final int Function() _instantSyncCost;
 
   int _noticeCount = 0;
   bool _manualSyncInProgress = false;
@@ -189,22 +186,16 @@ class NotesBloc extends Bloc<NotesEvent, NotesState> {
             notice: _notice('No Internet Connection!', 1000, fromSync: true)));
         return;
       }
-      // The energy gate lives inside the sync: it charges only when there is something to upload
-      // and refuses when the balance is short.
-      final hadPending = _source.pendingCount > 0;
+      // Only the Server knows each operation's charge and refund. The bool
+      // result confirms completion, not a balance change or an empty pull.
       final ok = await _source.syncNow(instant: event.instant);
       emit(state.copyWith(
         syncing: _source.isSyncing,
         notice: ok
-            ? _notice(
-                hadPending
-                    ? 'Instant sync  ·  -${_instantSyncCost()} energy'
-                    : 'Already up to date',
-                1600,
-                fromSync: true)
+            ? _notice('Sync finished', 1600, fromSync: true)
             : _notice(
                 _source.lastError ??
-                    'Sync failed — changes are still only on this device',
+                    'Sync did not finish. Your notes are saved on this device.',
                 3000,
                 fromSync: true),
       ));

@@ -1,4 +1,5 @@
 import 'package:atomic_notes/theme/app_tokens.dart';
+import 'package:atomic_notes/database/energy_service.dart';
 import 'package:atomic_notes/theme/editorial.dart';
 import 'package:atomic_notes/utility/component/atomic_icon.dart';
 import 'package:flutter/material.dart';
@@ -53,10 +54,13 @@ class _EnergyIntroScreenState extends State<EnergyIntroScreen> {
       art: _mark('atomic-coin', '2.5D'),
       eyebrow: 'SYNC COSTS',
       title: 'Instant or\nautomatic.',
-      body: 'Instant sync costs 10 energy and works any time. Automatic sync '
-          'costs 5 and runs once an hour. Only the notes you edited are sent. '
-          'Run low? Your notes stay safe on the device and sync once energy '
-          'returns.',
+      body: 'Charges apply per upload batch of up to 50 changed notes, limited '
+          'by size. Each instant batch costs '
+          '${EnergyService.instance.limits.syncInstantCost} energy; each automatic '
+          'batch costs ${EnergyService.instance.limits.syncStandardCost}, with an '
+          'hourly window shared across your account. Large instant syncs can cost '
+          'more than ${EnergyService.instance.limits.syncInstantCost}. Receive-only '
+          'sync is free. Changes waiting to upload stay on this device.',
     ),
   ];
 
