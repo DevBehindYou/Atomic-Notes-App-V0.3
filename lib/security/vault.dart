@@ -81,13 +81,14 @@ class Vault {
   String? get _uid => _api.currentUserId;
   String _keyStore(String uid) => 'atomic_vault_key_$uid';
 
-  /// The account has a vault configured.
+  /// The account has a vault configured, or an unreadable cache prevents
+  /// safely ruling one out while offline.
   bool get isEnabled => _enabled;
 
   /// The key is in memory, so vault notes can be read and written.
   bool get isUnlocked => _key != null;
 
-  /// A vault exists but this device cannot open it yet.
+  /// Protected content must stay locked until a usable key is available.
   bool get isLocked => _enabled && _key == null;
 
   // ---- lifecycle --------------------------------------------------------
@@ -113,6 +114,7 @@ class Vault {
     }
     if (uid == null) return;
 
+    var cloudUnavailable = false;
     try {
       // Bounded: offline with an expired token, the client tries to refresh
       // before this request and would otherwise retry indefinitely — which,
@@ -121,18 +123,31 @@ class Vault {
       // always opens (local-first).
       final row = await _api.getVault().timeout(const Duration(seconds: 5));
       _enabled = row != null;
-    } catch (e) {
-      // Offline: a key cached on this device proves a vault exists.
-      _enabled = (await _secure.read(key: _keyStore(uid))) != null;
-      debugPrint('Vault.init: state read failed, using cached state ($e)');
+    } catch (_) {
+      cloudUnavailable = true;
+      debugPrint('Vault.init: cloud state unavailable; checking device cache');
     }
 
-    if (_enabled && _key == null) {
+    if (!_enabled && !cloudUnavailable) return;
+    if (_key != null) return;
+
+    try {
       final cached = await _secure.read(key: _keyStore(uid));
       if (cached != null) {
-        _key = SecretKey(base64Decode(cached));
+        final bytes = base64Decode(cached);
+        if (bytes.length != 32) {
+          throw const FormatException('Invalid cached vault key length');
+        }
+        _key = SecretKey(bytes);
+        _enabled = true;
         debugPrint('Vault: unlocked from device key store');
       }
+    } catch (_) {
+      // A failed read is not an absent vault. Preserve the entry and require
+      // unlock, including when the cloud cannot tell us the vault state.
+      _key = null;
+      _enabled = true;
+      debugPrint('Vault: device key unavailable; remaining locked');
     }
   }
 
