@@ -104,6 +104,41 @@ void main() {
     await directory.delete(recursive: true);
   });
 
+  test('R19 offline automatic attempt notifies its failure without a note change', () async {
+    await repository.stop(waitForSync: true);
+    repository.dispose();
+    repository = NotesRepository.forTest(box: box, api: api, vault: vault,
+      checkConnectivity: () async => [ConnectivityResult.none]);
+    await repository.start();
+    final seen = <String?>[];
+    repository.addListener(() => seen.add(repository.lastError));
+    expect(await repository.syncNow(), false);
+    expect(seen, contains('Offline — changes are saved on this device'));
+    expect(api.pushes, isEmpty);
+    expect(api.pullCursors, isEmpty);
+  });
+
+  test('R19 retiring a session clears and suppresses a late sync failure', () async {
+    final note = Note.create(kind: NoteKind.text)..title = 'local work';
+    await repository.save(note);
+    final entered = Completer<void>(), release = Completer<void>();
+    api.beforePush = () async {
+      entered.complete();
+      await release.future;
+      throw ApiException('fixture_failure', 500);
+    };
+    final sync = repository.syncNow(instant: true);
+    await entered.future;
+    await repository.stop();
+    repository.clearMemory();
+    api.user = null;
+    release.complete();
+    expect(await sync, false);
+    expect(repository.lastError, isNull);
+    expect(repository.count, 0);
+    expect(box.get(note.id), isNotNull, reason: 'failure status never deletes local work');
+  });
+
   for (final encrypted in [false, true]) {
     test('conflict contract preserves both contents and uploads the copy later (encrypted=$encrypted)', () async {
       vault.unlocked = encrypted;

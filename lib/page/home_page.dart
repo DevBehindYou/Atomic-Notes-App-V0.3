@@ -262,10 +262,14 @@ class _Mascot extends StatefulWidget {
 
   /// What Atomi says: whether changes are waiting, and when automatic sync next opens.
   /// "Syncing now" only while a sync is running: offline, changes just wait.
-  static String syncMessage(DateTime? next, int pending, {bool syncing = false}) {
+  static String syncMessage(DateTime? next, int pending,
+      {bool syncing = false, String? error}) {
     final now = DateTime.now();
     final waiting = pending == 1 ? '1 change' : '$pending changes';
-    if (pending > 0 && syncing) return 'Syncing $waiting now.';
+    if (syncing) {
+      return pending > 0 ? 'Syncing $waiting now.' : 'Checking for cloud changes…';
+    }
+    if (error != null) return error;
     if (next == null || !next.isAfter(now)) {
       if (pending == 0) return 'All notes synced.';
       return pending == 1
@@ -297,7 +301,8 @@ class _MascotState extends State<_Mascot> {
     }
     final state = context.read<NotesBloc>().state;
     setState(() => _message =
-        _Mascot.syncMessage(state.nextAutoSyncAt, state.pending, syncing: state.syncing));
+        _Mascot.syncMessage(state.nextAutoSyncAt, state.pending,
+            syncing: state.syncing, error: state.syncError));
     _bubble.show();
     _autoHide = Timer(const Duration(seconds: 3), () {
       if (mounted && _bubble.isShowing) _bubble.hide();
