@@ -35,6 +35,30 @@ void main() {
     syncBox = _SyncBox();
     SyncStatusHelper.syncBox = syncBox;
   });
+  for (final cloud in [0, 1]) {
+    testWidgets('R8 cloud actions explain per-batch pricing (cloud=$cloud)',
+        (tester) async {
+      final source = FakeNotesSource(notes: [syncedNote('local')])
+        ..cloudNotes = cloud;
+      addTearDown(source.dispose);
+      await _open(tester, source);
+      final labels = tester
+          .widgetList<GhostButton>(find.byType(GhostButton))
+          .map((button) => button.label)
+          .toList();
+      expect(labels, contains('Sync now  ·  10 energy / batch'));
+      if (cloud == 0) {
+        expect(labels, contains('Upload all  ·  10 energy / batch'));
+      }
+      expect(find.textContaining('Each charged upload batch'), findsOneWidget);
+      expect(
+          find.textContaining('Upload all marks every live note for upload.'),
+          findsOneWidget);
+      expect(source.markAllCalls, 0);
+      expect(source.syncCalls, 0);
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+  }
   for (final scenario in [
     (cloud: 1, label: 'Counts match'),
     (cloud: 0, label: 'Fewer in cloud'),

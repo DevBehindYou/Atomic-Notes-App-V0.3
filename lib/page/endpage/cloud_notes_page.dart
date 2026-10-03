@@ -41,7 +41,7 @@ class _CloudNotesView extends StatefulWidget {
 class _CloudNotesViewState extends State<_CloudNotesView> {
   Future<void> _sync({required bool uploadAll}) async {
     final cubit = context.read<CloudNotesCubit>();
-    // Both buttons on this page are instant sync: they send now and cost 10 energy when there is something to send.
+    // Both actions use instant sync. Existing Server pricing applies per charged upload batch.
     final message = await cubit.sync(uploadAll: uploadAll);
     if (message == null || !mounted) return;
     MySnackBar(text: message.text, sec: message.millis).showMySnackBar(context);
@@ -271,7 +271,8 @@ class _CloudNotesViewState extends State<_CloudNotesView> {
                 ),
                 const SizedBox(height: AppSpace.sm + 2),
                 GhostButton(
-                  label: 'Sync now  ·  ${EnergyService.syncInstantCost} energy',
+                  label:
+                      'Sync now  ·  ${EnergyService.syncInstantCost} energy / batch',
                   icon: Icons.sync,
                   onTap: (!syncOn || working || checking)
                       ? null
@@ -281,7 +282,7 @@ class _CloudNotesViewState extends State<_CloudNotesView> {
                   const SizedBox(height: AppSpace.sm + 2),
                   GhostButton(
                     label:
-                        'Upload all  ·  ${EnergyService.syncInstantCost} energy',
+                        'Upload all  ·  ${EnergyService.syncInstantCost} energy / batch',
                     icon: Icons.cloud_upload_outlined,
                     onTap: (working || checking)
                         ? null
@@ -293,10 +294,13 @@ class _CloudNotesViewState extends State<_CloudNotesView> {
                 const SizedBox(height: AppSpace.md),
                 const Text(
                   'Checking the cloud only counts its notes. It never changes '
-                  'what is on this device. Sync now and Upload all send only '
-                  'the notes you edited and cost ${EnergyService.syncInstantCost} '
-                  'energy; with nothing to send they are free. Automatic sync '
-                  'runs once an hour and costs ${EnergyService.syncStandardCost}.',
+                  'what is on this device. Sync now sends waiting changes. '
+                  'Upload all marks every live note for upload. Each charged upload batch '
+                  'costs ${EnergyService.syncInstantCost} energy and carries up to 50 '
+                  'changes, subject to the size limit. Larger uploads can cost more. '
+                  'With nothing to upload, sync is free. Standard uploads cost '
+                  '${EnergyService.syncStandardCost} energy per batch, with one '
+                  'standard upload window per account per hour.',
                   style: AppType.bodySm,
                 ),
               ],

@@ -353,6 +353,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     _notes.clear();
     _syncCursor = null;
     lastSyncedAt = null;
+    lastError = null;
     notifyListeners();
   }
 
@@ -540,15 +541,20 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     final uid = _userId;
     if (uid == null) return false;
     if (!SyncStatusHelper.isSyncOn) return false;
+    final lifecycle = _lifecycleRevision;
 
     // Don't sit on a dead socket when we already know there's no network.
     final conn = await _checkConnectivity();
+    if (_syncing || _stopped || _lockingVault || _userId != uid ||
+        lifecycle != _lifecycleRevision) {
+      return false;
+    }
     if (conn.contains(ConnectivityResult.none)) {
       lastError = 'Offline — changes are saved on this device';
+      notifyListeners();
       return false;
     }
 
-    if (_syncing || _stopped || _lockingVault || _userId != uid) return false;
     // Acquire locally before the first await that starts a sync operation.
     _syncing = true;
     lastError = null;
@@ -579,11 +585,13 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
       }
       return true;
     } on TimeoutException {
+      if (_stopped || _userId != uid || lifecycle != _lifecycleRevision) return false;
       debugPrint('NotesRepository: sync timed out');
       _retryAfterNetworkFailure();
       lastError = 'Sync is taking longer than expected. Your changes are saved; retry to recover the same operation.';
       return false;
     } catch (e) {
+      if (_stopped || _userId != uid || lifecycle != _lifecycleRevision) return false;
       debugPrint('NotesRepository: sync failed: ${e.runtimeType}: $e');
       if (isNetworkFailure(e)) {
         _retryAfterNetworkFailure();

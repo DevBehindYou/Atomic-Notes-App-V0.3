@@ -20,3 +20,11 @@ R19 remains partial: these counters do not establish identical content across
 devices, actual Drive state, or two-device convergence. Physical fonts, TalkBack
 and native performance are unverified. Revert this PR to roll back display-only
 count interpretation; local notes and pending deletion state remain intact.
+# Main integration verification
+
+The owner merged automatic-error feedback (#26) and per-batch pricing (#27).
+Merging main into this branch conflicted only on the Upload all label. The
+resolution retains `energy / batch`, the corrected live-note counts, and the
+separate pending-deletion display. Strict local analysis and all 373 tests pass
+on the combined source. CI must verify this updated merge commit before merge.
+

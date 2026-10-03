@@ -134,7 +134,7 @@ class CloudNotesCubit extends Cubit<CloudNotesState> {
   }
 
   /// Sends the edited notes now (or every note, with [uploadAll]). Both buttons are the instant
-  /// sync: they cost 10 energy when there is something to send. Answers with the message to show,
+  /// sync: Server pricing applies per charged upload batch. Answers with the message to show,
   /// or null when a sync was already running or the screen has gone.
   Future<UiMessage?> sync({required bool uploadAll}) async {
     if (state.working) return null;
