@@ -65,7 +65,8 @@ class _CloudNotesViewState extends State<_CloudNotesView> {
     final int onDevice = state.onDevice;
     final int waiting = state.waiting;
     if (!SyncStatusHelper.isSyncOn) {
-      return const _Verdict('Sync off',
+      return const _Verdict(
+          'Sync off',
           'Cloud Sync is turned off, so notes stay on this device only.',
           AppColors.outline);
     }
@@ -75,7 +76,8 @@ class _CloudNotesViewState extends State<_CloudNotesView> {
           'Checking', 'Counting the notes in your cloud…', AppColors.outline);
     }
     if (cloud == null) {
-      return const _Verdict('Check failed',
+      return const _Verdict(
+          'Check failed',
           'The cloud note count could not be checked. Your local notes remain on this device. Try Check cloud again.',
           AppColors.error);
     }
@@ -83,13 +85,14 @@ class _CloudNotesViewState extends State<_CloudNotesView> {
       return _Verdict(
         '$waiting waiting',
         waiting == 1
-            ? '1 edited note is waiting to upload. It sends at the next automatic sync, or now with Sync now.'
-            : '$waiting edited notes are waiting to upload. They send at the next automatic sync, or now with Sync now.',
+            ? '1 change is waiting to upload, including edited notes or deletions. It sends at the next automatic sync, or now with Sync now.'
+            : '$waiting changes are waiting to upload, including edited notes or deletions. They send at the next automatic sync, or now with Sync now.',
         AppColors.signal,
       );
     }
     if (cloud == onDevice) {
-      return const _Verdict('Counts match',
+      return const _Verdict(
+          'Counts match',
           'This device and the cloud hold the same number of notes. This check does not compare note contents.',
           AppColors.signal);
     }
@@ -99,7 +102,8 @@ class _CloudNotesViewState extends State<_CloudNotesView> {
           'The cloud has fewer notes than this device. This check does not compare note contents. Sync to check for changes.',
           AppColors.error);
     }
-    return const _Verdict('More in cloud',
+    return const _Verdict(
+        'More in cloud',
         'The cloud has more notes than this device. This check does not compare note contents. Sync to check for changes.',
         AppColors.signal);
   }
@@ -116,7 +120,7 @@ class _CloudNotesViewState extends State<_CloudNotesView> {
           builder: (context, state) {
             final cubit = context.read<CloudNotesCubit>();
             final int onDevice = state.onDevice;
-            final int waiting = state.waiting;
+            final int waiting = state.waitingNotes;
             final int synced = state.synced;
             final _Verdict verdict = _verdict(state);
             final bool syncOn = SyncStatusHelper.isSyncOn;
@@ -184,12 +188,21 @@ class _CloudNotesViewState extends State<_CloudNotesView> {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          MonoLabel('Synced $synced',
+                          MonoLabel('Unchanged $synced',
                               small: true, color: AppColors.outlineVariant),
-                          MonoLabel('Waiting $waiting',
+                          MonoLabel('Edited $waiting',
                               small: true, color: AppColors.outlineVariant),
                         ],
                       ),
+                      if (state.waitingDeletions > 0) ...[
+                        const SizedBox(height: AppSpace.sm),
+                        Text(
+                          '${state.waitingDeletions} '
+                          '${state.waitingDeletions == 1 ? 'deletion' : 'deletions'} waiting',
+                          style: AppType.bodySm
+                              .copyWith(color: AppColors.outlineVariant),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -205,6 +218,11 @@ class _CloudNotesViewState extends State<_CloudNotesView> {
                       MonoLabel('Status', small: true, color: verdict.color),
                       const SizedBox(height: AppSpace.xs),
                       Text(verdict.detail, style: AppType.bodyMd),
+                      const SizedBox(height: AppSpace.sm),
+                      const Text(
+                        'Unchanged means no local edits are waiting; it does not compare cloud contents.',
+                        style: AppType.bodySm,
+                      ),
                     ],
                   ),
                 ),
@@ -225,7 +243,9 @@ class _CloudNotesViewState extends State<_CloudNotesView> {
                       const SizedBox(height: AppSpace.sm),
                       _LedgerRow(
                           label: 'Last check',
-                          value: state.checkedAt == null ? '—' : _stamp(state.checkedAt!)),
+                          value: state.checkedAt == null
+                              ? '—'
+                              : _stamp(state.checkedAt!)),
                       const SizedBox(height: AppSpace.sm),
                       const HairRule(),
                       const SizedBox(height: AppSpace.sm),
@@ -260,7 +280,8 @@ class _CloudNotesViewState extends State<_CloudNotesView> {
                 if (syncOn && cloud != null && cloud < onDevice) ...[
                   const SizedBox(height: AppSpace.sm + 2),
                   GhostButton(
-                    label: 'Upload all  ·  ${EnergyService.syncInstantCost} energy',
+                    label:
+                        'Upload all  ·  ${EnergyService.syncInstantCost} energy',
                     icon: Icons.cloud_upload_outlined,
                     onTap: (working || checking)
                         ? null
