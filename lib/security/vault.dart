@@ -44,8 +44,20 @@ class VaultUnverifiableError implements Exception {
 /// copy of the first, so the same phrase on two devices produced two different
 /// keys and each device could read only its own notes.
 class Vault {
-  Vault._();
+  Vault._({ApiClient? api, FlutterSecureStorage? storage})
+      : _api = api ?? ApiClient.instance,
+        _secure = storage ??
+            const FlutterSecureStorage(
+              aOptions: kSecureAndroidOptions,
+              iOptions:
+                  IOSOptions(accessibility: KeychainAccessibility.first_unlock),
+            );
   static final Vault instance = Vault._();
+
+  @visibleForTesting
+  factory Vault.forTest(
+          {required ApiClient api, required FlutterSecureStorage storage}) =>
+      Vault._(api: api, storage: storage);
 
   // The Supabase-era `_table = 'vault'` constant is gone — the server's
   // `vaults` Mongo collection is the equivalent (see db/collections.ts).
@@ -59,16 +71,13 @@ class Vault {
   static const int kdfIterations = 3;
   static const int kdfParallelism = 1;
 
-  final FlutterSecureStorage _secure = const FlutterSecureStorage(
-    aOptions: kSecureAndroidOptions,
-    iOptions: IOSOptions(accessibility: KeychainAccessibility.first_unlock),
-  );
+  final FlutterSecureStorage _secure;
 
   SecretKey? _key;
   bool _enabled = false;
   String? _boundUser;
 
-  final ApiClient _api = ApiClient.instance;
+  final ApiClient _api;
   String? get _uid => _api.currentUserId;
   String _keyStore(String uid) => 'atomic_vault_key_$uid';
 
