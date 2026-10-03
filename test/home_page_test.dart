@@ -56,6 +56,43 @@ Future<NotesBloc> _open(WidgetTester tester, FakeNotesSource source) async {
 
 void main() {
   group('what the screen shows', () {
+    for (final pending in [false, true]) {
+      testWidgets('R19 mascot reports automatic failure (pending=$pending)',
+          (tester) async {
+        final source = _source();
+        if (pending) source.byId('c')!.touch();
+        await _open(tester, source);
+        source.changeBehindTheScenes(() => source.lastError =
+            'A cloud note could not be read safely. Try syncing again.');
+        await tester.pump();
+        await tester.pump();
+        await tester.tap(find.byType(Image));
+        await tester.pump();
+        expect(
+            find.text('A cloud note could not be read safely. Try syncing again.'),
+            findsOneWidget);
+        expect(find.text('All notes synced.'), findsNothing);
+        expect(source.syncCalls, 0);
+        await tester.pump(const Duration(seconds: 4));
+      });
+    }
+    testWidgets('R19 receive-only retry replaces its previous error',
+        (tester) async {
+      final source = _source()..lastError = 'Previous failure';
+      await _open(tester, source);
+      source.changeBehindTheScenes(() {
+        source.lastError = null;
+        source.isSyncing = true;
+      });
+      await tester.pump();
+      await tester.pump();
+      await tester.tap(find.byType(Image));
+      await tester.pump();
+      expect(find.text('Checking for cloud changes…'), findsOneWidget);
+      expect(find.text('Previous failure'), findsNothing);
+      expect(find.text('All notes synced.'), findsNothing);
+      await tester.pump(const Duration(seconds: 4));
+    });
     testWidgets('R19 automatic sync reaches the mascot without a button press', (tester) async {
       final source = _source();
       source.byId('c')!.touch();
