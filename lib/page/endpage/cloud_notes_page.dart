@@ -75,8 +75,8 @@ class _CloudNotesViewState extends State<_CloudNotesView> {
           'Checking', 'Counting the notes in your cloud…', AppColors.outline);
     }
     if (cloud == null) {
-      return const _Verdict('Offline',
-          'The cloud could not be reached. Notes on this device are safe and sync when the connection is back.',
+      return const _Verdict('Check failed',
+          'The cloud note count could not be checked. Your local notes remain on this device. Try Check cloud again.',
           AppColors.error);
     }
     if (waiting > 0) {
@@ -89,19 +89,18 @@ class _CloudNotesViewState extends State<_CloudNotesView> {
       );
     }
     if (cloud == onDevice) {
-      return const _Verdict('In sync',
-          'This device and the cloud hold the same number of notes.',
+      return const _Verdict('Counts match',
+          'This device and the cloud hold the same number of notes. This check does not compare note contents.',
           AppColors.signal);
     }
     if (cloud < onDevice) {
       return const _Verdict(
-          'Cloud behind',
-          'The cloud has fewer notes than this device, for example after '
-              'wiping the cloud. Upload all to fill it again.',
+          'Fewer in cloud',
+          'The cloud has fewer notes than this device. This check does not compare note contents. Sync to check for changes.',
           AppColors.error);
     }
-    return const _Verdict('Cloud ahead',
-        'The cloud has more notes than this device. Sync to download them.',
+    return const _Verdict('More in cloud',
+        'The cloud has more notes than this device. This check does not compare note contents. Sync to check for changes.',
         AppColors.signal);
   }
 
