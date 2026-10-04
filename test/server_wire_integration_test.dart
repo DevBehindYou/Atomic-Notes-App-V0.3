@@ -201,6 +201,7 @@ void main() {
 
   wireTest('offline_conflict_preserves_both_versions_without_stale_drive_write',
       () async {
+    outcomes['conflict_phase'] = 'opening_clients';
     final a = await device(
         'a', 'atomic-disposable-client-a', descriptor['owner'] as String);
     final b = await device(
@@ -208,6 +209,7 @@ void main() {
     final note = Note(id: newId(), title: 'Conflict fixture', body: 'Base');
     await a.notes.save(note);
     await a.cubit.sync(uploadAll: false);
+    outcomes['conflict_phase'] = 'base_uploaded';
     await b.cubit.sync(uploadAll: false);
     final offline = b.notes.byId(note.id)!;
     offline.body = 'Offline B';
@@ -215,26 +217,37 @@ void main() {
     note.body = 'Accepted A';
     await a.notes.save(note);
     await a.cubit.sync(uploadAll: false);
+    outcomes['conflict_phase'] = 'remote_edit_uploaded';
     final before = await diagnostic('/__fixture/state');
     final message = await b.cubit.sync(uploadAll: false);
+    outcomes['conflict_phase'] = 'checking_conflict_message';
     expect(message!.text, contains('separate copies'));
+    outcomes['conflict_phase'] = 'checking_conflict_report';
     expect(b.cubit.state.lastReport!.completed, isFalse);
+    outcomes['conflict_phase'] = 'checking_remote_original';
     expect(b.notes.byId(note.id)!.body, 'Accepted A');
     expect(b.notes.byId(note.id)!.serverVersion, 2);
+    outcomes['conflict_phase'] = 'checking_local_copy';
     final copy = b.notes.visible().singleWhere((value) =>
         value.id != note.id &&
         value.title == 'Conflict fixture (conflict copy)');
     expect(copy.body, 'Offline B');
     expect(copy.dirty, isTrue);
+    outcomes['conflict_phase'] = 'checking_no_stale_write';
     final refused = await diagnostic('/__fixture/state');
     expect(refused['writes'], before['writes']);
+    outcomes['conflict_phase'] = 'checking_refund';
     expect(ownerState(refused)['energy'], ownerState(before)['energy']);
+    outcomes['conflict_phase'] = 'sending_copy';
     await b.cubit.sync(uploadAll: false);
+    outcomes['conflict_phase'] = 'checking_copy_acknowledgement';
     expect(b.cubit.state.lastReport!.completed, isTrue);
     expect(b.notes.byId(copy.id)!.dirty, isFalse);
+    outcomes['conflict_phase'] = 'receiving_copy_on_first_client';
     await a.cubit.sync(uploadAll: false);
     expect(a.notes.byId(note.id)!.body, 'Accepted A');
     expect(a.notes.byId(copy.id)!.body, 'Offline B');
+    outcomes['conflict_phase'] = 'passed';
   });
 
   wireTest('cloud_count_is_read_only_through_actual_http', () async {
