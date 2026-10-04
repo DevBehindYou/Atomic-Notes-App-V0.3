@@ -52,7 +52,7 @@ class _SyncAttemptCollector {
 /// (see the server's README). Automatic sync runs at launch, when the app comes
 /// back to the foreground, when the network returns, a few seconds after a local
 /// change (or as soon as the Server's hourly window opens), and hourly.
-class NotesRepository extends ChangeNotifier with WidgetsBindingObserver implements NotesSource {
+class NotesRepository extends ChangeNotifier with WidgetsBindingObserver implements NotesSource, SyncReportSource {
   NotesRepository._({ApiClient? api, Vault? vault,
     Future<List<ConnectivityResult>> Function()? checkConnectivity,
     Future<void> Function()? refreshEnergy, bool automaticSync = true})
@@ -551,6 +551,10 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   /// cover the upload, the notes stay safely on the device (still dirty) and
   /// nothing is pushed — so at zero energy local notes keep working but don't
   /// reach the cloud until energy is topped up.
+  @override
+  Object get syncReportIdentity => (_lifecycleRevision, _api.sessionRevision);
+
+  @override
   Future<SyncAttemptReport> syncWithReport({bool instant = false}) async {
     final uid = _userId, lifecycle = _lifecycleRevision;
     final session = _api.sessionRevision;
