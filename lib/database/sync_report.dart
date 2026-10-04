@@ -1,6 +1,12 @@
 /// Which work belongs to this caller, rather than another concurrent sync.
 enum SyncAttemptActivity { notStarted, started, joined, retired }
 
+/// Optional UI capability. Identity changes retire results even before teardown finishes.
+abstract interface class SyncReportSource {
+  Object get syncReportIdentity;
+  Future<SyncAttemptReport> syncWithReport({bool instant = false});
+}
+
 /// The Server's historical totals for one request, not a debit per HTTP retry.
 class SyncOperationReport {
   const SyncOperationReport({required this.requestId, required this.instant,

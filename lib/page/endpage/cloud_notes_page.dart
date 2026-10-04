@@ -2,6 +2,7 @@ import 'package:atomic_notes/database/energy_service.dart';
 import 'package:atomic_notes/database/notes_repository.dart';
 import 'package:atomic_notes/database/notes_source.dart';
 import 'package:atomic_notes/database/sync_status.dart';
+import 'package:atomic_notes/database/sync_report.dart';
 import 'package:atomic_notes/state/cloud_notes/cloud_notes_cubit.dart';
 import 'package:atomic_notes/theme/app_tokens.dart';
 import 'package:atomic_notes/theme/editorial.dart';
@@ -185,8 +186,10 @@ class _CloudNotesViewState extends State<_CloudNotesView> {
                       const SizedBox(height: AppSpace.md),
                       _SyncBar(synced: synced, waiting: waiting),
                       const SizedBox(height: AppSpace.sm),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      Wrap(
+                        alignment: WrapAlignment.spaceBetween,
+                        spacing: AppSpace.sm,
+                        runSpacing: AppSpace.xs,
                         children: [
                           MonoLabel('Unchanged $synced',
                               small: true, color: AppColors.outlineVariant),
@@ -227,6 +230,11 @@ class _CloudNotesViewState extends State<_CloudNotesView> {
                   ),
                 ),
                 const SizedBox(height: AppSpace.sm),
+
+                if (state.lastReport case final report?) ...[
+                  _SyncReceipt(report: report),
+                  const SizedBox(height: AppSpace.sm),
+                ],
 
                 // The ledger.
                 EditorialModule(
@@ -308,6 +316,81 @@ class _CloudNotesViewState extends State<_CloudNotesView> {
           },
         ),
       ),
+    );
+  }
+}
+
+/// Financial totals stay readable here instead of being truncated by a short snackbar.
+class _SyncReceipt extends StatelessWidget {
+  const _SyncReceipt({required this.report});
+  final SyncAttemptReport report;
+
+  @override
+  Widget build(BuildContext context) {
+    final confirmed = report.operations
+        .where((entry) => entry.charged != null && entry.refunded != null)
+        .toList();
+    final known = report.charged != null && report.refunded != null;
+    final charged =
+        confirmed.fold<int>(0, (sum, entry) => sum + entry.charged!);
+    final refunded =
+        confirmed.fold<int>(0, (sum, entry) => sum + entry.refunded!);
+    final started = report.activity == SyncAttemptActivity.started;
+    final title = !started
+        ? 'Sync did not start'
+        : report.completed
+            ? 'Sync completed'
+            : 'Sync incomplete';
+    return EditorialModule(
+      padding: const EdgeInsets.all(AppSpace.md),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        const MonoLabel('Last requested sync', small: true),
+        const SizedBox(height: AppSpace.xs),
+        Text(title, style: AppType.bodyMd),
+        if (!report.completed && report.errorMessage != null) ...[
+          const SizedBox(height: AppSpace.xs),
+          Text(report.errorMessage!, style: AppType.bodySm),
+        ],
+        const SizedBox(height: AppSpace.sm),
+        if (started && report.operations.isEmpty)
+          const Text('No upload was sent. No upload energy was charged.',
+              style: AppType.bodySm)
+        else ...[
+          if (!known)
+            const Text('Upload energy totals unavailable.',
+                style: AppType.bodySm),
+          if (report.operations.isNotEmpty)
+            Text(
+                known
+                    ? '${report.operations.length} upload ${report.operations.length == 1 ? 'batch' : 'batches'}'
+                    : '${confirmed.length} of ${report.operations.length} upload batches confirmed',
+                style: AppType.bodySm),
+          if (confirmed.isNotEmpty) ...[
+            if (!known) ...[
+              const SizedBox(height: AppSpace.xs),
+              const Text('Confirmed totals only', style: AppType.bodySm),
+            ],
+            const SizedBox(height: AppSpace.sm),
+            _LedgerRow(label: 'Charged', value: '$charged energy'),
+            const SizedBox(height: AppSpace.xs),
+            _LedgerRow(label: 'Refunded', value: '$refunded energy'),
+            const SizedBox(height: AppSpace.xs),
+            _LedgerRow(
+                label: known ? 'Net upload cost' : 'Confirmed net',
+                value: '${charged - refunded} energy'),
+            const SizedBox(height: AppSpace.sm),
+            const Text(
+                'These are upload batch totals, not a new debit for each retry.',
+                style: AppType.bodySm),
+          ],
+          if (report.operations.any((entry) => entry.recovered)) ...[
+            const SizedBox(height: AppSpace.xs),
+            const Text(
+                'Includes an earlier upload. Its totals may already have been applied.',
+                style: AppType.bodySm),
+          ],
+        ],
+      ]),
     );
   }
 }

@@ -1,4 +1,5 @@
 import 'package:atomic_notes/database/notes_source.dart';
+import 'package:atomic_notes/database/sync_report.dart';
 import 'package:atomic_notes/state/ui_message.dart';
 import 'package:bloc/bloc.dart';
 import 'package:equatable/equatable.dart';
@@ -16,6 +17,7 @@ final class CloudNotesState extends Equatable {
     this.checkedAt,
     this.lastSyncedAt,
     this.nextAutoSyncAt,
+    this.lastReport,
   });
 
   final int onDevice;
@@ -38,6 +40,9 @@ final class CloudNotesState extends Equatable {
   final DateTime? lastSyncedAt;
   final DateTime? nextAutoSyncAt;
 
+  /// This screen's last request only. Cleared on another attempt or session change.
+  final SyncAttemptReport? lastReport;
+
   /// Live notes with no local changes waiting. Does not verify cloud content.
   int get synced => onDevice - waitingNotes;
 
@@ -51,6 +56,8 @@ final class CloudNotesState extends Equatable {
     bool? checking,
     bool? working,
     DateTime? checkedAt,
+    SyncAttemptReport? lastReport,
+    bool clearReport = false,
   }) =>
       CloudNotesState(
         onDevice: onDevice ?? this.onDevice,
@@ -63,6 +70,7 @@ final class CloudNotesState extends Equatable {
         checkedAt: checkedAt ?? this.checkedAt,
         lastSyncedAt: lastSyncedAt,
         nextAutoSyncAt: nextAutoSyncAt,
+        lastReport: clearReport ? null : (lastReport ?? this.lastReport),
       );
 
   @override
@@ -77,6 +85,7 @@ final class CloudNotesState extends Equatable {
         checkedAt,
         lastSyncedAt,
         nextAutoSyncAt,
+        lastReport,
       ];
 }
 
@@ -87,9 +96,17 @@ class CloudNotesCubit extends Cubit<CloudNotesState> {
       : _source = source,
         super(_read(source, const CloudNotesState())) {
     _source.addListener(_sourceChanged);
+    _reportIdentity = _identity;
   }
 
   final NotesSource _source;
+  Object? _reportIdentity;
+  Object? get _identity {
+    final source = _source;
+    return source is SyncReportSource
+        ? (source as SyncReportSource).syncReportIdentity
+        : null;
+  }
 
   /// [base] with the numbers the store holds now.
   static CloudNotesState _read(NotesSource source, CloudNotesState base) =>
@@ -104,11 +121,16 @@ class CloudNotesCubit extends Cubit<CloudNotesState> {
         checkedAt: base.checkedAt,
         lastSyncedAt: source.lastSyncedAt,
         nextAutoSyncAt: source.nextAutoSyncAt,
+        lastReport: base.lastReport,
       );
 
   void _sourceChanged() {
     if (isClosed) return;
-    final next = _read(_source, state);
+    final identity = _identity;
+    final base =
+        identity == _reportIdentity ? state : state.copyWith(clearReport: true);
+    _reportIdentity = identity;
+    final next = _read(_source, base);
     if (next != state) emit(next);
   }
 
@@ -138,18 +160,38 @@ class CloudNotesCubit extends Cubit<CloudNotesState> {
   /// or null when a sync was already running or the screen has gone.
   Future<UiMessage?> sync({required bool uploadAll}) async {
     if (state.working) return null;
-    emit(state.copyWith(working: true));
-    if (uploadAll) await _source.markAllForUpload();
-    final bool ok = await _source.syncNow(instant: true);
-    if (isClosed) return null;
-    emit(state.copyWith(working: false));
-    return UiMessage(
-      ok
-          ? (uploadAll
-              ? 'All notes uploaded to the cloud'
-              : 'Synced with the cloud')
-          : (_source.lastError ?? 'Sync failed. Check your connection.'),
-      3000,
-    );
+    final identity = _identity;
+    emit(state.copyWith(working: true, clearReport: true));
+    try {
+      if (uploadAll) await _source.markAllForUpload();
+      if (isClosed || _identity != identity) return null;
+      final source = _source;
+      final SyncAttemptReport? report = source is SyncReportSource
+          ? await (source as SyncReportSource).syncWithReport(instant: true)
+          : null;
+      final bool ok = report?.completed ?? await _source.syncNow(instant: true);
+      if (isClosed || _identity != identity) return null;
+      if (report?.activity == SyncAttemptActivity.retired ||
+          report?.activity == SyncAttemptActivity.joined) {
+        return null;
+      }
+      emit(state.copyWith(lastReport: report));
+      final error = report == null ? _source.lastError : report.errorMessage;
+      return UiMessage(
+        ok
+            ? (uploadAll
+                ? 'All notes uploaded to the cloud'
+                : 'Synced with the cloud')
+            : (error ?? 'Sync failed. Check your connection.'),
+        3000,
+      );
+    } catch (_) {
+      if (isClosed || _identity != identity) return null;
+      // No totals are confirmed when the capability itself throws.
+      return const UiMessage(
+          'Sync could not finish. Your notes remain on this device.', 3000);
+    } finally {
+      if (!isClosed) emit(state.copyWith(working: false));
+    }
   }
 }
