@@ -15,6 +15,9 @@ import 'package:hive_ce/hive_ce.dart';
 
 class TestApi implements ApiClient {
   String? user = 'user-a';
+  @override
+  int sessionRevision = 0;
+  PushReceipt? pushReceipt;
   final pushes = <List<Map<String, dynamic>>>[];
   final requestIds = <String>[];
   final pushModes = <bool>[];
@@ -37,7 +40,7 @@ class TestApi implements ApiClient {
       'id': row['id'], 'ok': true, 'version': (row['base_version'] as int) + 1,
       'seq': ++sequence, 'updated_at': DateTime.now().toUtc().toIso8601String(),
     }).toList();
-    return PushReply(requestId: requestId, instant: instant, results: results);
+    return PushReply(requestId: requestId, instant: instant, results: results, receipt: pushReceipt);
   }
   @override
   Future<Map<String, dynamic>> pullNotes({int? after, bool encOnly = false}) async {
