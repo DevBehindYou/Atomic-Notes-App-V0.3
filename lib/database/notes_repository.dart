@@ -722,7 +722,8 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     final rows = (pending['rows'] as List).map((row) => Map<String, dynamic>.from(row as Map)).toList();
     final List<Map<String, dynamic>> results;
     try {
-      results = await _api.pushNotes(rows, requestId: pending['requestId'] as String, instant: pending['instant'] == true);
+      final reply = await _api.pushNotes(rows, requestId: pending['requestId'] as String, instant: pending['instant'] == true);
+      results = reply.results;
     } on ApiException catch (e) {
       if (e.code == 'sync_cooldown') {
         // Refused before anything was recorded or charged. Forget this request so the next

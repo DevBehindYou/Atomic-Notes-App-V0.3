@@ -27,17 +27,17 @@ class TestApi implements ApiClient {
   @override
   String? get currentUserId => user;
   @override
-  Future<List<Map<String, dynamic>>> pushNotes(List<Map<String, dynamic>> rows,
+  Future<PushReply> pushNotes(List<Map<String, dynamic>> rows,
       {required String requestId, bool instant = false}) async {
     pushes.add(rows);
     requestIds.add(requestId);
     pushModes.add(instant);
     await beforePush?.call();
-    if (pushResults != null) return pushResults!;
-    return rows.map((row) => <String, dynamic>{
+    final results = pushResults ?? rows.map((row) => <String, dynamic>{
       'id': row['id'], 'ok': true, 'version': (row['base_version'] as int) + 1,
       'seq': ++sequence, 'updated_at': DateTime.now().toUtc().toIso8601String(),
     }).toList();
+    return PushReply(requestId: requestId, instant: instant, results: results);
   }
   @override
   Future<Map<String, dynamic>> pullNotes({int? after, bool encOnly = false}) async {

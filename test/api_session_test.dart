@@ -97,7 +97,7 @@ void main() {
     expect(sent.url.path, '/api/notes/push');
     expect(sent.headers['Authorization'], 'Bearer fixture-session-a');
     expect(jsonDecode(sent.body), {'rows': rows, 'requestId': 'fixture-request', 'mode': 'instant'});
-    expect(result.single['error'], 'note_write_failed');
+    expect(result.results.single['error'], 'note_write_failed');
   });
 
   test('cooldown metadata and non-JSON size errors survive decoding', () async {

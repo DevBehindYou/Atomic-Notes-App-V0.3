@@ -18,6 +18,27 @@ class ApiException implements Exception {
   String toString() => code;
 }
 
+/// Historical totals for one Server operation, including on requestId replay.
+/// These amounts do not indicate a new wallet debit for this HTTP attempt.
+class PushReceipt {
+  const PushReceipt({required this.charged, required this.refunded})
+      : assert(charged >= 0), assert(refunded >= 0), assert(refunded <= charged);
+  final int charged;
+  final int refunded;
+  int get netCharge => charged - refunded;
+}
+
+/// Note acknowledgements and optional billing metadata for the submitted batch.
+/// A missing receipt means unknown cost, including with older Servers.
+class PushReply {
+  const PushReply({required this.requestId, required this.instant,
+      required this.results, this.receipt});
+  final String requestId;
+  final bool instant;
+  final List<Map<String, dynamic>> results;
+  final PushReceipt? receipt;
+}
+
 /// The authenticated transport boundary. Every response belongs to the exact
 /// session that sent it, including re-login to the same account.
 class ApiClient {
@@ -160,12 +181,23 @@ class ApiClient {
     await _clearSession();
   }
 
-  Future<List<Map<String, dynamic>>> pushNotes(List<Map<String, dynamic>> rows,
+  Future<PushReply> pushNotes(List<Map<String, dynamic>> rows,
       {required String requestId, bool instant = false}) async {
     final data = await _request('POST', '/notes/push',
       body: {'rows': rows, 'requestId': requestId, 'mode': instant ? 'instant' : 'standard'},
       timeout: const Duration(seconds: 90), acceptSyncFailure: true) as Map;
-    return List<Map<String, dynamic>>.from(data['results'] as List);
+    final charged = data['charged'];
+    final refunded = data['refunded'];
+    // Old Servers omit receipts. Malformed optional billing metadata must not
+    // discard valid note acknowledgements or imply that an operation was free.
+    final receipt = charged is int && refunded is int &&
+        charged >= 0 && refunded >= 0 && refunded <= charged
+        ? PushReceipt(charged: charged, refunded: refunded) : null;
+    return PushReply(
+      requestId: requestId, instant: instant,
+      results: List<Map<String, dynamic>>.from(data['results'] as List),
+      receipt: receipt,
+    );
   }
   Future<Map<String, dynamic>> pullNotes({int? after, bool encOnly = false}) async =>
     Map<String, dynamic>.from(await _request('GET', '/notes/pull', query: {
