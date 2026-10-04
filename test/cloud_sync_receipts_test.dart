@@ -78,7 +78,7 @@ SyncAttemptReport report(
         operations: operations,
         errorMessage: error);
 
-Future<void> mountCloud(WidgetTester tester, _Reports source,
+Future<void> _mountCloud(WidgetTester tester, _Reports source,
     {double textScale = 1}) async {
   tester.view.physicalSize = const Size(375, 900);
   tester.view.devicePixelRatio = 1;
@@ -95,9 +95,9 @@ Future<void> mountCloud(WidgetTester tester, _Reports source,
   await tester.pumpAndSettle();
 }
 
-Future<void> showReceipt(WidgetTester tester, _Reports source,
+Future<void> _showReceipt(WidgetTester tester, _Reports source,
     {double textScale = 1}) async {
-  await mountCloud(tester, source, textScale: textScale);
+  await _mountCloud(tester, source, textScale: textScale);
   final context = tester.element(find.byType(Scaffold).first);
   await context.read<CloudNotesCubit>().sync(uploadAll: false);
   await tester.pumpAndSettle();
@@ -109,7 +109,7 @@ void main() {
   testWidgets('confirmed instant cost is visible in Cloud Notes',
       (tester) async {
     final source = _Reports(report(operations: [operation('a')]));
-    await showReceipt(tester, source);
+    await _showReceipt(tester, source);
     expect(find.text('NET UPLOAD COST'), findsOneWidget);
     expect(find.text('10 energy'), findsNWidgets(2));
     expect(source.reportCalls, 1);
@@ -123,7 +123,7 @@ void main() {
         (tester) async {
       final source = _Reports(report(operations: [operation('a')]))
         ..cloudNotes = 0;
-      await mountCloud(tester, source);
+      await _mountCloud(tester, source);
       final button =
           find.textContaining(uploadAll ? 'UPLOAD ALL  ·' : 'SYNC NOW  ·');
       await tester.ensureVisible(button);
@@ -143,7 +143,7 @@ void main() {
         completed: false,
         error: 'Pull unavailable',
         operations: [operation('a'), operation('b', refund: 10)]));
-    await showReceipt(tester, source);
+    await _showReceipt(tester, source);
     expect(find.text('Sync incomplete'), findsOneWidget);
     expect(find.text('Pull unavailable'), findsOneWidget);
     expect(find.text('20 energy'), findsOneWidget);
@@ -157,7 +157,7 @@ void main() {
     final source = _Reports(report(operations: [
       operation('old', charge: 5, recovered: true, instant: false)
     ]));
-    await showReceipt(tester, source);
+    await _showReceipt(tester, source);
     expect(find.text('5 energy'), findsNWidgets(2));
     expect(
         find.textContaining('may already have been applied'), findsOneWidget);
@@ -168,7 +168,7 @@ void main() {
 
   testWidgets('missing receipt stays unknown, never zero or free',
       (tester) async {
-    await showReceipt(
+    await _showReceipt(
         tester,
         _Reports(
             report(operations: [operation('a', charge: null, refund: null)])));
@@ -178,7 +178,7 @@ void main() {
   });
 
   testWidgets('partial receipts label only confirmed totals', (tester) async {
-    await showReceipt(
+    await _showReceipt(
         tester,
         _Reports(report(
             completed: false,
@@ -195,13 +195,13 @@ void main() {
 
   testWidgets('receive-only cost is distinct from an offline attempt',
       (tester) async {
-    await showReceipt(tester, _Reports(report()));
+    await _showReceipt(tester, _Reports(report()));
     expect(find.text('No upload was sent. No upload energy was charged.'),
         findsOneWidget);
   });
 
   testWidgets('offline attempt does not claim zero charge', (tester) async {
-    await showReceipt(
+    await _showReceipt(
         tester,
         _Reports(report(
             completed: false,
@@ -261,7 +261,7 @@ void main() {
   testWidgets('a later account/session change removes the displayed receipt',
       (tester) async {
     final source = _Reports(report(operations: [operation('a')]));
-    await showReceipt(tester, source);
+    await _showReceipt(tester, source);
     expect(find.text('NET UPLOAD COST'), findsOneWidget);
     source.changeSession();
     await tester.pumpAndSettle();
@@ -270,7 +270,7 @@ void main() {
 
   testWidgets('large-text receipt remains readable without layout exceptions',
       (tester) async {
-    await showReceipt(
+    await _showReceipt(
         tester,
         _Reports(report(
             operations: [operation('a')],

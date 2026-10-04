@@ -172,7 +172,9 @@ class CloudNotesCubit extends Cubit<CloudNotesState> {
       final bool ok = report?.completed ?? await _source.syncNow(instant: true);
       if (isClosed || _identity != identity) return null;
       if (report?.activity == SyncAttemptActivity.retired ||
-          report?.activity == SyncAttemptActivity.joined) return null;
+          report?.activity == SyncAttemptActivity.joined) {
+        return null;
+      }
       emit(state.copyWith(lastReport: report));
       final error = report == null ? _source.lastError : report.errorMessage;
       return UiMessage(
