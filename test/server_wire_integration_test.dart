@@ -210,7 +210,11 @@ void main() {
     await a.notes.save(note);
     await a.cubit.sync(uploadAll: false);
     outcomes['conflict_phase'] = 'base_uploaded';
+    expect(a.cubit.state.lastReport!.completed, isTrue);
+    final baseVersion = a.notes.byId(note.id)!.serverVersion;
+    expect(baseVersion, greaterThan(0));
     await b.cubit.sync(uploadAll: false);
+    expect(b.notes.byId(note.id)!.serverVersion, baseVersion);
     final offline = b.notes.byId(note.id)!;
     offline.body = 'Offline B';
     await b.notes.save(offline);
@@ -219,6 +223,9 @@ void main() {
     await a.cubit.sync(uploadAll: false);
     outcomes['first_client_edit'] =
         a.cubit.state.lastReport!.completed ? 'completed' : 'failed';
+    expect(a.cubit.state.lastReport!.completed, isTrue);
+    final acceptedVersion = baseVersion + 1;
+    expect(a.notes.byId(note.id)!.serverVersion, acceptedVersion);
     outcomes['conflict_phase'] = 'remote_edit_uploaded';
     final before = await diagnostic('/__fixture/state');
     final message = await b.cubit.sync(uploadAll: false);
@@ -233,13 +240,15 @@ void main() {
     outcomes['server_original_body'] =
         serverOriginal['body'] == 'Accepted A' ? 'expected' : 'different';
     outcomes['server_original_version'] =
-        serverOriginal['version'] == 2 ? 'expected' : 'different';
+        serverOriginal['version'] == acceptedVersion ? 'expected' : 'different';
     outcomes['client_original_version'] =
-        b.notes.byId(note.id)!.serverVersion == 2 ? 'expected' : 'different';
+        b.notes.byId(note.id)!.serverVersion == acceptedVersion
+            ? 'expected'
+            : 'different';
     outcomes['conflict_phase'] = 'checking_remote_original_body';
     expect(b.notes.byId(note.id)!.body, 'Accepted A');
     outcomes['conflict_phase'] = 'checking_remote_original_version';
-    expect(b.notes.byId(note.id)!.serverVersion, 2);
+    expect(b.notes.byId(note.id)!.serverVersion, acceptedVersion);
     outcomes['conflict_phase'] = 'checking_local_copy';
     final copy = b.notes.visible().singleWhere((value) =>
         value.id != note.id &&

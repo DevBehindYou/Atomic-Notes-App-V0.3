@@ -29,6 +29,15 @@ without changing global overrides. All ten targeted safety/transport tests pass,
 including an actual loopback request under that binding; four live cases still
 await a corrected CI run. This was test plumbing, not a production defect claim.
 
+The corrected transport let three live cases pass. Sanitized run `37228627291`
+at head `f7ddd186` confirmed accepted content was preserved in the conflict case;
+only its hard-coded version assertion failed. Server `src/lib/noteMetadata.ts`
+seeds fresh versions from the account sequence (including after a wipe), so a
+new note need not start at one. The fixture now captures the actual base version
+and requires the accepted edit to advance it by exactly one. Preservation,
+no-stale-write and wallet/refund assertions remain unchanged; no production
+source was changed to satisfy an incorrect fixture assumption.
+
 Boundaries: this is not full `src/app.ts` middleware, CORS/global body-limit,
 Google OAuth/Drive, Vercel/Atlas, Android Keystore, two physical devices, production
 upgrade or recovery proof. Committed-but-lost responses across client restart,
