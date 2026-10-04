@@ -73,8 +73,13 @@ class _CloudNotesViewState extends State<_CloudNotesView> {
     }
     final int? cloud = state.cloud;
     if (!state.checked) {
-      return const _Verdict(
-          'Checking', 'Counting the notes in your cloud…', AppColors.outline);
+      return state.checking
+          ? const _Verdict('Checking', 'Counting the notes in your cloud…',
+              AppColors.outline)
+          : const _Verdict(
+              'Not checked',
+              'The cloud note count has not been checked for this session. Tap Check cloud to check it.',
+              AppColors.outline);
     }
     if (cloud == null) {
       return const _Verdict(

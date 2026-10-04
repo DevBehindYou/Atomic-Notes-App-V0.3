@@ -56,6 +56,7 @@ final class CloudNotesState extends Equatable {
     bool? checking,
     bool? working,
     DateTime? checkedAt,
+    bool clearCheckedAt = false,
     SyncAttemptReport? lastReport,
     bool clearReport = false,
   }) =>
@@ -67,7 +68,7 @@ final class CloudNotesState extends Equatable {
         checked: checked ?? this.checked,
         checking: checking ?? this.checking,
         working: working ?? this.working,
-        checkedAt: checkedAt ?? this.checkedAt,
+        checkedAt: clearCheckedAt ? null : (checkedAt ?? this.checkedAt),
         lastSyncedAt: lastSyncedAt,
         nextAutoSyncAt: nextAutoSyncAt,
         lastReport: clearReport ? null : (lastReport ?? this.lastReport),
@@ -96,11 +97,12 @@ class CloudNotesCubit extends Cubit<CloudNotesState> {
       : _source = source,
         super(_read(source, const CloudNotesState())) {
     _source.addListener(_sourceChanged);
-    _reportIdentity = _identity;
+    _sourceIdentity = _identity;
   }
 
   final NotesSource _source;
-  Object? _reportIdentity;
+  Object? _sourceIdentity;
+  int _checkRevision = 0;
   Object? get _identity {
     final source = _source;
     return source is SyncReportSource
@@ -127,9 +129,19 @@ class CloudNotesCubit extends Cubit<CloudNotesState> {
   void _sourceChanged() {
     if (isClosed) return;
     final identity = _identity;
-    final base =
-        identity == _reportIdentity ? state : state.copyWith(clearReport: true);
-    _reportIdentity = identity;
+    var base = state;
+    if (identity != _sourceIdentity) {
+      // Retire both cached values and pending counts before a new check starts.
+      _checkRevision++;
+      base = state.copyWith(
+        clearCloud: true,
+        clearCheckedAt: true,
+        clearReport: true,
+        checked: false,
+        checking: false,
+      );
+    }
+    _sourceIdentity = identity;
     final next = _read(_source, base);
     if (next != state) emit(next);
   }
@@ -142,10 +154,22 @@ class CloudNotesCubit extends Cubit<CloudNotesState> {
 
   /// Counts the notes in the cloud.
   Future<void> check() async {
-    if (state.checking) return;
-    emit(state.copyWith(checking: true));
-    final int? count = await _source.cloudCount();
     if (isClosed) return;
+    _sourceChanged();
+    if (state.checking) return;
+    final identity = _identity;
+    final revision = ++_checkRevision;
+    emit(state.copyWith(checking: true));
+    int? count;
+    try {
+      count = await _source.cloudCount();
+    } catch (_) {
+      // A failed check is unavailable, never zero. Keep retry available.
+    }
+    if (isClosed) return;
+    // The API revision can change before repository listeners have fired.
+    _sourceChanged();
+    if (identity != _identity || revision != _checkRevision) return;
     emit(state.copyWith(
       cloud: count,
       clearCloud: count == null,

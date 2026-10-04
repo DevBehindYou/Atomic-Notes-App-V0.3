@@ -6,7 +6,6 @@ import 'package:atomic_notes/page/endpage/cloud_notes_page.dart';
 import 'package:atomic_notes/state/cloud_notes/cloud_notes_cubit.dart';
 import 'package:atomic_notes/theme/app_theme.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive_ce.dart';
 
