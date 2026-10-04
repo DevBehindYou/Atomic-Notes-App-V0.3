@@ -14,6 +14,7 @@ import 'package:http/http.dart' as http;
 
 import 'notes_repository_lifecycle_test.dart' show TestVault;
 import 'support/server_fixture_origin.dart';
+import 'support/server_fixture_transport.dart';
 
 /// Independent synthetic stores for logical devices; no native global mock.
 class _Storage implements FlutterSecureStorage {
@@ -90,14 +91,18 @@ void main() {
 
   setUp(() async {
     if (configuredOrigin.isEmpty) return;
+    outcomes['setup'] = 'validating_origin';
     origin = serverFixtureOrigin(configuredOrigin);
-    transport = http.Client();
+    transport = serverFixtureTransport();
     ownedTransport = transport;
+    outcomes['setup'] = 'requesting_ready';
     descriptor = await diagnostic('/__fixture/ready');
+    outcomes['setup'] = 'opening_hive';
     directory = await Directory.systemTemp.createTemp('atomic-server-wire-');
     ownedDirectory = directory;
     Hive.init(directory.path);
     SyncStatusHelper.syncBox = await Hive.openBox<bool>('isolated-wire-sync');
+    outcomes['setup'] = 'passed';
   });
   tearDown(() async {
     if (configuredOrigin.isEmpty) return;

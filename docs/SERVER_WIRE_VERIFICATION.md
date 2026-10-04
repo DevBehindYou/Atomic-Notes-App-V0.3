@@ -20,7 +20,14 @@ tests cannot be cited as live wire proof. Nine origin guard tests pass locally,
 and strict local Flutter analysis passes. The full local suite passes 457 tests
 with these four live cases explicitly skipped. Dedicated CI executes the live cases
 and checks that graceful fixture shutdown removes its exact generated namespace.
-Only fixed case codes and pass/fail outcomes are uploaded as sanitized evidence.
+Only fixed case/setup codes and outcomes are uploaded as sanitized evidence.
+
+The initial PR head `c0c7526` failed during wire setup (sanitized outcomes were
+empty). Flutter's test binding installs a synthetic HTTP override; the fixture
+transport now directly constructs the base dart:io client and disables proxies,
+without changing global overrides. All ten targeted safety/transport tests pass,
+including an actual loopback request under that binding; four live cases still
+await a corrected CI run. This was test plumbing, not a production defect claim.
 
 Boundaries: this is not full `src/app.ts` middleware, CORS/global body-limit,
 Google OAuth/Drive, Vercel/Atlas, Android Keystore, two physical devices, production
