@@ -8,6 +8,7 @@ final class CloudNotesState extends Equatable {
   const CloudNotesState({
     this.onDevice = 0,
     this.waiting = 0,
+    this.waitingDeletions = 0,
     this.cloud,
     this.checked = false,
     this.checking = false,
@@ -19,8 +20,12 @@ final class CloudNotesState extends Equatable {
 
   final int onDevice;
 
-  /// Notes edited on this device that have not reached the cloud.
+  /// Dirty changes on this device, including pending deletions.
   final int waiting;
+
+  final int waitingDeletions;
+
+  int get waitingNotes => (waiting - waitingDeletions).clamp(0, onDevice);
 
   /// Notes in the cloud. Null until a check succeeds, or when it failed.
   final int? cloud;
@@ -33,11 +38,13 @@ final class CloudNotesState extends Equatable {
   final DateTime? lastSyncedAt;
   final DateTime? nextAutoSyncAt;
 
-  int get synced => onDevice - waiting < 0 ? 0 : onDevice - waiting;
+  /// Live notes with no local changes waiting. Does not verify cloud content.
+  int get synced => onDevice - waitingNotes;
 
   CloudNotesState copyWith({
     int? onDevice,
     int? waiting,
+    int? waitingDeletions,
     int? cloud,
     bool clearCloud = false,
     bool? checked,
@@ -48,6 +55,7 @@ final class CloudNotesState extends Equatable {
       CloudNotesState(
         onDevice: onDevice ?? this.onDevice,
         waiting: waiting ?? this.waiting,
+        waitingDeletions: waitingDeletions ?? this.waitingDeletions,
         cloud: clearCloud ? null : (cloud ?? this.cloud),
         checked: checked ?? this.checked,
         checking: checking ?? this.checking,
@@ -61,6 +69,7 @@ final class CloudNotesState extends Equatable {
   List<Object?> get props => [
         onDevice,
         waiting,
+        waitingDeletions,
         cloud,
         checked,
         checking,
@@ -87,6 +96,7 @@ class CloudNotesCubit extends Cubit<CloudNotesState> {
       CloudNotesState(
         onDevice: source.count,
         waiting: source.pendingCount,
+        waitingDeletions: source.binNotes.where((note) => note.dirty).length,
         cloud: base.cloud,
         checked: base.checked,
         checking: base.checking,

@@ -85,8 +85,8 @@ class _CloudNotesViewState extends State<_CloudNotesView> {
       return _Verdict(
         '$waiting waiting',
         waiting == 1
-            ? '1 edited note is waiting to upload. It sends at the next automatic sync, or now with Sync now.'
-            : '$waiting edited notes are waiting to upload. They send at the next automatic sync, or now with Sync now.',
+            ? '1 change is waiting to upload, including edited notes or deletions. It sends at the next automatic sync, or now with Sync now.'
+            : '$waiting changes are waiting to upload, including edited notes or deletions. They send at the next automatic sync, or now with Sync now.',
         AppColors.signal,
       );
     }
@@ -120,7 +120,7 @@ class _CloudNotesViewState extends State<_CloudNotesView> {
           builder: (context, state) {
             final cubit = context.read<CloudNotesCubit>();
             final int onDevice = state.onDevice;
-            final int waiting = state.waiting;
+            final int waiting = state.waitingNotes;
             final int synced = state.synced;
             final _Verdict verdict = _verdict(state);
             final bool syncOn = SyncStatusHelper.isSyncOn;
@@ -188,12 +188,21 @@ class _CloudNotesViewState extends State<_CloudNotesView> {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          MonoLabel('Synced $synced',
+                          MonoLabel('Unchanged $synced',
                               small: true, color: AppColors.outlineVariant),
-                          MonoLabel('Waiting $waiting',
+                          MonoLabel('Edited $waiting',
                               small: true, color: AppColors.outlineVariant),
                         ],
                       ),
+                      if (state.waitingDeletions > 0) ...[
+                        const SizedBox(height: AppSpace.sm),
+                        Text(
+                          '${state.waitingDeletions} '
+                          '${state.waitingDeletions == 1 ? 'deletion' : 'deletions'} waiting',
+                          style: AppType.bodySm
+                              .copyWith(color: AppColors.outlineVariant),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -209,6 +218,11 @@ class _CloudNotesViewState extends State<_CloudNotesView> {
                       MonoLabel('Status', small: true, color: verdict.color),
                       const SizedBox(height: AppSpace.xs),
                       Text(verdict.detail, style: AppType.bodyMd),
+                      const SizedBox(height: AppSpace.sm),
+                      const Text(
+                        'Unchanged means no local edits are waiting; it does not compare cloud contents.',
+                        style: AppType.bodySm,
+                      ),
                     ],
                   ),
                 ),
