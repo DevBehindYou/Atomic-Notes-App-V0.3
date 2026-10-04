@@ -217,6 +217,8 @@ void main() {
     note.body = 'Accepted A';
     await a.notes.save(note);
     await a.cubit.sync(uploadAll: false);
+    outcomes['first_client_edit'] =
+        a.cubit.state.lastReport!.completed ? 'completed' : 'failed';
     outcomes['conflict_phase'] = 'remote_edit_uploaded';
     final before = await diagnostic('/__fixture/state');
     final message = await b.cubit.sync(uploadAll: false);
@@ -224,8 +226,19 @@ void main() {
     expect(message!.text, contains('separate copies'));
     outcomes['conflict_phase'] = 'checking_conflict_report';
     expect(b.cubit.state.lastReport!.completed, isFalse);
-    outcomes['conflict_phase'] = 'checking_remote_original';
+    final page = await b.api.pullNotes();
+    final serverOriginal = (page['rows'] as List)
+        .cast<Map<String, dynamic>>()
+        .singleWhere((row) => row['id'] == note.id);
+    outcomes['server_original_body'] =
+        serverOriginal['body'] == 'Accepted A' ? 'expected' : 'different';
+    outcomes['server_original_version'] =
+        serverOriginal['version'] == 2 ? 'expected' : 'different';
+    outcomes['client_original_version'] =
+        b.notes.byId(note.id)!.serverVersion == 2 ? 'expected' : 'different';
+    outcomes['conflict_phase'] = 'checking_remote_original_body';
     expect(b.notes.byId(note.id)!.body, 'Accepted A');
+    outcomes['conflict_phase'] = 'checking_remote_original_version';
     expect(b.notes.byId(note.id)!.serverVersion, 2);
     outcomes['conflict_phase'] = 'checking_local_copy';
     final copy = b.notes.visible().singleWhere((value) =>
