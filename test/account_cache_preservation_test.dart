@@ -132,5 +132,39 @@ void main() {
     expect(box.get('__pending_sync_operation'), pending);
     expect(box.get(note.id), isNotNull);
     expect(box.get('__cache_owner__'), 'user-a');
+    await expectLater(repository.clearLocal(), throwsStateError);
+    expect(box.get('__pending_sync_operation'), pending);
+  });
+  test('hot account change cannot push the previous cache before start',
+      () async {
+    final note = await save();
+    final stored = Map.from(box.get(note.id) as Map);
+    api.user = 'user-b';
+    api.sessionRevision++;
+    final synced = await repository.syncNow(instant: true);
+    expect(api.pushes.length, 0,
+        reason: 'No previous-account payload may be sent');
+    expect(synced, isFalse);
+    expect(repository.count, 0);
+    expect(box.get(note.id), stored);
+    expect(box.get('__cache_owner__'), 'user-a');
+  });
+  test('hot account change cannot persist new work into the previous cache',
+      () async {
+    await save();
+    api.user = 'user-b';
+    api.sessionRevision++;
+    final next = Note.create();
+    var refused = false;
+    try {
+      await repository.save(next);
+    } on StateError {
+      refused = true;
+    }
+    expect(box.containsKey(next.id), isFalse,
+        reason: 'Never mix two owners in one box');
+    expect(refused, isTrue);
+    expect(repository.count, 0);
+    expect(box.get('__cache_owner__'), 'user-a');
   });
 }
