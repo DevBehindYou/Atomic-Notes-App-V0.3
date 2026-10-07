@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -88,6 +89,30 @@ class _CapturePushes extends http.BaseClient {
   }
 }
 
+/// Hold a fully received real count response at the client transport boundary.
+class _HoldCountReply extends http.BaseClient {
+  _HoldCountReply(this.inner);
+  final http.Client inner;
+  final received = Completer<void>();
+  final release = Completer<void>();
+  int? status;
+  bool hold = true;
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    final response = await inner.send(request);
+    if (request.url.path == '/api/notes/count' && hold) {
+      hold = false;
+      final bytes = await response.stream.toBytes();
+      status = response.statusCode;
+      received.complete();
+      await release.future;
+      return http.StreamedResponse(Stream.value(bytes), response.statusCode,
+          headers: response.headers);
+    }
+    return response;
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const configuredOrigin = String.fromEnvironment('ATOMIC_FIXTURE_ORIGIN');
@@ -109,10 +134,10 @@ void main() {
 
   Future<({NotesRepository notes, CloudNotesCubit cubit, ApiClient api})>
       device(String name, String token, String userId,
-          {http.Client? deviceTransport, TestVault? vault}) async {
+          {http.Client? deviceTransport, TestVault? vault, _Storage? storage}) async {
     final api = ApiClient.forTest(
         client: deviceTransport ?? transport,
-        storage: _Storage(userId, token),
+        storage: storage ?? _Storage(userId, token),
         baseUrl: origin.replace(path: '/api'));
     await api.init();
     final notes = NotesRepository.forTest(
@@ -1002,5 +1027,100 @@ void main() {
     expect(wallet(finished)['notes'], (wallet(before)['notes'] as int) + 14);
     expect(finished['writes'], (before['writes'] as int) + 14);
     expect(Hive.box('device-batch-bytes').get('__pending_sync_operation'), isNull);
+  });
+
+  wireTest('current_revoked_session_retires_without_deleting_unsent_hive_work',
+      () async {
+    final uid = descriptor['owner'] as String;
+    final storage = _Storage(uid, 'atomic-disposable-client-a');
+    final client = await device('retired-current', 'atomic-disposable-client-a', uid,
+        storage: storage);
+    final note = Note(id: newId(), title: 'Retired session fixture',
+        body: 'Synthetic preserved offline work');
+    await client.notes.save(note);
+    final box = Hive.box('device-retired-current');
+    final savedRow = box.get(note.id);
+    final before = await diagnostic('/__fixture/state');
+    final logout = await transport.post(origin.replace(path: '/api/auth/logout'),
+        headers: {'authorization': 'Bearer atomic-disposable-client-a'});
+    expect(logout.statusCode, 200);
+    final ended = client.api.onSessionEnded.first;
+    final report = await client.notes.syncWithReport(instant: true);
+    await ended.timeout(const Duration(seconds: 5));
+    expect(report.completed, isFalse);
+    expect(report.charged, isNull);
+    expect(report.refunded, isNull);
+    expect(client.api.isSignedIn, isFalse);
+    expect(client.api.currentUserId, isNull);
+    expect(client.notes.count, 0);
+    expect(client.notes.byId(note.id), isNull);
+    expect(box.get(note.id), savedRow);
+    expect((box.get(note.id) as Map)['dirty'], isTrue);
+    expect(box.get('__cache_owner__'), uid);
+    final pending = Map<dynamic, dynamic>.from(box.get('__pending_sync_operation') as Map);
+    expect(pending['userId'], uid);
+    expect((pending['rows'] as List).single['id'], note.id);
+    await client.api.init(); // Wait for queued secure-storage deletion.
+    expect(storage.values.containsKey('atomic_api_session_token'), isFalse);
+    expect(storage.values.containsKey('atomic_api_user_id'), isFalse);
+    final refused = await diagnostic('/__fixture/state');
+    expect(refused['writes'], before['writes']);
+    expect(refused['users'], before['users']);
+    storage.values.addAll({
+      'atomic_api_session_token': 'atomic-disposable-client-b',
+      'atomic_api_user_id': uid,
+      'atomic_api_user_email': 'fixture@example.test',
+    });
+    await client.api.init();
+    await client.notes.start();
+    expect(client.notes.byId(note.id)!.body, note.body);
+    expect(client.notes.byId(note.id)!.dirty, isTrue);
+    expect(box.get('__pending_sync_operation'), pending);
+    expect(await client.api.remoteNoteCount(), 0);
+    // Restoration proves original-owner access and pending preservation, not
+    // upload recovery: this synthetic owner's energy is exhausted.
+  });
+
+  wireTest('late_real_401_cannot_retire_a_newer_same_owner_session', () async {
+    final uid = descriptor['owner'] as String;
+    final storage = _Storage(uid, 'atomic-disposable-client-a');
+    final held = _HoldCountReply(transport);
+    final client = await device('retired-late', 'atomic-disposable-client-a', uid,
+        storage: storage, deviceTransport: held);
+    final note = Note(id: newId(), title: 'New session fixture',
+        body: 'Synthetic current-session offline work');
+    await client.notes.save(note);
+    final box = Hive.box('device-retired-late');
+    final snapshot = Map<dynamic, dynamic>.from(box.toMap());
+    final before = await diagnostic('/__fixture/state');
+    var ended = 0;
+    final subscription = client.api.onSessionEnded.listen((_) => ended++);
+    try {
+      final staleRequest = client.api.remoteNoteCount();
+      final assertion = expectLater(staleRequest, throwsA(isA<ApiException>()
+          .having((error) => error.code, 'code', 'session_changed')));
+      await held.received.future.timeout(const Duration(seconds: 5));
+      expect(held.status, 401);
+      storage.values['atomic_api_session_token'] = 'atomic-disposable-client-b';
+      await client.api.init();
+      final revision = client.api.sessionRevision;
+      held.release.complete();
+      await assertion;
+      expect(client.api.sessionRevision, revision);
+      expect(client.api.isSignedIn, isTrue);
+      expect(client.api.currentUserId, uid);
+      expect(ended, 0);
+      expect(storage.values['atomic_api_session_token'], 'atomic-disposable-client-b');
+      expect(client.notes.byId(note.id)!.body, note.body);
+      expect(client.notes.byId(note.id)!.dirty, isTrue);
+      expect(box.toMap(), snapshot);
+      expect(await client.api.remoteNoteCount(), 0);
+      final after = await diagnostic('/__fixture/state');
+      expect(after['writes'], before['writes']);
+      expect(after['users'], before['users']);
+    } finally {
+      if (!held.release.isCompleted) held.release.complete();
+      await subscription.cancel();
+    }
   });
 }
