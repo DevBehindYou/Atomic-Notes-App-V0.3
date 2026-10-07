@@ -95,7 +95,7 @@ void main() {
 
   Future<({NotesRepository notes, CloudNotesCubit cubit, ApiClient api})>
       device(String name, String token, String userId,
-          {http.Client? deviceTransport}) async {
+          {http.Client? deviceTransport, TestVault? vault}) async {
     final api = ApiClient.forTest(
         client: deviceTransport ?? transport,
         storage: _Storage(userId, token),
@@ -104,7 +104,7 @@ void main() {
     final notes = NotesRepository.forTest(
         box: await Hive.openBox('device-$name'),
         api: api,
-        vault: TestVault(),
+        vault: vault ?? TestVault(),
         checkConnectivity: () async => [ConnectivityResult.wifi]);
     await notes.start();
     repositories.add(notes);
@@ -597,5 +597,91 @@ void main() {
     } finally {
       await arm([]);
     }
+  });
+
+  wireTest('locked_plaintext_pull_then_unlock_reloads_and_seals_cloud_rows',
+      () async {
+    final uid = descriptor['other'] as String;
+    Map<String, dynamic> wallet(Map<String, dynamic> state) =>
+        (state['users'] as List)
+            .cast<Map<String, dynamic>>()
+            .singleWhere((user) => user['userId'] == uid);
+    final aVault = TestVault();
+    final a =
+        await device('vault-a', 'atomic-disposable-other', uid, vault: aVault);
+    final plain = Note(
+        id: newId(),
+        title: 'Plain wire fixture',
+        body: 'Synthetic plain content');
+    await a.notes.save(plain);
+    await a.cubit.sync(uploadAll: false);
+    expect(a.cubit.state.lastReport!.completed, isTrue);
+    aVault.unlocked = true;
+    final sealed = Note(
+        id: newId(),
+        title: 'Sealed wire fixture',
+        body: 'Synthetic sealed content');
+    await a.notes.save(sealed);
+    await a.cubit.sync(uploadAll: false);
+    expect(a.cubit.state.lastReport!.completed, isTrue);
+    final allRows = (await a.api.pullNotes())['rows'] as List;
+    final protected = allRows
+        .cast<Map<String, dynamic>>()
+        .singleWhere((row) => row['id'] == sealed.id);
+    expect(protected['enc_v'], greaterThan(0));
+    expect(protected['title'], '');
+    expect(protected['body'], '');
+    expect(protected['items'], isEmpty);
+    expect(protected['payload'], isA<String>());
+    final bVault = TestVault();
+    final b =
+        await device('vault-b', 'atomic-disposable-other', uid, vault: bVault);
+    final before = await diagnostic('/__fixture/state');
+    await b.cubit.sync(uploadAll: false);
+    expect(b.cubit.state.lastReport!.completed, isTrue);
+    expect(b.cubit.state.lastReport!.operations, isEmpty);
+    expect(b.notes.byId(plain.id)!.body, 'Synthetic plain content');
+    expect(b.notes.byId(sealed.id), isNull);
+    final filtered = await b.api.pullNotes(encOnly: true);
+    expect(
+        (filtered['rows'] as List)
+            .cast<Map<String, dynamic>>()
+            .any((row) => row['id'] == sealed.id),
+        isFalse);
+    final box = Hive.box('device-vault-b');
+    expect(box.get(sealed.id), isNull);
+    expect(box.get('__sync_cursor__'), filtered['nextCursor']);
+    final locked = await diagnostic('/__fixture/state');
+    expect(locked['writes'], before['writes']);
+    expect(locked['users'], before['users']);
+    bVault.unlocked = true;
+    await b.notes.reloadAfterUnlock();
+    expect(b.notes.byId(sealed.id)!.body, 'Synthetic sealed content');
+    expect(b.notes.byId(plain.id)!.body, 'Synthetic plain content');
+    expect(b.notes.pendingCount, 0);
+    final stored = box.get(sealed.id) as Map;
+    expect(stored['body'], '');
+    expect(stored['title'], '');
+    expect(stored['payload'], isA<String>());
+    final finished = await diagnostic('/__fixture/state');
+    expect(wallet(finished)['energy'], (wallet(locked)['energy'] as int) - 5);
+    expect((wallet(finished)['ledger'] as List).length,
+        (wallet(locked)['ledger'] as List).length + 1);
+    final encryptedRows = (await b.api.pullNotes())['rows'] as List;
+    for (final id in [plain.id, sealed.id]) {
+      final row = encryptedRows
+          .cast<Map<String, dynamic>>()
+          .singleWhere((row) => row['id'] == id);
+      expect(row['enc_v'], greaterThan(0));
+      expect(row['title'], '');
+      expect(row['body'], '');
+      expect(row['payload'], isA<String>());
+    }
+    final remainingPlain = await b.api.pullNotes(encOnly: true);
+    expect(
+        (remainingPlain['rows'] as List)
+            .cast<Map<String, dynamic>>()
+            .any((row) => row['id'] == plain.id || row['id'] == sealed.id),
+        isFalse);
   });
 }
