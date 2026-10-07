@@ -91,6 +91,10 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   int _lifecycleRevision = 0;
   bool _lockingVault = false;
   final Set<String> _protectedIds = {};
+  // Call-lifetime proof from an actual pull or successful push acknowledgement.
+  // Local ciphertext alone does not prove that the cloud version is encrypted.
+  // Nothing is persisted: an unknown format remains conservative on restart.
+  final Map<String, int> _encryptedCloudVersions = {};
   final Set<String> _inFlightIds = {};
 
   static const String boxName = 'notesBox';
@@ -324,6 +328,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
       if (hasForeignPendingCache) _assertCacheOwner();
       _notes.clear();
       _protectedIds.clear();
+      _encryptedCloudVersions.clear();
       _syncCursor = null;
       lastSyncedAt = null;
       await _drainWrites();
@@ -403,6 +408,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   void clearMemory() {
     _lifecycleRevision++;
     _notes.clear();
+    _encryptedCloudVersions.clear();
     _syncCursor = null;
     lastSyncedAt = null;
     lastError = null;
@@ -521,6 +527,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
       throw StateError('Sync all pending changes before logging out.');
     }
     _notes.clear();
+    _encryptedCloudVersions.clear();
     _syncCursor = null;
     // Let an in-flight write finish first: it would otherwise land after the
     // clear and leave this account's note on disk for the next one.
@@ -830,6 +837,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     if (!_activeFor(uid)) return false;
     report?.received(reply);
     final versions = pending['versions'] as Map;
+    final sentEncryption = {for (final row in rows) row['id'] as String: row['enc_v']};
     var conflicted = false;
     var failed = false;
     final writtenSeqs = <int>[];
@@ -853,6 +861,11 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
         continue;
       }
       local.serverVersion = (result['version'] as num).toInt();
+      if (sentEncryption[id] == Vault.encVersion) {
+        _encryptedCloudVersions[id] = local.serverVersion;
+      } else {
+        _encryptedCloudVersions.remove(id);
+      }
       final sent = (pending['sigs'] as Map?)?[id];
       if (sent is String) local.syncedSig = sent;
       final seq = (result['seq'] as num?)?.toInt();
@@ -939,6 +952,15 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
       if (opened == null) continue; // encrypted + locked: retry after unlock
       final remote = Note.fromRemote(opened);
       final local = _notes[remote.id];
+      // Even an equal-version pull can prove the cloud format. Do not replace
+      // a newer acknowledgement's proof with an older remote page.
+      if (local == null || remote.serverVersion >= local.serverVersion) {
+        if (row['enc_v'] == Vault.encVersion && remote.serverVersion > 0) {
+          _encryptedCloudVersions[remote.id] = remote.serverVersion;
+        } else {
+          _encryptedCloudVersions.remove(remote.id);
+        }
+      }
 
       if (local == null) {
         if (plainInCloud) remote.requireResend();
@@ -966,12 +988,12 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     if (changed && _userId == forUid) notifyListeners();
   }
 
-  /// Re-seal every note this device holds and push them.
+  /// Seal local content and upload only versions not known encrypted in cloud.
   ///
   /// Runs after the vault is created and after every unlock, so notes written
   /// while the vault was off or locked (T2T) are converted to vault notes. It
-  /// is idempotent: re-sealing an already-sealed note just rewrites it, so an
-  /// interrupted run is safe to repeat.
+  /// leaves acknowledged encrypted versions clean. Unknown cloud formats remain
+  /// conservative; interrupted conversions and actual edits remain pending.
   ///
   /// Waits for a sync that is already running first: it may still be pulling notes
   /// this method has not seen yet, and skipping it (as a busy [syncNow] does) would
@@ -986,7 +1008,9 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     if (_notes.isEmpty) return 0;
     debugPrint('NotesRepository: migrating ${_notes.length} notes into the vault');
     for (final n in _notes.values.toList()) {
-      n.requireResend();
+      if (n.serverVersion <= 0 || _encryptedCloudVersions[n.id] != n.serverVersion) {
+        n.requireResend();
+      }
       await _persist(n.id);
     }
     notifyListeners();
@@ -1136,6 +1160,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     }
     if (_userId != uid) return const WipeOutcome(false, 'Session changed. Reopen Cloud Notes.');
     _assertCacheOwner();
+    _encryptedCloudVersions.clear();
     for (final id in _notes.keys.toList()) {
       _notes[id]?.serverVersion = 0;
       _notes[id]?.syncedSig = '';

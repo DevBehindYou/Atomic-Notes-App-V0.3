@@ -564,4 +564,101 @@ void main() {
     expect(api.requestIds.last, isNot(api.requestIds.first));
     expect(api.pushes.last.single['title'], 'corrected');
   });
+
+  test('vault migration leaves acknowledged ciphertext clean after unlock',
+      () async {
+    vault.unlocked = true;
+    final note = Note.create()..body = 'Synthetic acknowledged ciphertext';
+    await repository.save(note);
+    expect(await repository.syncNow(instant: true), isTrue);
+    final count = api.pushes.length;
+    await repository.reloadAfterUnlock();
+    expect(repository.byId(note.id)!.body, note.body);
+    expect(repository.pendingCount, 0);
+    expect(api.pushes.length, count);
+  });
+
+  test(
+      'vault migration converts plaintext once and repeated migration stays clean',
+      () async {
+    final note = Note.create()..body = 'Synthetic plaintext conversion';
+    await repository.save(note);
+    expect(await repository.syncNow(instant: true), isTrue);
+    vault.unlocked = true;
+    expect(await repository.migrateToVault(), 0);
+    expect(api.pushes.last.single['enc_v'], 1);
+    final count = api.pushes.length;
+    expect(await repository.migrateToVault(), 0);
+    expect(api.pushes.length, count);
+    expect(repository.byId(note.id)!.dirty, isFalse);
+  });
+
+  test(
+      'vault migration preserves a dirty encrypted edit and does not requeue its acknowledgement',
+      () async {
+    vault.unlocked = true;
+    final note = Note.create()..body = 'Synthetic original';
+    await repository.save(note);
+    expect(await repository.syncNow(instant: true), isTrue);
+    note.body = 'Synthetic later edit';
+    await repository.save(note);
+    expect(await repository.migrateToVault(), 0);
+    final content =
+        await vault.decryptContent(api.pushes.last.single['payload'] as String);
+    expect(content['body'], note.body);
+    final count = api.pushes.length;
+    expect(await repository.migrateToVault(), 0);
+    expect(api.pushes.length, count);
+  });
+
+  test(
+      'vault migration treats old ciphertext cache with unknown cloud format conservatively once',
+      () async {
+    vault.unlocked = true;
+    final note = Note.create()..body = 'Synthetic pre-upgrade ciphertext';
+    await repository.save(note);
+    expect(await repository.syncNow(instant: true), isTrue);
+    // A fresh repository has no in-memory proof of the cloud encryption format.
+    // Keep the existing Hive format and deliberately return no remote rows.
+    await repository.stop(waitForSync: true);
+    repository.dispose();
+    repository = NotesRepository.forTest(box: box, api: api, vault: vault,
+      checkConnectivity: () async => [ConnectivityResult.wifi]);
+    await repository.start();
+    final count = api.pushes.length;
+    expect(await repository.migrateToVault(), 0);
+    expect(api.pushes.length, count + 1);
+    expect(await repository.migrateToVault(), 0);
+    expect(api.pushes.length, count + 1);
+    expect(repository.byId(note.id)!.body, note.body);
+  });
+
+  test(
+      'vault migration keeps only failed plaintext conversions pending across repeat',
+      () async {
+    final a = Note.create()..body = 'Synthetic accepted conversion';
+    final b = Note.create()..body = 'Synthetic failed conversion';
+    await repository.save(a);
+    await repository.save(b);
+    expect(await repository.syncNow(instant: true), isTrue);
+    vault.unlocked = true;
+    api.pushResults = [
+      {
+        'id': a.id,
+        'ok': true,
+        'version': 2,
+        'seq': 3,
+        'updated_at': DateTime.now().toUtc().toIso8601String()
+      },
+      {'id': b.id, 'ok': false, 'error': 'note_write_failed'},
+    ];
+    expect(await repository.migrateToVault(), 1);
+    expect(repository.byId(a.id)!.dirty, isFalse);
+    expect(repository.byId(b.id)!.dirty, isTrue);
+    final count = api.pushes.length;
+    expect(await repository.migrateToVault(), 1);
+    expect(api.pushes.length, count);
+    expect(repository.byId(a.id)!.dirty, isFalse);
+    expect(repository.byId(b.id)!.body, b.body);
+  });
 }
