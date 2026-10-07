@@ -74,6 +74,20 @@ class _DiscardCommittedReply extends http.BaseClient {
   }
 }
 
+/// Observe actual outgoing envelopes without altering requests or responses.
+class _CapturePushes extends http.BaseClient {
+  _CapturePushes(this.inner);
+  final http.Client inner;
+  final bodies = <String>[];
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    if (request.method == 'POST' && request.url.path == '/api/notes/push') {
+      bodies.add((request as http.Request).body);
+    }
+    return inner.send(request);
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const configuredOrigin = String.fromEnvironment('ATOMIC_FIXTURE_ORIGIN');
@@ -836,7 +850,11 @@ void main() {
     expect(ownerState(wiped)['notes'], 0);
     expect(ownerState(wiped)['energy'], ownerState(before)['energy']);
     expect(ownerState(wiped)['ledger'], ownerState(before)['ledger']);
-    expect((wiped['users'] as List).last, (before['users'] as List).last);
+    expect(
+        (wiped['users'] as List).cast<Map<String, dynamic>>()
+            .singleWhere((user) => user['userId'] == descriptor['other']),
+        (before['users'] as List).cast<Map<String, dynamic>>()
+            .singleWhere((user) => user['userId'] == descriptor['other']));
     expect(wiped['liveFiles'], lessThan(before['liveFiles'] as int));
     await observer.cubit.sync(uploadAll: false);
     expect(observer.cubit.state.lastReport!.completed, isTrue);
@@ -862,5 +880,127 @@ void main() {
     final queued = await diagnostic('/__fixture/state');
     expect(queued['writes'], wiped['writes']);
     expect(queued['users'], wiped['users']);
+  });
+
+  wireTest('fifty_row_batches_preserve_waiting_work_and_charge_per_request',
+      () async {
+    final uid = descriptor['batchOwner'] as String;
+    final capture = _CapturePushes(transport);
+    final client = await device('batch-rows', 'atomic-disposable-batch', uid,
+        deviceTransport: capture);
+    Map<String, dynamic> wallet(Map<String, dynamic> state) =>
+        (state['users'] as List).cast<Map<String, dynamic>>()
+            .singleWhere((user) => user['userId'] == uid);
+    final notes = List.generate(51,
+        (_) => Note(id: newId(), title: 'Batch fixture', body: 'Synthetic batch row'));
+    for (final note in notes) {
+      await client.notes.save(note);
+    }
+    final before = await diagnostic('/__fixture/state');
+    final first = await client.notes.syncWithReport(instant: false);
+    expect(first.completed, isFalse);
+    expect(first.errorMessage, isNull);
+    expect(first.operations, hasLength(1));
+    expect(first.netCharge, 5);
+    expect(client.notes.pendingCount, 1);
+    expect(client.notes.nextAutoSyncAt, isNotNull);
+    expect(capture.bodies, hasLength(1));
+    final request = jsonDecode(capture.bodies.single) as Map;
+    expect(request['mode'], 'standard');
+    expect(request['rows'], hasLength(50));
+    expect(utf8.encode(capture.bodies.single).length, lessThanOrEqualTo(2500000));
+    final waiting = await diagnostic('/__fixture/state');
+    expect(wallet(waiting)['energy'], (wallet(before)['energy'] as int) - 5);
+    expect(waiting['writes'], (before['writes'] as int) + 50);
+    expect(wallet(waiting)['notes'], 50);
+    final paused = await client.notes.syncWithReport(instant: false);
+    expect(paused.completed, isFalse);
+    expect(paused.operations, isEmpty);
+    expect(client.notes.pendingCount, 1);
+    expect(capture.bodies, hasLength(1));
+    final stillWaiting = await diagnostic('/__fixture/state');
+    expect(stillWaiting['writes'], waiting['writes']);
+    expect(stillWaiting['users'], waiting['users']);
+    await client.cubit.sync(uploadAll: false);
+    final finishedReport = client.cubit.state.lastReport!;
+    expect(finishedReport.completed, isTrue);
+    expect(finishedReport.netCharge, 10);
+    expect(finishedReport.operations, hasLength(1));
+    expect(client.notes.pendingCount, 0);
+    expect(capture.bodies, hasLength(2));
+    final remaining = jsonDecode(capture.bodies.last) as Map;
+    expect(remaining['mode'], 'instant');
+    expect(remaining['requestId'], isNot(request['requestId']));
+    expect(remaining['rows'], hasLength(1));
+    final sentIds = capture.bodies.expand((body) =>
+        ((jsonDecode(body) as Map)['rows'] as List).map((row) => (row as Map)['id']));
+    expect(sentIds.toSet(), notes.map((note) => note.id).toSet());
+    expect(sentIds, hasLength(51));
+    final finished = await diagnostic('/__fixture/state');
+    expect(wallet(finished)['energy'], (wallet(before)['energy'] as int) - 15);
+    expect((wallet(finished)['ledger'] as List).length,
+        (wallet(before)['ledger'] as List).length + 2);
+    expect(finished['writes'], (before['writes'] as int) + 51);
+    expect(wallet(finished)['notes'], 51);
+    final box = Hive.box('device-batch-rows');
+    expect(box.get('__pending_sync_operation'), isNull);
+    for (final note in notes) {
+      expect(client.notes.byId(note.id)!.dirty, isFalse);
+      expect(client.notes.byId(note.id)!.body, note.body);
+      expect(client.notes.byId(note.id)!.serverVersion, greaterThan(0));
+      expect((box.get(note.id) as Map)['dirty'], isFalse);
+    }
+  });
+
+  wireTest('utf8_envelope_budget_splits_large_rows_without_loss_or_extra_retries',
+      () async {
+    final uid = descriptor['batchOwner'] as String;
+    final capture = _CapturePushes(transport);
+    final client = await device('batch-bytes', 'atomic-disposable-batch', uid,
+        deviceTransport: capture);
+    Map<String, dynamic> wallet(Map<String, dynamic> state) =>
+        (state['users'] as List).cast<Map<String, dynamic>>()
+            .singleWhere((user) => user['userId'] == uid);
+    final body = List.filled(60000, '雪').join();
+    expect(utf8.encode(body).length, 180000);
+    final notes = List.generate(14,
+        (_) => Note(id: newId(), title: 'UTF-8 fixture', body: body));
+    for (final note in notes) {
+      await client.notes.save(note);
+    }
+    final before = await diagnostic('/__fixture/state');
+    await client.cubit.sync(uploadAll: false);
+    final report = client.cubit.state.lastReport!;
+    expect(report.completed, isTrue);
+    expect(report.operations, hasLength(2));
+    expect(report.netCharge, 20);
+    expect(client.notes.pendingCount, 0);
+    expect(capture.bodies, hasLength(2));
+    final first = jsonDecode(capture.bodies.first) as Map;
+    final second = jsonDecode(capture.bodies.last) as Map;
+    expect(first['rows'], hasLength(13));
+    expect(second['rows'], hasLength(1));
+    expect(first['requestId'], isNot(second['requestId']));
+    for (final encoded in capture.bodies) {
+      expect(utf8.encode(encoded).length, lessThanOrEqualTo(2500000));
+    }
+    final overflow = Map<dynamic, dynamic>.from(first)
+      ..['rows'] = [...first['rows'] as List, (second['rows'] as List).single];
+    expect(utf8.encode(jsonEncode(overflow)).length, greaterThan(2500000));
+    final sentIds = capture.bodies.expand((encoded) =>
+        ((jsonDecode(encoded) as Map)['rows'] as List).map((row) => (row as Map)['id']));
+    expect(sentIds.toSet(), notes.map((note) => note.id).toSet());
+    expect(sentIds, hasLength(14));
+    for (final note in notes) {
+      expect(client.notes.byId(note.id)!.body, body);
+      expect(client.notes.byId(note.id)!.dirty, isFalse);
+    }
+    final finished = await diagnostic('/__fixture/state');
+    expect(wallet(finished)['energy'], (wallet(before)['energy'] as int) - 20);
+    expect((wallet(finished)['ledger'] as List).length,
+        (wallet(before)['ledger'] as List).length + 2);
+    expect(wallet(finished)['notes'], (wallet(before)['notes'] as int) + 14);
+    expect(finished['writes'], (before['writes'] as int) + 14);
+    expect(Hive.box('device-batch-bytes').get('__pending_sync_operation'), isNull);
   });
 }
