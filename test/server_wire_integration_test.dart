@@ -1283,8 +1283,8 @@ void main() {
         (state['users'] as List)
             .cast<Map<String, dynamic>>()
             .singleWhere((user) => user['userId'] == uid);
-    final body = List.filled(60000, '雪').join();
-    final notes = List.generate(14,
+    final body = List.filled(42000, '雪').join();
+    final notes = List.generate(16,
         (_) => Note(id: newId(), title: 'Encrypted bytes fixture', body: body));
     for (final note in notes) {
       await client.notes.save(note);
@@ -1304,8 +1304,8 @@ void main() {
     final first = jsonDecode(capture.bodies.first) as Map;
     final second = jsonDecode(capture.bodies.last) as Map;
     outcomes['encrypted_batch_phase'] = 'batch_shape';
-    expect(first['rows'], hasLength(10));
-    expect(second['rows'], hasLength(4));
+    expect(first['rows'], hasLength(14));
+    expect(second['rows'], hasLength(2));
     final overflow = Map<dynamic, dynamic>.from(first)
       ..['rows'] = [...first['rows'] as List, (second['rows'] as List).first];
     expect(utf8.encode(jsonEncode(overflow)).length, greaterThan(2500000));
@@ -1323,7 +1323,7 @@ void main() {
         final payload = row['payload'] as String;
         expect(base64Decode(payload).length,
             greaterThan(utf8.encode(body).length));
-        expect(payload.length, greaterThan(240000));
+        expect(payload.length, greaterThan(168000));
         final decoded = await vault.decryptContent(payload);
         outcomes['encrypted_batch_phase'] = 'decrypted_content';
         expect(decoded['body'], body);
@@ -1344,8 +1344,8 @@ void main() {
     expect(box.get('__pending_sync_operation'), isNull);
     final after = await diagnostic('/__fixture/state');
     outcomes['encrypted_batch_phase'] = 'final_wallet';
-    expect(after['writes'], (before['writes'] as int) + 14);
-    expect(wallet(after)['notes'], 14);
+    expect(after['writes'], (before['writes'] as int) + 16);
+    expect(wallet(after)['notes'], 16);
     expect(wallet(after)['energy'], 80);
     expect((wallet(after)['ledger'] as List).length,
         (wallet(before)['ledger'] as List).length + 2);
@@ -1368,17 +1368,17 @@ void main() {
     expect(client.notes.count, 0);
     final box = Hive.box('device-encrypted-receiver');
     outcomes['encrypted_receiver_phase'] = 'locked_cursor';
-    expect(box.get('__sync_cursor__'), 14);
+    expect(box.get('__sync_cursor__'), 16);
     final locked = await diagnostic('/__fixture/state');
     expect(locked['writes'], before['writes']);
     expect(locked['users'], before['users']);
     vault.unlocked = true;
     await client.notes.reloadAfterUnlock();
     outcomes['encrypted_receiver_phase'] = 'unlocked_content';
-    final body = List.filled(60000, '雪').join();
-    expect(client.notes.count, 14);
+    final body = List.filled(42000, '雪').join();
+    expect(client.notes.count, 16);
     expect(client.notes.pendingCount, 0);
-    expect(box.get('__sync_cursor__'), 14);
+    expect(box.get('__sync_cursor__'), 16);
     for (final note in client.notes.visible()) {
       expect(note.body, body);
       expect(note.title, 'Encrypted bytes fixture');
@@ -1394,5 +1394,51 @@ void main() {
     expect(after['users'], before['users']);
     expect(box.get('__pending_sync_operation'), isNull);
     outcomes['encrypted_receiver_phase'] = 'passed';
+  });
+
+  wireTest(
+      'oversized_ciphertext_preserves_dirty_work_but_saved_invalid_request_blocks_edits',
+      () async {
+    final uid = descriptor['encryptedOwner'] as String;
+    final capture = _CapturePushes(transport);
+    final vault = TestVault()..unlocked = true;
+    final client = await device(
+        'oversized-cipher', 'atomic-disposable-encrypted', uid,
+        vault: vault, deviceTransport: capture);
+    final largeBody = List.filled(60000, '雪').join();
+    final note =
+        Note(id: newId(), title: 'Oversized cipher fixture', body: largeBody);
+    await client.notes.save(note);
+    final before = await diagnostic('/__fixture/state');
+    await client.cubit.sync(uploadAll: false);
+    expect(client.cubit.state.lastReport!.completed, isFalse);
+    expect(client.cubit.state.lastReport!.errorMessage, isNotNull);
+    expect(client.cubit.state.lastReport!.charged, isNull);
+    expect(client.notes.byId(note.id)!.body, largeBody);
+    expect(client.notes.byId(note.id)!.dirty, isTrue);
+    expect(capture.bodies, hasLength(1));
+    final envelope = jsonDecode(capture.bodies.single) as Map;
+    expect(((envelope['rows'] as List).single as Map)['payload'].length,
+        greaterThan(196608));
+    final box = Hive.box('device-oversized-cipher');
+    final pending =
+        Map<dynamic, dynamic>.from(box.get('__pending_sync_operation') as Map);
+    final refused = await diagnostic('/__fixture/state');
+    expect(refused['writes'], before['writes']);
+    expect(refused['users'], before['users']);
+    note.body = 'Synthetic smaller replacement';
+    await client.notes.save(note);
+    await client.cubit.sync(uploadAll: false);
+    expect(client.cubit.state.lastReport!.completed, isFalse);
+    expect(client.notes.byId(note.id)!.body, note.body);
+    expect(client.notes.byId(note.id)!.dirty, isTrue);
+    expect(capture.bodies, hasLength(2));
+    expect(capture.bodies[1], capture.bodies[0]);
+    expect(box.get('__pending_sync_operation'), pending);
+    final after = await diagnostic('/__fixture/state');
+    expect(after['writes'], before['writes']);
+    expect(after['users'], before['users']);
+    // Characterization only: retained invalid pending envelopes block the edited
+    // replacement. A separate before/after fix is required, not completion credit.
   });
 }
