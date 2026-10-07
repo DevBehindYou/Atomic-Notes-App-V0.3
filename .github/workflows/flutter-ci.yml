@@ -29,7 +29,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           repository: DevBehindYou/Atomic-Notes-Server-V0.3
-          ref: 925a0a6b415b2a13a9413f5efefe81b0374a8f28
+          ref: 0ff91587b77150c4edcd4018bfad7324cf3aac78
           path: server-fixture
           persist-credentials: false
       - uses: actions/setup-node@v5
