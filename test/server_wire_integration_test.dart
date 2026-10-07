@@ -365,4 +365,83 @@ void main() {
     expect(replayed['writes'], committed['writes']);
     expect(replayed['users'], committed['users']);
   });
+
+  wireTest('actual_partial_failure_full_refund_and_new_request_retry',
+      () async {
+    Future<void> arm(List<String> ids) async {
+      final response =
+          await transport.post(origin.replace(path: '/__fixture/fail-writes'),
+              headers: {
+                'content-type': 'application/json',
+                'authorization': 'Bearer atomic-disposable-client-a'
+              },
+              body: jsonEncode({'ids': ids}));
+      expect(response.statusCode, 200);
+      expect((jsonDecode(response.body) as Map)['armed'], ids.length);
+    }
+
+    final a = await device(
+        'failure', 'atomic-disposable-client-a', descriptor['owner'] as String);
+    final accepted = Note(
+        id: newId(), title: 'Accepted fixture', body: 'Synthetic accepted');
+    final refused =
+        Note(id: newId(), title: 'Refused fixture', body: 'Synthetic refused');
+    await a.notes.save(accepted);
+    await a.notes.save(refused);
+    final before = await diagnostic('/__fixture/state');
+    await arm([refused.id]);
+    try {
+      await a.cubit.sync(uploadAll: false);
+      final partial = a.cubit.state.lastReport!;
+      expect(partial.completed, isFalse);
+      expect(partial.charged, 10);
+      expect(partial.refunded, 0);
+      expect(partial.netCharge, 10);
+      expect(a.notes.byId(accepted.id)!.dirty, isFalse);
+      expect(a.notes.byId(refused.id)!.dirty, isTrue);
+      expect(a.notes.pendingCount, 1);
+      final committed = await diagnostic('/__fixture/state');
+      expect(committed['writes'], (before['writes'] as int) + 1);
+      expect(ownerState(committed)['notes'],
+          (ownerState(before)['notes'] as int) + 1);
+      expect(ownerState(committed)['energy'],
+          (ownerState(before)['energy'] as int) - partial.netCharge!);
+      expect((ownerState(committed)['ledger'] as List).length,
+          (ownerState(before)['ledger'] as List).length + 1);
+
+      await a.cubit.sync(uploadAll: false);
+      final failed = a.cubit.state.lastReport!;
+      expect(failed.completed, isFalse);
+      expect(failed.charged, 10);
+      expect(failed.refunded, 10);
+      expect(failed.netCharge, 0);
+      expect(failed.operations.single.requestId,
+          isNot(partial.operations.single.requestId));
+      expect(a.notes.byId(refused.id)!.dirty, isTrue);
+      expect(a.notes.byId(accepted.id)!.dirty, isFalse);
+      final refunded = await diagnostic('/__fixture/state');
+      expect(refunded['writes'], committed['writes']);
+      expect(ownerState(refunded)['notes'], ownerState(committed)['notes']);
+      expect(ownerState(refunded)['energy'], ownerState(committed)['energy']);
+      expect((ownerState(refunded)['ledger'] as List).length,
+          (ownerState(committed)['ledger'] as List).length + 2);
+
+      await arm([]);
+      await a.cubit.sync(uploadAll: false);
+      final recovered = a.cubit.state.lastReport!;
+      expect(recovered.completed, isTrue);
+      expect(recovered.netCharge, 10);
+      expect(recovered.operations.single.requestId,
+          isNot(failed.operations.single.requestId));
+      expect(a.notes.pendingCount, 0);
+      final finished = await diagnostic('/__fixture/state');
+      expect(finished['writes'], (refunded['writes'] as int) + 1);
+      expect(ownerState(finished)['notes'],
+          (refunded['users'] as List).first['notes'] + 1);
+      expect(ownerState(finished)['energy'],
+          (ownerState(refunded)['energy'] as int) - 10);
+    } finally {
+      await arm([]);
+    }
+  });
 }
