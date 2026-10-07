@@ -36,36 +36,21 @@ class TestApi implements ApiClient {
     requestIds.add(requestId);
     pushModes.add(instant);
     await beforePush?.call();
-    final results = pushResults ??
-        rows
-            .map((row) => <String, dynamic>{
-                  'id': row['id'],
-                  'ok': true,
-                  'version': (row['base_version'] as int) + 1,
-                  'seq': ++sequence,
-                  'updated_at': DateTime.now().toUtc().toIso8601String(),
-                })
-            .toList();
-    return PushReply(
-        requestId: requestId,
-        instant: instant,
-        results: results,
-        receipt: pushReceipt);
+    final results = pushResults ?? rows.map((row) => <String, dynamic>{
+      'id': row['id'], 'ok': true, 'version': (row['base_version'] as int) + 1,
+      'seq': ++sequence, 'updated_at': DateTime.now().toUtc().toIso8601String(),
+    }).toList();
+    return PushReply(requestId: requestId, instant: instant, results: results, receipt: pushReceipt);
   }
-
   @override
-  Future<Map<String, dynamic>> pullNotes(
-      {int? after, bool encOnly = false}) async {
+  Future<Map<String, dynamic>> pullNotes({int? after, bool encOnly = false}) async {
     pullCursors.add(after);
     if (pullFailure != null) throw pullFailure!;
     return {
-      'rows': pullRows,
-      'nextCursor': sequence,
-      'hasMore': false,
+      'rows': pullRows, 'nextCursor': sequence, 'hasMore': false,
       'cursor': DateTime.now().toUtc().toIso8601String(),
     };
   }
-
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
@@ -85,19 +70,14 @@ class TestVault implements Vault {
     await sealGate?.future;
     return VaultCrypto.sealJson(content, key);
   }
-
   @override
   Future<Map<String, dynamic>> decryptContent(String payload) async {
     if (!(openEntered?.isCompleted ?? true)) openEntered!.complete();
     await openGate?.future;
     return VaultCrypto.openJson(payload, key);
   }
-
   @override
-  Future<void> lockThisDevice() async {
-    unlocked = false;
-  }
-
+  Future<void> lockThisDevice() async { unlocked = false; }
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
@@ -110,18 +90,14 @@ void main() {
   late TestVault vault;
   late NotesRepository repository;
   setUp(() async {
-    directory =
-        await Directory.systemTemp.createTemp('atomic-repository-test-');
+    directory = await Directory.systemTemp.createTemp('atomic-repository-test-');
     Hive.init(directory.path);
     box = await Hive.openBox('isolated-notes');
     SyncStatusHelper.syncBox = await Hive.openBox<bool>('isolated-sync');
     api = TestApi();
     vault = TestVault();
-    repository = NotesRepository.forTest(
-        box: box,
-        api: api,
-        vault: vault,
-        checkConnectivity: () async => [ConnectivityResult.wifi]);
+    repository = NotesRepository.forTest(box: box, api: api, vault: vault,
+      checkConnectivity: () async => [ConnectivityResult.wifi]);
     await repository.start();
   });
   tearDown(() async {
@@ -131,16 +107,11 @@ void main() {
     await directory.delete(recursive: true);
   });
 
-  test(
-      'R19 offline automatic attempt notifies its failure without a note change',
-      () async {
+  test('R19 offline automatic attempt notifies its failure without a note change', () async {
     await repository.stop(waitForSync: true);
     repository.dispose();
-    repository = NotesRepository.forTest(
-        box: box,
-        api: api,
-        vault: vault,
-        checkConnectivity: () async => [ConnectivityResult.none]);
+    repository = NotesRepository.forTest(box: box, api: api, vault: vault,
+      checkConnectivity: () async => [ConnectivityResult.none]);
     await repository.start();
     final seen = <String?>[];
     repository.addListener(() => seen.add(repository.lastError));
@@ -150,8 +121,7 @@ void main() {
     expect(api.pullCursors, isEmpty);
   });
 
-  test('R19 retiring a session clears and suppresses a late sync failure',
-      () async {
+  test('R19 retiring a session clears and suppresses a late sync failure', () async {
     final note = Note.create(kind: NoteKind.text)..title = 'local work';
     await repository.save(note);
     final entered = Completer<void>(), release = Completer<void>();
@@ -169,59 +139,43 @@ void main() {
     expect(await sync, false);
     expect(repository.lastError, isNull);
     expect(repository.count, 0);
-    expect(box.get(note.id), isNotNull,
-        reason: 'failure status never deletes local work');
+    expect(box.get(note.id), isNotNull, reason: 'failure status never deletes local work');
   });
 
   for (final encrypted in [false, true]) {
-    test(
-        'conflict contract preserves both contents and uploads the copy later (encrypted=$encrypted)',
-        () async {
+    test('conflict contract preserves both contents and uploads the copy later (encrypted=$encrypted)', () async {
       vault.unlocked = encrypted;
       final seed = Note.create(kind: NoteKind.todo)
         ..title = 'shared'
         ..body = 'base content'
         ..items = [TodoItem(text: 'base task', done: false)];
       Future<Map<String, dynamic>> wire(Note note, int version) async {
-        final row = {
-          ...note.toRemote(api.user!),
-          'version': version,
-          'updated_at': DateTime.utc(2026, 9, 1).toIso8601String()
-        };
+        final row = {...note.toRemote(api.user!), 'version': version,
+          'updated_at': DateTime.utc(2026, 9, 1).toIso8601String()};
         if (encrypted) {
           row['payload'] = await vault.encryptContent({
-            'title': note.title,
-            'body': note.body,
+            'title': note.title, 'body': note.body,
             'items': note.items.map((i) => i.toMap()).toList(),
           });
           row['enc_v'] = 1;
-          row['title'] = '';
-          row['body'] = '';
-          row['items'] = <dynamic>[];
+          row['title'] = ''; row['body'] = ''; row['items'] = <dynamic>[];
         }
         return row;
       }
-
-      api.pullRows = [await wire(seed, 3)];
-      api.sequence = 3;
+      api.pullRows = [await wire(seed, 3)]; api.sequence = 3;
       expect(await repository.syncNow(), isTrue);
       final local = repository.byId(seed.id)!
         ..body = 'offline device B'
         ..items = [TodoItem(text: 'B task', done: true)];
       await repository.save(local);
-      local.updatedAt =
-          DateTime.utc(2099); // skew does not decide the version conflict
+      local.updatedAt = DateTime.utc(2099); // skew does not decide the version conflict
       final remote = seed.copy()..body = 'device A accepted';
-      api.pullRows = [await wire(remote, 4)];
-      api.sequence = 4;
-      api.pushResults = [
-        {'id': seed.id, 'ok': false, 'error': 'note_conflict', 'version': 4}
-      ];
+      api.pullRows = [await wire(remote, 4)]; api.sequence = 4;
+      api.pushResults = [{'id': seed.id, 'ok': false, 'error': 'note_conflict', 'version': 4}];
 
       expect(await repository.syncNow(instant: true), isFalse);
       expect(api.pushes.single.single['base_version'], 3);
-      expect(api.pullCursors, [null, null],
-          reason: 'conflict resets the old cursor');
+      expect(api.pullCursors, [null, null], reason: 'conflict resets the old cursor');
       expect(repository.byId(seed.id)!.body, 'device A accepted');
       expect(repository.byId(seed.id)!.serverVersion, 4);
       final copy = repository.visible().singleWhere((n) => n.id != seed.id);
@@ -229,8 +183,7 @@ void main() {
       expect(copy.body, 'offline device B');
       expect(copy.items.single.text, 'B task');
       expect(copy.items.single.done, isTrue);
-      expect(copy.dirty, isTrue,
-          reason: 'conflict copy is initially local, not uploaded');
+      expect(copy.dirty, isTrue, reason: 'conflict copy is initially local, not uploaded');
       expect(copy.serverVersion, 0);
       expect(repository.pendingCount, 1);
       final stored = box.get(copy.id) as Map;
@@ -238,15 +191,11 @@ void main() {
       if (encrypted) {
         expect(stored['enc_v'], 1);
         expect(stored['body'], '');
-        expect(
-            (await vault.decryptContent(stored['payload'] as String))['body'],
-            'offline device B');
+        expect((await vault.decryptContent(stored['payload'] as String))['body'], 'offline device B');
       } else {
         expect(stored['body'], 'offline device B');
       }
-      await repository.stop();
-      repository.clearMemory();
-      await repository.start();
+      await repository.stop(); repository.clearMemory(); await repository.start();
       expect(repository.byId(copy.id)!.body, 'offline device B');
       api.pushResults = null;
       expect(await repository.syncNow(instant: true), isTrue);
@@ -256,72 +205,45 @@ void main() {
     });
   }
 
-  test(
-      'conflict contract preserves the local copy even when the following pull fails',
-      () async {
+  test('conflict contract preserves the local copy even when the following pull fails', () async {
     final note = Note.create()..body = 'base';
-    final row = {
-      ...note.toRemote(api.user!),
-      'version': 3,
-      'updated_at': DateTime.now().toUtc().toIso8601String()
-    };
-    api.pullRows = [row];
-    api.sequence = 3;
+    final row = {...note.toRemote(api.user!), 'version': 3,
+      'updated_at': DateTime.now().toUtc().toIso8601String()};
+    api.pullRows = [row]; api.sequence = 3;
     expect(await repository.syncNow(), isTrue);
     await repository.save(repository.byId(note.id)!..body = 'B saved edit');
-    api.pushResults = [
-      {'id': note.id, 'ok': false, 'error': 'note_conflict', 'version': 4}
-    ];
+    api.pushResults = [{'id': note.id, 'ok': false, 'error': 'note_conflict', 'version': 4}];
     api.pullFailure = ApiException('note_content_unavailable', 409);
     expect(await repository.syncNow(instant: true), isFalse);
     final copy = repository.visible().singleWhere((n) => n.id != note.id);
     expect(copy.body, 'B saved edit');
     expect((box.get(copy.id) as Map)['dirty'], isTrue);
     expect(box.get('__sync_cursor__'), isNull);
-    await repository.stop();
-    repository.clearMemory();
-    await repository.start();
+    await repository.stop(); repository.clearMemory(); await repository.start();
     expect(repository.byId(copy.id)!.body, 'B saved edit');
     expect(repository.byId(copy.id)!.dirty, isTrue);
   });
 
-  test(
-      'conflict contract stale deletion becomes a live copy while the remote edit survives',
-      () async {
-    final note = Note.create()
-      ..title = 'shared'
-      ..body = 'base';
-    final row = {
-      ...note.toRemote(api.user!),
-      'version': 3,
-      'updated_at': DateTime.now().toUtc().toIso8601String()
-    };
-    api.pullRows = [row];
-    api.sequence = 3;
+  test('conflict contract stale deletion becomes a live copy while the remote edit survives', () async {
+    final note = Note.create()..title = 'shared'..body = 'base';
+    final row = {...note.toRemote(api.user!), 'version': 3,
+      'updated_at': DateTime.now().toUtc().toIso8601String()};
+    api.pullRows = [row]; api.sequence = 3;
     expect(await repository.syncNow(), isTrue);
     await repository.deleteNotes([note.id]);
-    api.pushResults = [
-      {'id': note.id, 'ok': false, 'error': 'note_conflict', 'version': 4}
-    ];
-    api.pullRows = [
-      {...row, 'version': 4, 'body': 'remote edit'}
-    ];
-    api.sequence = 4;
+    api.pushResults = [{'id': note.id, 'ok': false, 'error': 'note_conflict', 'version': 4}];
+    api.pullRows = [{...row, 'version': 4, 'body': 'remote edit'}]; api.sequence = 4;
     expect(await repository.syncNow(instant: true), isFalse);
     expect(api.pushes.single.single['deleted'], isTrue);
     expect(repository.byId(note.id)!.body, 'remote edit');
     expect(repository.byId(note.id)!.deleted, isFalse);
     final copy = repository.visible().singleWhere((n) => n.id != note.id);
     expect(copy.body, 'base');
-    expect(copy.deleted, isFalse,
-        reason:
-            'current implementation preserves content, not deletion intent');
+    expect(copy.deleted, isFalse, reason: 'current implementation preserves content, not deletion intent');
     expect(copy.dirty, isTrue);
   });
 
-  test(
-      'billing contract instant sync with 100 small notes sends two distinct requests',
-      () async {
+  test('billing contract instant sync with 100 small notes sends two distinct requests', () async {
     for (var i = 0; i < 100; i++) {
       await repository.save(Note.create()..title = 'fixture $i');
     }
@@ -332,9 +254,7 @@ void main() {
     expect(repository.pendingCount, 0);
   });
 
-  test(
-      'billing contract standard sync sends 50 of 100 notes then waits for the hourly window',
-      () async {
+  test('billing contract standard sync sends 50 of 100 notes then waits for the hourly window', () async {
     for (var i = 0; i < 100; i++) {
       await repository.save(Note.create()..title = 'fixture $i');
     }
@@ -350,36 +270,22 @@ void main() {
 
   test('billing contract receive-only sync makes no push request', () async {
     final note = Note.create()..title = 'other device';
-    api.pullRows = [
-      {
-        ...note.toRemote(api.user!),
-        'version': 1,
-        'updated_at': DateTime.now().toUtc().toIso8601String()
-      }
-    ];
+    api.pullRows = [{...note.toRemote(api.user!), 'version': 1,
+      'updated_at': DateTime.now().toUtc().toIso8601String()}];
     api.sequence = 1;
     expect(await repository.syncNow(instant: true), isTrue);
     expect(repository.byId(note.id)!.title, 'other device');
     expect(api.pushes, isEmpty);
   });
 
-  test(
-      'R16 unavailable cloud note keeps the cursor and cached notes until retry succeeds',
-      () async {
+  test('R16 unavailable cloud note keeps the cursor and cached notes until retry succeeds', () async {
     final cached = Note.create()..title = 'already downloaded';
     final missing = Note.create()..title = 'recovered cloud note';
-    final cachedRow = {
-      ...cached.toRemote(api.user!),
-      'version': 1,
-      'updated_at': DateTime.now().toUtc().toIso8601String()
-    };
-    final missingRow = {
-      ...missing.toRemote(api.user!),
-      'version': 2,
-      'updated_at': DateTime.now().toUtc().toIso8601String()
-    };
-    api.pullRows = [cachedRow];
-    api.sequence = 1;
+    final cachedRow = {...cached.toRemote(api.user!), 'version': 1,
+      'updated_at': DateTime.now().toUtc().toIso8601String()};
+    final missingRow = {...missing.toRemote(api.user!), 'version': 2,
+      'updated_at': DateTime.now().toUtc().toIso8601String()};
+    api.pullRows = [cachedRow]; api.sequence = 1;
     expect(await repository.syncNow(), isTrue);
     final stored = Map.from(box.get(cached.id) as Map);
     api.pullFailure = ApiException('note_content_unavailable', 409);
@@ -390,11 +296,10 @@ void main() {
       expect(repository.byId(missing.id), isNull);
       expect(box.get('__sync_cursor__'), 1);
       expect(repository.lastError,
-          'A cloud note is missing or unreadable in Google Drive. Sync cannot finish until it is restored.');
+        'A cloud note is missing or unreadable in Google Drive. Sync cannot finish until it is restored.');
     }
     api.pullFailure = null;
-    api.pullRows = [missingRow];
-    api.sequence = 2;
+    api.pullRows = [missingRow]; api.sequence = 2;
     expect(await repository.syncNow(), isTrue);
     expect(api.pullCursors, [null, 1, 1, 1]);
     expect(repository.byId(missing.id)!.title, 'recovered cloud note');
@@ -404,30 +309,21 @@ void main() {
     expect(api.pushes, isEmpty);
   });
 
-  test(
-      'R11 inconsistent cloud read preserves the cache and cursor and explains retry',
-      () async {
+  test('R11 inconsistent cloud read preserves the cache and cursor and explains retry', () async {
     final note = Note.create()..title = 'committed copy';
-    final row = {
-      ...note.toRemote(api.user!),
-      'version': 1,
-      'updated_at': DateTime.now().toUtc().toIso8601String()
-    };
-    api.pullRows = [row];
-    api.sequence = 1;
+    final row = {...note.toRemote(api.user!), 'version': 1,
+      'updated_at': DateTime.now().toUtc().toIso8601String()};
+    api.pullRows = [row]; api.sequence = 1;
     expect(await repository.syncNow(), isTrue);
     final stored = Map.from(box.get(note.id) as Map);
-    api.pullRows = [
-      {...row, 'version': 2, 'title': 'consistent new copy'}
-    ];
+    api.pullRows = [{...row, 'version': 2, 'title': 'consistent new copy'}];
     api.sequence = 2;
     api.pullFailure = ApiException('note_content_mismatch', 409);
     expect(await repository.syncNow(), isFalse);
     expect(repository.byId(note.id)!.title, 'committed copy');
     expect(box.get(note.id), stored);
     expect(box.get('__sync_cursor__'), 1);
-    expect(repository.lastError,
-        'A cloud note could not be read safely. Try syncing again.');
+    expect(repository.lastError, 'A cloud note could not be read safely. Try syncing again.');
     api.pullFailure = null;
     expect(await repository.syncNow(), isTrue);
     expect(api.pullCursors, [null, 1, 1]);
@@ -437,26 +333,18 @@ void main() {
     expect(api.pushes, isEmpty);
   });
 
-  test(
-      'R5 empty cloud preserves local notes and a newer recreation replaces a clean copy',
-      () async {
+  test('R5 empty cloud preserves local notes and a newer recreation replaces a clean copy', () async {
     final note = Note.create()..title = 'cached before wipe';
-    final before = {
-      ...note.toRemote(api.user!),
-      'version': 5,
-      'updated_at': DateTime.now().toUtc().toIso8601String()
-    };
-    api.pullRows = [before];
-    api.sequence = 5;
+    final before = {...note.toRemote(api.user!), 'version': 5,
+      'updated_at': DateTime.now().toUtc().toIso8601String()};
+    api.pullRows = [before]; api.sequence = 5;
     expect(await repository.syncNow(), isTrue);
     expect(repository.byId(note.id)!.serverVersion, 5);
     api.pullRows = [];
     expect(await repository.syncNow(), isTrue);
     expect(repository.byId(note.id)!.title, 'cached before wipe');
     expect(box.containsKey(note.id), isTrue);
-    api.pullRows = [
-      {...before, 'version': 6, 'title': 'recreated on another device'}
-    ];
+    api.pullRows = [{...before, 'version': 6, 'title': 'recreated on another device'}];
     api.sequence = 6;
     expect(await repository.syncNow(), isTrue);
     expect(repository.byId(note.id)!.title, 'recreated on another device');
@@ -468,34 +356,24 @@ void main() {
 
   test('R5 newer recreation never overwrites an unsent local edit', () async {
     final note = Note.create()..title = 'cached before wipe';
-    final before = {
-      ...note.toRemote(api.user!),
-      'version': 5,
-      'updated_at': DateTime.now().toUtc().toIso8601String()
-    };
-    api.pullRows = [before];
-    api.sequence = 5;
+    final before = {...note.toRemote(api.user!), 'version': 5,
+      'updated_at': DateTime.now().toUtc().toIso8601String()};
+    api.pullRows = [before]; api.sequence = 5;
     expect(await repository.syncNow(), isTrue);
     final local = repository.byId(note.id)!..title = 'unsent edit';
     await repository.save(local);
-    api.beforePush = () async {
-      throw ApiException('sync_cooldown', 429, retryAfterSeconds: 3600);
-    };
-    api.pullRows = [
-      {...before, 'version': 6, 'title': 'recreated on another device'}
-    ];
+    api.beforePush = () async { throw ApiException('sync_cooldown', 429, retryAfterSeconds: 3600); };
+    api.pullRows = [{...before, 'version': 6, 'title': 'recreated on another device'}];
     api.sequence = 6;
     expect(await repository.syncNow(), isFalse);
     expect(repository.byId(note.id)!.title, 'unsent edit');
     expect(repository.byId(note.id)!.serverVersion, 5);
     expect(repository.byId(note.id)!.dirty, isTrue);
     expect((box.get(note.id) as Map)['dirty'], isTrue);
-    expect(api.pushes.length, 1,
-        reason: 'cooldown refused the attempted upload');
+    expect(api.pushes.length, 1, reason: 'cooldown refused the attempted upload');
   });
 
-  test('R1 lock hides protected rows and stale editors cannot downgrade them',
-      () async {
+  test('R1 lock hides protected rows and stale editors cannot downgrade them', () async {
     vault.unlocked = true;
     final note = Note.create()..title = 'protected test content';
     await repository.save(note);
@@ -511,12 +389,11 @@ void main() {
     final plain = Note.create()..title = 'new T2T note';
     await repository.save(plain);
     expect((box.get(plain.id) as Map)['enc_v'], 0,
-        reason: 'preserve existing new-note T2T behavior while locked');
+      reason: 'preserve existing new-note T2T behavior while locked');
     expect(repository.visible().single.id, plain.id);
   });
 
-  test('R1 lock drains an asynchronous encrypted write before dropping the key',
-      () async {
+  test('R1 lock drains an asynchronous encrypted write before dropping the key', () async {
     vault.unlocked = true;
     vault.sealEntered = Completer<void>();
     vault.sealGate = Completer<void>();
@@ -536,20 +413,14 @@ void main() {
 
   test('R2 a busy sync is not proof that a later edit is backed up', () async {
     final entered = Completer<void>(), release = Completer<void>();
-    api.beforePush = () {
-      entered.complete();
-      return release.future;
-    };
+    api.beforePush = () { entered.complete(); return release.future; };
     await repository.save(Note.create()..title = 'first');
     final syncing = repository.syncNow();
     await entered.future;
     final later = Note.create()..title = 'later';
     await repository.save(later);
     var finished = false;
-    final logoutCheck = repository.syncNow().then((value) {
-      finished = true;
-      return value;
-    });
+    final logoutCheck = repository.syncNow().then((value) { finished = true; return value; });
     await Future<void>.delayed(Duration.zero);
     expect(finished, isFalse);
     release.complete();
@@ -559,8 +430,7 @@ void main() {
     expect((box.get(later.id) as Map)['dirty'], isTrue);
   });
 
-  test('R2 hidden sealed dirty rows also block destructive logout clearing',
-      () async {
+  test('R2 hidden sealed dirty rows also block destructive logout clearing', () async {
     vault.unlocked = true;
     final note = Note.create()..title = 'unsent protected note';
     await repository.save(note);
@@ -570,8 +440,7 @@ void main() {
     expect(box.containsKey(note.id), isTrue);
   });
 
-  test('R3 same-user re-login reloads clean and dirty disk rows and cursor',
-      () async {
+  test('R3 same-user re-login reloads clean and dirty disk rows and cursor', () async {
     final clean = Note.create()..title = 'already synced';
     await repository.save(clean);
     expect(await repository.syncNow(), isTrue);
@@ -599,8 +468,7 @@ void main() {
     expect(box.get('__cache_owner__'), 'user-b');
   });
 
-  test('R3 session expiry during decryption cannot repopulate cleared memory',
-      () async {
+  test('R3 session expiry during decryption cannot repopulate cleared memory', () async {
     vault.unlocked = true;
     await repository.save(Note.create()..title = 'old account');
     repository.clearMemory();
@@ -624,13 +492,9 @@ void main() {
     expect(box.isEmpty, isTrue);
   });
 
-  test('R4 deletion during the first upload stays dirty after acknowledgement',
-      () async {
+  test('R4 deletion during the first upload stays dirty after acknowledgement', () async {
     final entered = Completer<void>(), release = Completer<void>();
-    api.beforePush = () {
-      entered.complete();
-      return release.future;
-    };
+    api.beforePush = () { entered.complete(); return release.future; };
     final note = Note.create()..title = 'first upload';
     await repository.save(note);
     final syncing = repository.syncNow();
@@ -647,8 +511,7 @@ void main() {
     expect(api.pushes.last.single['base_version'], 1);
   });
 
-  test('R4 a genuinely never-uploaded deletion needs no cloud tombstone',
-      () async {
+  test('R4 a genuinely never-uploaded deletion needs no cloud tombstone', () async {
     final note = Note.create()..title = 'local only';
     await repository.save(note);
     await repository.deleteNotes([note.id]);
@@ -657,8 +520,7 @@ void main() {
     expect(api.pushes, isEmpty);
   });
 
-  test('R4 deletion during snapshot sealing also requires a later tombstone',
-      () async {
+  test('R4 deletion during snapshot sealing also requires a later tombstone', () async {
     final note = Note.create()..title = 'sealing race';
     await repository.save(note);
     vault.unlocked = true;
@@ -675,34 +537,24 @@ void main() {
     expect(repository.byId(note.id)!.serverVersion, 1);
   });
 
-  test('R7 UTF-8 payload budget includes the complete request envelope',
-      () async {
+  test('R7 UTF-8 payload budget includes the complete request envelope', () async {
     for (var i = 0; i < 24; i++) {
-      await repository
-          .save(Note.create()..body = List.filled(60000, '界').join());
+      await repository.save(Note.create()..body = List.filled(60000, '界').join());
     }
     expect(await repository.syncNow(instant: true), isTrue);
     expect(api.pushes.length, greaterThan(1));
     for (var i = 0; i < api.pushes.length; i++) {
-      final bytes = utf8
-          .encode(jsonEncode({
-            'rows': api.pushes[i],
-            'requestId': api.requestIds[i],
-            'mode': 'instant'
-          }))
-          .length;
+      final bytes = utf8.encode(jsonEncode({'rows': api.pushes[i],
+        'requestId': api.requestIds[i], 'mode': 'instant'})).length;
       expect(bytes, lessThanOrEqualTo(2500000));
       expect(api.pushes[i].length, lessThanOrEqualTo(50));
     }
   });
 
-  test('R7 an uncharged 413 forgets the poisoned request and resnapshots edits',
-      () async {
+  test('R7 an uncharged 413 forgets the poisoned request and resnapshots edits', () async {
     final note = Note.create()..title = 'initial';
     await repository.save(note);
-    api.beforePush = () async {
-      throw ApiException('http_413', 413);
-    };
+    api.beforePush = () async { throw ApiException('http_413', 413); };
     expect(await repository.syncNow(), isFalse);
     expect(box.get('__pending_sync_operation'), isNull);
     note.title = 'corrected';
@@ -766,9 +618,12 @@ void main() {
     final note = Note.create()..body = 'Synthetic pre-upgrade ciphertext';
     await repository.save(note);
     expect(await repository.syncNow(instant: true), isTrue);
-    final raw = Map<dynamic, dynamic>.from(box.get(note.id) as Map)
-      ..remove('syncedEncV');
-    await box.put(note.id, raw);
+    // A fresh repository has no in-memory proof of the cloud encryption format.
+    // Keep the existing Hive format and deliberately return no remote rows.
+    await repository.stop(waitForSync: true);
+    repository.dispose();
+    repository = NotesRepository.forTest(box: box, api: api, vault: vault,
+      checkConnectivity: () async => [ConnectivityResult.wifi]);
     await repository.start();
     final count = api.pushes.length;
     expect(await repository.migrateToVault(), 0);
