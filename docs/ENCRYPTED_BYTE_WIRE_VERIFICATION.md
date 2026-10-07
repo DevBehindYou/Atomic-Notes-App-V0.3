@@ -1,9 +1,12 @@
 # Encrypted payload byte budgeting and locked-client reload
 
-Three test-only cases extend App main `d04e7239701ce462167e8719cbc82f63131f1667`.
+Three wire cases extend App main `d04e7239701ce462167e8719cbc82f63131f1667`.
 The workflow pins Server main `ac559d92bd4039408e8e8217a5876608b004d980`
 after exact-main run 37659138575 passed. App #45's exact-main gate passed before
-publishing this follow-up. No production source, schema, dependency or policy changes.
+publishing this follow-up. They exposed redundant vault migration uploads; the
+associated source correction and five before/after controls are documented in
+[vault migration proof](VAULT_MIGRATION_IDEMPOTENCE_VERIFICATION.md). There are no
+schema, dependency, wire-format, cryptography or policy changes.
 
 An isolated synthetic owner starts with the existing 30-note free tier and
 100 energy. Sixteen notes each contain 126,000 UTF-8 body bytes. Actual
