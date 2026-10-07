@@ -48,6 +48,32 @@ class _Storage implements FlutterSecureStorage {
   }
 }
 
+/// Withhold one fully received real push reply from ApiClient after commit.
+/// The surrounding fixture owns the borrowed transport.
+class _DiscardCommittedReply extends http.BaseClient {
+  _DiscardCommittedReply(this.inner);
+  final http.Client inner;
+  final bodies = <String>[];
+  bool discard = true;
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    final push =
+        request.method == 'POST' && request.url.path == '/api/notes/push';
+    if (push) bodies.add((request as http.Request).body);
+    final response = await inner.send(request);
+    if (push && discard) {
+      discard = false;
+      if (response.statusCode != 200) {
+        await response.stream.drain<void>();
+        throw StateError('Committed reply fixture requires successful push');
+      }
+      await response.stream.drain<void>();
+      throw http.ClientException('Fixture withheld committed push reply');
+    }
+    return response;
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const configuredOrigin = String.fromEnvironment('ATOMIC_FIXTURE_ORIGIN');
@@ -68,9 +94,10 @@ void main() {
   }
 
   Future<({NotesRepository notes, CloudNotesCubit cubit, ApiClient api})>
-      device(String name, String token, String userId) async {
+      device(String name, String token, String userId,
+          {http.Client? deviceTransport}) async {
     final api = ApiClient.forTest(
-        client: transport,
+        client: deviceTransport ?? transport,
         storage: _Storage(userId, token),
         baseUrl: origin.replace(path: '/api'));
     await api.init();
@@ -287,5 +314,55 @@ void main() {
     final after = await diagnostic('/__fixture/state');
     expect(after['writes'], before['writes']);
     expect(after['users'], before['users']);
+  });
+
+  wireTest('committed_reply_discard_restart_replays_without_second_charge',
+      () async {
+    final before = await diagnostic('/__fixture/state');
+    final fault = _DiscardCommittedReply(transport);
+    final first = await device(
+        'replay', 'atomic-disposable-client-a', descriptor['owner'] as String,
+        deviceTransport: fault);
+    final note =
+        Note(id: newId(), title: 'Replay fixture', body: 'Synthetic replay');
+    await first.notes.save(note);
+    await first.cubit.sync(uploadAll: false);
+    expect(first.cubit.state.lastReport!.completed, isFalse);
+    expect(first.cubit.state.lastReport!.netCharge, isNull);
+    expect(first.notes.byId(note.id)!.dirty, isTrue);
+    final box = Hive.box('device-replay');
+    final pending =
+        Map<String, dynamic>.from(box.get('__pending_sync_operation') as Map);
+    final committed = await diagnostic('/__fixture/state');
+    expect(committed['writes'], (before['writes'] as int) + 1);
+    expect(ownerState(committed)['notes'],
+        (ownerState(before)['notes'] as int) + 1);
+    expect(ownerState(committed)['energy'],
+        (ownerState(before)['energy'] as int) - 10);
+    await first.notes.stop(waitForSync: true);
+    await first.cubit.close();
+    first.notes.dispose();
+    repositories.remove(first.notes);
+    cubits.remove(first.cubit);
+    await box.close();
+    final restarted = await device(
+        'replay', 'atomic-disposable-client-a', descriptor['owner'] as String,
+        deviceTransport: fault);
+    expect(restarted.notes.byId(note.id)!.dirty, isTrue);
+    await restarted.cubit.sync(uploadAll: false);
+    final report = restarted.cubit.state.lastReport!;
+    expect(report.completed, isTrue);
+    expect(report.operations.single.recovered, isTrue);
+    expect(report.operations.single.requestId, pending['requestId']);
+    expect(report.netCharge, 10,
+        reason: 'Historical receipt, not a second debit');
+    expect(fault.bodies, hasLength(2));
+    expect(fault.bodies.last, fault.bodies.first);
+    expect(restarted.notes.byId(note.id)!.dirty, isFalse);
+    expect(restarted.notes.byId(note.id)!.serverVersion, greaterThan(0));
+    expect(Hive.box('device-replay').get('__pending_sync_operation'), isNull);
+    final replayed = await diagnostic('/__fixture/state');
+    expect(replayed['writes'], committed['writes']);
+    expect(replayed['users'], committed['users']);
   });
 }
