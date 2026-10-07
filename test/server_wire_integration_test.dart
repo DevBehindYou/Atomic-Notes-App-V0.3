@@ -684,4 +684,98 @@ void main() {
             .any((row) => row['id'] == plain.id || row['id'] == sealed.id),
         isFalse);
   });
+
+  wireTest('unreadable_and_mismatched_pages_preserve_cache_cursor_and_retry',
+      () async {
+    final uid = descriptor['owner'] as String;
+    final receiver =
+        await device('integrity-receiver', 'atomic-disposable-client-b', uid);
+    await receiver.cubit.sync(uploadAll: false);
+    expect(receiver.cubit.state.lastReport!.completed, isTrue);
+    final receiverBox = Hive.box('device-integrity-receiver');
+    final baseline = Map<dynamic, dynamic>.from(receiverBox.toMap());
+    final savedCursor = baseline['__sync_cursor__'];
+    expect(savedCursor, isA<int>());
+    final writer =
+        await device('integrity-writer', 'atomic-disposable-client-a', uid);
+    final good = Note(
+        id: newId(),
+        title: 'Intact page fixture',
+        body: 'Synthetic intact page row');
+    final bad = Note(
+        id: newId(),
+        title: 'Faulted page fixture',
+        body: 'Synthetic restored page row');
+    await writer.notes.save(good);
+    await writer.notes.save(bad);
+    await writer.cubit.sync(uploadAll: false);
+    expect(writer.cubit.state.lastReport!.completed, isTrue);
+    final before = await diagnostic('/__fixture/state');
+    Future<void> arm(String mode) async {
+      final response =
+          await transport.post(origin.replace(path: '/__fixture/read-fault'),
+              headers: {
+                'content-type': 'application/json',
+                'authorization': 'Bearer atomic-disposable-client-a'
+              },
+              body: jsonEncode({'noteId': bad.id, 'mode': mode}));
+      expect(response.statusCode, 200);
+      expect((jsonDecode(response.body) as Map)['armed'], mode != 'none');
+    }
+
+    try {
+      for (final mode in ['missing', 'corrupt', 'mismatch']) {
+        outcomes['pull_integrity_phase'] = mode;
+        final client = mode == 'missing'
+            ? receiver
+            : await device(
+                'integrity-$mode', 'atomic-disposable-client-b', uid);
+        final box = Hive.box(
+            'device-integrity-${mode == 'missing' ? 'receiver' : mode}');
+        if (mode != 'missing') {
+          // An actual earlier pull's snapshot models another offline device;
+          // no fabricated note versions or cursor are introduced.
+          await box.putAll(baseline);
+          await client.notes.start();
+        }
+        await arm(mode);
+        for (var attempt = 0; attempt < 2; attempt++) {
+          final message = await client.cubit.sync(uploadAll: false);
+          expect(client.cubit.state.lastReport!.completed, isFalse);
+          expect(client.cubit.state.lastReport!.operations, isEmpty);
+          expect(
+              message!.text,
+              contains(mode == 'mismatch'
+                  ? 'could not be read safely'
+                  : 'missing or unreadable'));
+          expect(box.toMap(), baseline);
+          expect(box.get('__sync_cursor__'), savedCursor);
+          expect(client.notes.byId(good.id), isNull);
+          expect(client.notes.byId(bad.id), isNull);
+        }
+        final refused = await diagnostic('/__fixture/state');
+        expect(refused['writes'], before['writes']);
+        expect(refused['users'], before['users']);
+        await arm('none');
+        await client.cubit.sync(uploadAll: false);
+        expect(client.cubit.state.lastReport!.completed, isTrue);
+        expect(client.cubit.state.lastReport!.operations, isEmpty);
+        expect(client.notes.lastError, isNull);
+        expect(client.notes.byId(good.id)!.body, good.body);
+        expect(client.notes.byId(bad.id)!.body, bad.body);
+        expect(box.get('__sync_cursor__'), greaterThan(savedCursor as int));
+        for (final entry in baseline.entries) {
+          if (entry.key != '__sync_cursor__') {
+            expect(box.get(entry.key), entry.value);
+          }
+        }
+        final recovered = await diagnostic('/__fixture/state');
+        expect(recovered['writes'], before['writes']);
+        expect(recovered['users'], before['users']);
+      }
+      outcomes['pull_integrity_phase'] = 'passed';
+    } finally {
+      await arm('none');
+    }
+  });
 }
