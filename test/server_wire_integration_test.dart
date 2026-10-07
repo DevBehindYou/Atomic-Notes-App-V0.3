@@ -1269,4 +1269,115 @@ void main() {
       }
     });
   }
+
+  wireTest('encrypted_base64_budget_splits_payloads_and_preserves_ciphertext',
+      () async {
+    final uid = descriptor['encryptedOwner'] as String;
+    final capture = _CapturePushes(transport);
+    final vault = TestVault()..unlocked = true;
+    final client = await device(
+        'encrypted-bytes', 'atomic-disposable-encrypted', uid,
+        vault: vault, deviceTransport: capture);
+    Map<String, dynamic> wallet(Map<String, dynamic> state) =>
+        (state['users'] as List)
+            .cast<Map<String, dynamic>>()
+            .singleWhere((user) => user['userId'] == uid);
+    final body = List.filled(60000, '雪').join();
+    final notes = List.generate(14,
+        (_) => Note(id: newId(), title: 'Encrypted bytes fixture', body: body));
+    for (final note in notes) {
+      await client.notes.save(note);
+    }
+    final before = await diagnostic('/__fixture/state');
+    expect(wallet(before)['notes'], 0);
+    expect(wallet(before)['energy'], 100);
+    await client.cubit.sync(uploadAll: false);
+    final report = client.cubit.state.lastReport!;
+    expect(report.completed, isTrue);
+    expect(report.operations, hasLength(2));
+    expect(report.netCharge, 20);
+    expect(client.notes.pendingCount, 0);
+    expect(capture.bodies, hasLength(2));
+    final first = jsonDecode(capture.bodies.first) as Map;
+    final second = jsonDecode(capture.bodies.last) as Map;
+    expect(first['rows'], hasLength(10));
+    expect(second['rows'], hasLength(4));
+    final overflow = Map<dynamic, dynamic>.from(first)
+      ..['rows'] = [...first['rows'] as List, (second['rows'] as List).first];
+    expect(utf8.encode(jsonEncode(overflow)).length, greaterThan(2500000));
+    final sent = <String>{};
+    for (final envelope in capture.bodies) {
+      expect(utf8.encode(envelope).length, lessThanOrEqualTo(2500000));
+      for (final entry in (jsonDecode(envelope) as Map)['rows'] as List) {
+        final row = entry as Map;
+        expect(sent.add(row['id'] as String), isTrue);
+        expect(row['enc_v'], 1);
+        expect(row['title'], '');
+        expect(row['body'], '');
+        expect(row['items'], isEmpty);
+        final payload = row['payload'] as String;
+        expect(base64Decode(payload).length,
+            greaterThan(utf8.encode(body).length));
+        expect(payload.length, greaterThan(240000));
+        final decoded = await vault.decryptContent(payload);
+        expect(decoded['body'], body);
+        expect(decoded['title'], 'Encrypted bytes fixture');
+      }
+    }
+    expect(sent, notes.map((note) => note.id).toSet());
+    final box = Hive.box('device-encrypted-bytes');
+    for (final note in notes) {
+      expect(client.notes.byId(note.id)!.body, body);
+      expect(client.notes.byId(note.id)!.dirty, isFalse);
+      final stored = box.get(note.id) as Map;
+      expect(stored['title'], '');
+      expect(stored['body'], '');
+      expect(stored['payload'], isA<String>());
+    }
+    expect(box.get('__pending_sync_operation'), isNull);
+    final after = await diagnostic('/__fixture/state');
+    expect(after['writes'], (before['writes'] as int) + 14);
+    expect(wallet(after)['notes'], 14);
+    expect(wallet(after)['energy'], 80);
+    expect((wallet(after)['ledger'] as List).length,
+        (wallet(before)['ledger'] as List).length + 2);
+  });
+
+  wireTest('locked_large_cipher_pages_reload_and_decrypt_without_upload_charge',
+      () async {
+    final uid = descriptor['encryptedOwner'] as String;
+    final vault = TestVault();
+    final client = await device(
+        'encrypted-receiver', 'atomic-disposable-encrypted', uid,
+        vault: vault);
+    final before = await diagnostic('/__fixture/state');
+    await client.cubit.sync(uploadAll: false);
+    expect(client.cubit.state.lastReport!.completed, isTrue);
+    expect(client.cubit.state.lastReport!.netCharge, 0);
+    expect(client.notes.count, 0);
+    final box = Hive.box('device-encrypted-receiver');
+    expect(box.get('__sync_cursor__'), 14);
+    final locked = await diagnostic('/__fixture/state');
+    expect(locked['writes'], before['writes']);
+    expect(locked['users'], before['users']);
+    vault.unlocked = true;
+    await client.notes.reloadAfterUnlock();
+    final body = List.filled(60000, '雪').join();
+    expect(client.notes.count, 14);
+    expect(client.notes.pendingCount, 0);
+    expect(box.get('__sync_cursor__'), 14);
+    for (final note in client.notes.visible()) {
+      expect(note.body, body);
+      expect(note.title, 'Encrypted bytes fixture');
+      expect(note.dirty, isFalse);
+      final stored = box.get(note.id) as Map;
+      expect(stored['title'], '');
+      expect(stored['body'], '');
+      expect(stored['payload'], isA<String>());
+    }
+    final after = await diagnostic('/__fixture/state');
+    expect(after['writes'], before['writes']);
+    expect(after['users'], before['users']);
+    expect(box.get('__pending_sync_operation'), isNull);
+  });
 }
