@@ -459,6 +459,7 @@ void main() {
 
   test('R3 another account never receives the prior owner cache', () async {
     await repository.save(Note.create()..title = 'account a');
+    expect(await repository.syncNow(instant: true), isTrue);
     await repository.stop();
     repository.clearMemory();
     api.user = 'user-b';
