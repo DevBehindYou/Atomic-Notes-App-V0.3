@@ -31,6 +31,7 @@ import 'package:atomic_notes/page/main_page.dart';
 import 'package:atomic_notes/page/endpage/notifications_page.dart';
 import 'package:atomic_notes/page/settings_page.dart';
 import 'package:atomic_notes/page/splash_screen.dart';
+import 'package:atomic_notes/page/account_cache_recovery_page.dart';
 import 'package:atomic_notes/theme/app_theme.dart';
 import 'package:atomic_notes/theme/app_tokens.dart';
 import 'package:atomic_notes/theme/editorial.dart';
@@ -181,6 +182,8 @@ class _MyAppState extends State<MyApp> {
           '/loginpage': (context) => const LoginPage(),
           '/homepage': (context) => const HomePage(),
           '/splashpage': (context) => const SplashPage(),
+          '/account-cache-recovery': (context) =>
+              const AccountCacheRecoveryPage(),
           '/loggedout': (context) => const LoggedOutScreen(),
           '/mainpage': (context) => const MainPage(),
           '/settingspage': (context) => const SettingsPage(),
@@ -201,8 +204,7 @@ class _MyAppState extends State<MyApp> {
           '/vaultunlock': (context) => VaultUnlockPage(
                 // `arguments: true` means the splash sent the user here at
                 // launch, so unlocking continues into the app.
-                fromStartup:
-                    ModalRoute.of(context)?.settings.arguments == true,
+                fromStartup: ModalRoute.of(context)?.settings.arguments == true,
               ),
           '/tcpage': (context) => const TCPage(),
           '/editprofilepage': (context) => const EditProfilePage(),

@@ -25,6 +25,25 @@ class SplashPage extends StatefulWidget {
 
 class _SplashPageState extends State<SplashPage> {
   final _api = ApiClient.instance;
+  bool _recoveringCache = false;
+
+  void _showCacheRecovery() {
+    if (!mounted || _recoveringCache) return;
+    _recoveringCache = true;
+    Navigator.pushNamedAndRemoveUntil(
+        context, '/account-cache-recovery', (_) => false);
+  }
+
+  Future<void> _startNotes() async {
+    try {
+      await NotesRepository.instance.start();
+    } on ForeignPendingCacheError {
+      _showCacheRecovery();
+    } catch (_) {
+      if (!mounted || _recoveringCache) return;
+      Navigator.pushReplacementNamed(context, '/loginpage');
+    }
+  }
 
   @override
   void initState() {
@@ -39,7 +58,8 @@ class _SplashPageState extends State<SplashPage> {
       // box-opening callback had assigned it.
       final authBox = await Hive.openBox<bool>('authBox');
       if (!mounted) return;
-      final bool isAuthOn = authBox.get('isAuthOn', defaultValue: false) ?? false;
+      final bool isAuthOn =
+          authBox.get('isAuthOn', defaultValue: false) ?? false;
       final bool hasSeenOnboarding =
           authBox.get('hasSeenOnboarding', defaultValue: false) ?? false;
 
@@ -47,6 +67,13 @@ class _SplashPageState extends State<SplashPage> {
         await Future.delayed(const Duration(seconds: 1));
         if (!mounted) return;
         Navigator.pushReplacementNamed(context, '/loginpage');
+        return;
+      }
+
+      if (NotesRepository.instance.hasForeignPendingCache) {
+        await NotesRepository.instance.stop();
+        NotesRepository.instance.clearMemory();
+        _showCacheRecovery();
         return;
       }
 
@@ -69,7 +96,7 @@ class _SplashPageState extends State<SplashPage> {
       // It used to be awaited, which meant that with no connection the app
       // sat on this screen until a socket gave up. An offline launch has to
       // be as fast as an online one.
-      unawaited(NotesRepository.instance.start());
+      unawaited(_startNotes());
 
       // Load Atomic Energy/Coins for this account and apply the daily grant.
       // Non-blocking, same as sync — routing never waits on it.
@@ -79,7 +106,11 @@ class _SplashPageState extends State<SplashPage> {
       unawaited(NotificationService.instance.init());
 
       await Future.delayed(const Duration(milliseconds: 900));
-      if (!mounted) return;
+      if (!mounted || _recoveringCache) return;
+      if (NotesRepository.instance.hasForeignPendingCache) {
+        _showCacheRecovery();
+        return;
+      }
 
       // One resolver owns the gate order (device lock, two-factor, vault,
       // onboarding) so lock_screen and two_factor_gate_page, which continue

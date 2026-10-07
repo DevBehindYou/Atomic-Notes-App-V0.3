@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:async';
 import 'package:atomic_notes/database/note.dart';
 import 'package:atomic_notes/database/notes_repository.dart';
 import 'package:atomic_notes/database/sync_status.dart';
@@ -166,5 +167,96 @@ void main() {
     expect(refused, isTrue);
     expect(repository.count, 0);
     expect(box.get('__cache_owner__'), 'user-a');
+  });
+  test('vault lock disk reload hides a foreign cache without erasing it',
+      () async {
+    vault.unlocked = true;
+    final note = await save();
+    final stored = Map.from(box.get(note.id) as Map);
+    api.user = 'user-b';
+    await repository.lockVault();
+    expect(box.get(note.id), stored);
+    expect(repository.visible(), isEmpty);
+    expect(repository.sampleCiphertext, isNull);
+    expect(repository.hasForeignPendingCache, isTrue);
+  });
+  test('signed-out disk reload preserves owned ciphertext without exposing it',
+      () async {
+    vault.unlocked = true;
+    final note = await save();
+    final stored = Map.from(box.get(note.id) as Map);
+    api.user = null;
+    await repository.lockVault();
+    expect(box.get(note.id), stored);
+    expect(repository.byId(note.id), isNull);
+    expect(repository.sampleCiphertext, isNull);
+  });
+  test('foreign maintenance cannot erase or rewrite pending disk work',
+      () async {
+    vault.unlocked = true;
+    final note = await save();
+    final stored = Map.from(box.get(note.id) as Map);
+    api.user = 'user-b';
+    for (final action in <Future<Object?> Function()>[
+      repository.clearLocal,
+      repository.wipeLocalNotes,
+      repository.wipeRemote,
+      repository.reloadAfterUnlock,
+      repository.migrateToVault,
+      repository.markAllForUpload,
+    ]) {
+      await expectLater(action(), throwsStateError);
+      expect(box.get(note.id), stored);
+      expect(box.get('__cache_owner__'), 'user-a');
+    }
+  });
+  test('unknown saved operation is preserved rather than treated as clean',
+      () async {
+    await box.put('__pending_sync_operation', 'synthetic malformed marker');
+    await retire('user-b');
+    expect(repository.hasForeignPendingCache, isTrue);
+    await expectLater(
+        repository.start(), throwsA(isA<ForeignPendingCacheError>()));
+    expect(box.get('__pending_sync_operation'), 'synthetic malformed marker');
+  });
+  test('account changes during encryption cannot replace the old disk snapshot',
+      () async {
+    vault.unlocked = true;
+    final note = await save();
+    final stored = Map.from(box.get(note.id) as Map);
+    vault.sealEntered = Completer<void>();
+    vault.sealGate = Completer<void>();
+    final saving = repository.save(note..title = 'Synthetic delayed edit');
+    await vault.sealEntered!.future;
+    api.user = 'user-b';
+    vault.sealGate!.complete();
+    await saving;
+    expect(box.get(note.id), stored);
+    expect(repository.byId(note.id), isNull);
+    expect(repository.visible(), isEmpty);
+  });
+  test('account change while opening a pull cannot repopulate foreign memory',
+      () async {
+    vault.unlocked = true;
+    final remote = Note.create()..title = 'Synthetic remote encrypted note';
+    api.pullRows = [
+      {
+        ...remote.toRemote('user-a'),
+        'version': 1,
+        'enc_v': 1,
+        'payload': await vault
+            .encryptContent({'title': remote.title, 'body': '', 'items': []})
+      }
+    ];
+    vault.openEntered = Completer<void>();
+    vault.openGate = Completer<void>();
+    final syncing = repository.syncNow(instant: true);
+    await vault.openEntered!.future;
+    api.user = 'user-b';
+    vault.openGate!.complete();
+    await syncing;
+    expect(box.containsKey(remote.id), isFalse);
+    expect(box.get('__sync_cursor__'), isNull);
+    expect(repository.byId(remote.id), isNull);
   });
 }
