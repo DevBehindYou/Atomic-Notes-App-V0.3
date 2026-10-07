@@ -1272,6 +1272,7 @@ void main() {
 
   wireTest('encrypted_base64_budget_splits_payloads_and_preserves_ciphertext',
       () async {
+    outcomes['encrypted_batch_phase'] = 'opening_client';
     final uid = descriptor['encryptedOwner'] as String;
     final capture = _CapturePushes(transport);
     final vault = TestVault()..unlocked = true;
@@ -1289,10 +1290,12 @@ void main() {
       await client.notes.save(note);
     }
     final before = await diagnostic('/__fixture/state');
+    outcomes['encrypted_batch_phase'] = 'isolated_budget';
     expect(wallet(before)['notes'], 0);
     expect(wallet(before)['energy'], 100);
     await client.cubit.sync(uploadAll: false);
     final report = client.cubit.state.lastReport!;
+    outcomes['encrypted_batch_phase'] = 'completed_report';
     expect(report.completed, isTrue);
     expect(report.operations, hasLength(2));
     expect(report.netCharge, 20);
@@ -1300,12 +1303,14 @@ void main() {
     expect(capture.bodies, hasLength(2));
     final first = jsonDecode(capture.bodies.first) as Map;
     final second = jsonDecode(capture.bodies.last) as Map;
+    outcomes['encrypted_batch_phase'] = 'batch_shape';
     expect(first['rows'], hasLength(10));
     expect(second['rows'], hasLength(4));
     final overflow = Map<dynamic, dynamic>.from(first)
       ..['rows'] = [...first['rows'] as List, (second['rows'] as List).first];
     expect(utf8.encode(jsonEncode(overflow)).length, greaterThan(2500000));
     final sent = <String>{};
+    outcomes['encrypted_batch_phase'] = 'cipher_envelopes';
     for (final envelope in capture.bodies) {
       expect(utf8.encode(envelope).length, lessThanOrEqualTo(2500000));
       for (final entry in (jsonDecode(envelope) as Map)['rows'] as List) {
@@ -1320,12 +1325,14 @@ void main() {
             greaterThan(utf8.encode(body).length));
         expect(payload.length, greaterThan(240000));
         final decoded = await vault.decryptContent(payload);
+        outcomes['encrypted_batch_phase'] = 'decrypted_content';
         expect(decoded['body'], body);
         expect(decoded['title'], 'Encrypted bytes fixture');
       }
     }
     expect(sent, notes.map((note) => note.id).toSet());
     final box = Hive.box('device-encrypted-bytes');
+    outcomes['encrypted_batch_phase'] = 'sealed_hive';
     for (final note in notes) {
       expect(client.notes.byId(note.id)!.body, body);
       expect(client.notes.byId(note.id)!.dirty, isFalse);
@@ -1336,15 +1343,18 @@ void main() {
     }
     expect(box.get('__pending_sync_operation'), isNull);
     final after = await diagnostic('/__fixture/state');
+    outcomes['encrypted_batch_phase'] = 'final_wallet';
     expect(after['writes'], (before['writes'] as int) + 14);
     expect(wallet(after)['notes'], 14);
     expect(wallet(after)['energy'], 80);
     expect((wallet(after)['ledger'] as List).length,
         (wallet(before)['ledger'] as List).length + 2);
+    outcomes['encrypted_batch_phase'] = 'passed';
   });
 
   wireTest('locked_large_cipher_pages_reload_and_decrypt_without_upload_charge',
       () async {
+    outcomes['encrypted_receiver_phase'] = 'opening_client';
     final uid = descriptor['encryptedOwner'] as String;
     final vault = TestVault();
     final client = await device(
@@ -1352,16 +1362,19 @@ void main() {
         vault: vault);
     final before = await diagnostic('/__fixture/state');
     await client.cubit.sync(uploadAll: false);
+    outcomes['encrypted_receiver_phase'] = 'locked_report';
     expect(client.cubit.state.lastReport!.completed, isTrue);
     expect(client.cubit.state.lastReport!.netCharge, 0);
     expect(client.notes.count, 0);
     final box = Hive.box('device-encrypted-receiver');
+    outcomes['encrypted_receiver_phase'] = 'locked_cursor';
     expect(box.get('__sync_cursor__'), 14);
     final locked = await diagnostic('/__fixture/state');
     expect(locked['writes'], before['writes']);
     expect(locked['users'], before['users']);
     vault.unlocked = true;
     await client.notes.reloadAfterUnlock();
+    outcomes['encrypted_receiver_phase'] = 'unlocked_content';
     final body = List.filled(60000, '雪').join();
     expect(client.notes.count, 14);
     expect(client.notes.pendingCount, 0);
@@ -1376,8 +1389,10 @@ void main() {
       expect(stored['payload'], isA<String>());
     }
     final after = await diagnostic('/__fixture/state');
+    outcomes['encrypted_receiver_phase'] = 'free_reload';
     expect(after['writes'], before['writes']);
     expect(after['users'], before['users']);
     expect(box.get('__pending_sync_operation'), isNull);
+    outcomes['encrypted_receiver_phase'] = 'passed';
   });
 }
