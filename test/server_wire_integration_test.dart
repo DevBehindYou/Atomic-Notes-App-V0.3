@@ -778,4 +778,89 @@ void main() {
       await arm('none');
     }
   });
+
+  wireTest('cloud_wipe_preserves_local_and_other_client_cache_without_tombstones',
+      () async {
+    final uid = descriptor['owner'] as String;
+    final actor = await device('wipe-actor', 'atomic-disposable-client-a', uid);
+    final observer =
+        await device('wipe-observer', 'atomic-disposable-client-b', uid);
+    for (final client in [actor, observer]) {
+      await client.cubit.sync(uploadAll: false);
+      expect(client.cubit.state.lastReport!.completed, isTrue);
+      expect(client.cubit.state.lastReport!.operations, isEmpty);
+    }
+    expect(actor.notes.count, greaterThan(0));
+    expect(observer.notes.count, actor.notes.count);
+    final unsent = Note(
+        id: newId(), title: 'Unsent wipe fixture', body: 'Synthetic offline work');
+    await actor.notes.save(unsent);
+    final actorBox = Hive.box('device-wipe-actor');
+    final observerBox = Hive.box('device-wipe-observer');
+    final actorSnapshot = Map<dynamic, dynamic>.from(actorBox.toMap());
+    final observerSnapshot = Map<dynamic, dynamic>.from(observerBox.toMap());
+    final actorCount = actor.notes.count;
+    final pendingCount = actor.notes.pendingCount;
+    final before = await diagnostic('/__fixture/state');
+    await actor.cubit.check();
+    expect(actor.cubit.state.cloud, greaterThan(0));
+    final result = await actor.notes.wipeRemote();
+    expect(result.ok, isTrue);
+    expect(result.message, contains('on this device are untouched'));
+    expect(actor.notes.count, actorCount);
+    expect(actor.notes.pendingCount, pendingCount);
+    expect(actor.notes.byId(unsent.id)!.body, unsent.body);
+    expect(actor.notes.byId(unsent.id)!.dirty, isTrue);
+    expect(actorBox.keys.toSet(), actorSnapshot.keys.toSet());
+    for (final entry in actorSnapshot.entries) {
+      final value = entry.value;
+      if (value is Map && value.containsKey('id')) {
+        final current = Map<dynamic, dynamic>.from(actorBox.get(entry.key) as Map);
+        expect(current['serverVersion'], 0);
+        expect(current['syncedSig'], '');
+        current.remove('serverVersion');
+        current.remove('syncedSig');
+        final previous = Map<dynamic, dynamic>.from(value)
+          ..remove('serverVersion')
+          ..remove('syncedSig');
+        expect(current, previous);
+      } else {
+        expect(actorBox.get(entry.key), value);
+      }
+    }
+    expect(actorBox.get('__pending_sync_operation'), isNull);
+    await actor.cubit.check();
+    expect(actor.cubit.state.cloud, 0);
+    expect(actor.cubit.state.onDevice, actorCount);
+    final wiped = await diagnostic('/__fixture/state');
+    expect(ownerState(wiped)['notes'], 0);
+    expect(ownerState(wiped)['energy'], ownerState(before)['energy']);
+    expect(ownerState(wiped)['ledger'], ownerState(before)['ledger']);
+    expect((wiped['users'] as List).last, (before['users'] as List).last);
+    expect(wiped['liveFiles'], lessThan(before['liveFiles'] as int));
+    await observer.cubit.sync(uploadAll: false);
+    expect(observer.cubit.state.lastReport!.completed, isTrue);
+    expect(observer.cubit.state.lastReport!.operations, isEmpty);
+    expect(observerBox.toMap(), observerSnapshot);
+    final page = await observer.api.pullNotes();
+    expect(page['rows'], isEmpty);
+    expect(page['nextCursor'], observerSnapshot['__sync_cursor__']);
+    final fresh = await device('wipe-fresh', 'atomic-disposable-client-b', uid);
+    await fresh.cubit.sync(uploadAll: false);
+    expect(fresh.cubit.state.lastReport!.completed, isTrue);
+    expect(fresh.cubit.state.lastReport!.operations, isEmpty);
+    expect(fresh.notes.count, 0);
+    expect(fresh.notes.binNotes, isEmpty);
+    final afterPulls = await diagnostic('/__fixture/state');
+    expect(afterPulls['writes'], wiped['writes']);
+    expect(afterPulls['users'], wiped['users']);
+    expect(await actor.notes.markAllForUpload(), actorCount);
+    expect(actor.notes.pendingCount, actorCount);
+    expect(actor.notes.count, actorCount);
+    // Refill is queued only: the synthetic owner's energy is exhausted. A
+    // successful new upload or simultaneous wipe/push is a separate scenario.
+    final queued = await diagnostic('/__fixture/state');
+    expect(queued['writes'], wiped['writes']);
+    expect(queued['users'], wiped['users']);
+  });
 }
