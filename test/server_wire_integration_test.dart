@@ -443,6 +443,83 @@ void main() {
     expect(replayed['users'], committed['users']);
   });
 
+  wireTest('edit_after_committed_reply_loss_survives_restart_and_replay',
+      () async {
+    final before = await diagnostic('/__fixture/state');
+    final fault = _DiscardCommittedReply(transport);
+    final first = await device('later-edit', 'atomic-disposable-client-a',
+        descriptor['owner'] as String,
+        deviceTransport: fault);
+    final note = Note(
+        id: newId(),
+        title: 'Later edit fixture',
+        body: 'Synthetic committed base');
+    await first.notes.save(note);
+    await first.cubit.sync(uploadAll: false);
+    expect(first.cubit.state.lastReport!.completed, isFalse);
+    final box = Hive.box('device-later-edit');
+    final pending =
+        Map<String, dynamic>.from(box.get('__pending_sync_operation') as Map);
+    final committed = await diagnostic('/__fixture/state');
+    expect(committed['writes'], (before['writes'] as int) + 1);
+    expect(ownerState(committed)['energy'],
+        (ownerState(before)['energy'] as int) - 10);
+    final page = await first.api.pullNotes();
+    final accepted = (page['rows'] as List)
+        .cast<Map<String, dynamic>>()
+        .singleWhere((row) => row['id'] == note.id);
+    expect(accepted['body'], 'Synthetic committed base');
+    final acceptedVersion = accepted['version'] as int;
+    await first.notes.save(
+        first.notes.byId(note.id)!..body = 'Synthetic later offline edit');
+    expect(box.get('__pending_sync_operation'), pending);
+    expect(first.notes.byId(note.id)!.dirty, isTrue);
+    await first.notes.stop(waitForSync: true);
+    await first.cubit.close();
+    first.notes.dispose();
+    repositories.remove(first.notes);
+    cubits.remove(first.cubit);
+    await box.close();
+    final restarted = await device('later-edit', 'atomic-disposable-client-a',
+        descriptor['owner'] as String,
+        deviceTransport: fault);
+    expect(restarted.notes.byId(note.id)!.body, 'Synthetic later offline edit');
+    expect(restarted.notes.byId(note.id)!.dirty, isTrue);
+    await restarted.cubit.sync(uploadAll: false);
+    final report = restarted.cubit.state.lastReport!;
+    expect(report.completed, isTrue);
+    expect(report.operations, hasLength(2));
+    expect(report.operations.first.recovered, isTrue);
+    expect(report.operations.first.requestId, pending['requestId']);
+    expect(report.operations.last.recovered, isFalse);
+    expect(report.operations.last.requestId, isNot(pending['requestId']));
+    expect(report.netCharge, 20,
+        reason: 'One historical receipt plus one new operation');
+    expect(fault.bodies, hasLength(3));
+    expect(fault.bodies[1], fault.bodies[0]);
+    final laterRequest = jsonDecode(fault.bodies[2]) as Map;
+    final laterRow = (laterRequest['rows'] as List).single as Map;
+    expect(laterRow['id'], note.id);
+    expect(laterRow['base_version'], acceptedVersion);
+    expect(laterRow['body'], 'Synthetic later offline edit');
+    expect(restarted.notes.byId(note.id)!.dirty, isFalse);
+    expect(restarted.notes.byId(note.id)!.serverVersion, acceptedVersion + 1);
+    expect(
+        Hive.box('device-later-edit').get('__pending_sync_operation'), isNull);
+    final finished = await diagnostic('/__fixture/state');
+    expect(finished['writes'], (committed['writes'] as int) + 1);
+    expect(ownerState(finished)['energy'],
+        (ownerState(committed)['energy'] as int) - 10);
+    expect((ownerState(finished)['ledger'] as List).length,
+        (ownerState(committed)['ledger'] as List).length + 1);
+    final remote = (await restarted.api.pullNotes())['rows'] as List;
+    expect(
+        remote
+            .cast<Map<String, dynamic>>()
+            .singleWhere((row) => row['id'] == note.id)['body'],
+        'Synthetic later offline edit');
+  });
+
   wireTest('actual_partial_failure_full_refund_and_new_request_retry',
       () async {
     Future<void> arm(List<String> ids) async {
