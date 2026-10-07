@@ -26,7 +26,7 @@ primitives. No recovery phrase, Argon2 derivation, Server verifier, native
 keystore or biometric lifecycle is exercised. Google Drive is simulated; logical
 clients are not physical devices. This is wire compatibility evidence, not
 cross-store durability, repair or production acceptance. Local strict analysis
-and ten controls run; twenty live cases deliberately skip locally and run only
+and ten controls run; twenty-one live cases deliberately skip locally and run only
 in CI. Parallel Flutter verification includes the CI debug build. Only fixed-code
 wire outcomes are retrieved; R25 remains partial.
 
@@ -34,8 +34,10 @@ The first two revisions failed with oversized positive fixtures: their 240,000+
 character payloads exceeded the existing per-note Server limit. Fixed-code phases
 locate the failure at completed-report/locked-cursor assertions; no raw logs were
 retrieved. Corrected valid fixtures keep that limit unchanged. The additional
-negative characterization deliberately exceeds it: local content must survive
-without any Server debit/write, while the saved invalid envelope blocks a later
-smaller edit. This unwanted retry behavior needs a separate causal fix and earns
-no completion credit. Source-preservation and authoritative rejection are separate
-from successful eventual upload. Twenty-one live cases skip locally.
+negative case deliberately exceeds it: local content must survive without any
+Server debit/write. The existing repository clears a 400/413 rejected pending
+request, so a smaller edit must generate a fresh envelope and upload successfully.
+An initial draft incorrectly assumed rejected requests remained pending; source
+inspection disproved that assumption before merge. No production correction was
+needed or made. Source-preservation, authoritative rejection and eventual upload
+are asserted separately. Twenty-one live cases skip locally.
