@@ -134,7 +134,9 @@ void main() {
 
   Future<({NotesRepository notes, CloudNotesCubit cubit, ApiClient api})>
       device(String name, String token, String userId,
-          {http.Client? deviceTransport, TestVault? vault, _Storage? storage}) async {
+          {http.Client? deviceTransport,
+          TestVault? vault,
+          _Storage? storage}) async {
     final api = ApiClient.forTest(
         client: deviceTransport ?? transport,
         storage: storage ?? _Storage(userId, token),
@@ -203,7 +205,7 @@ void main() {
     if (configuredOrigin.isNotEmpty) {
       await File('ci-wire-proof.json').writeAsString(jsonEncode({
         'scope':
-            'real Flutter API/repository/Cubit to real notes/auth routes; disposable Mongo; fake Drive',
+            'real Flutter API/repository/Cubit to real notes/auth/admin routes; disposable Mongo; fake Drive',
         'outcomes': outcomes,
       }));
     }
@@ -818,7 +820,8 @@ void main() {
     }
   });
 
-  wireTest('cloud_wipe_preserves_local_and_other_client_cache_without_tombstones',
+  wireTest(
+      'cloud_wipe_preserves_local_and_other_client_cache_without_tombstones',
       () async {
     final uid = descriptor['owner'] as String;
     final actor = await device('wipe-actor', 'atomic-disposable-client-a', uid);
@@ -832,7 +835,9 @@ void main() {
     expect(actor.notes.count, greaterThan(0));
     expect(observer.notes.count, actor.notes.count);
     final unsent = Note(
-        id: newId(), title: 'Unsent wipe fixture', body: 'Synthetic offline work');
+        id: newId(),
+        title: 'Unsent wipe fixture',
+        body: 'Synthetic offline work');
     await actor.notes.save(unsent);
     final actorBox = Hive.box('device-wipe-actor');
     final observerBox = Hive.box('device-wipe-observer');
@@ -854,7 +859,8 @@ void main() {
     for (final entry in actorSnapshot.entries) {
       final value = entry.value;
       if (value is Map && value.containsKey('id')) {
-        final current = Map<dynamic, dynamic>.from(actorBox.get(entry.key) as Map);
+        final current =
+            Map<dynamic, dynamic>.from(actorBox.get(entry.key) as Map);
         expect(current['serverVersion'], 0);
         expect(current['syncedSig'], '');
         current.remove('serverVersion');
@@ -876,9 +882,11 @@ void main() {
     expect(ownerState(wiped)['energy'], ownerState(before)['energy']);
     expect(ownerState(wiped)['ledger'], ownerState(before)['ledger']);
     expect(
-        (wiped['users'] as List).cast<Map<String, dynamic>>()
+        (wiped['users'] as List)
+            .cast<Map<String, dynamic>>()
             .singleWhere((user) => user['userId'] == descriptor['other']),
-        (before['users'] as List).cast<Map<String, dynamic>>()
+        (before['users'] as List)
+            .cast<Map<String, dynamic>>()
             .singleWhere((user) => user['userId'] == descriptor['other']));
     expect(wiped['liveFiles'], lessThan(before['liveFiles'] as int));
     await observer.cubit.sync(uploadAll: false);
@@ -914,10 +922,13 @@ void main() {
     final client = await device('batch-rows', 'atomic-disposable-batch', uid,
         deviceTransport: capture);
     Map<String, dynamic> wallet(Map<String, dynamic> state) =>
-        (state['users'] as List).cast<Map<String, dynamic>>()
+        (state['users'] as List)
+            .cast<Map<String, dynamic>>()
             .singleWhere((user) => user['userId'] == uid);
-    final notes = List.generate(51,
-        (_) => Note(id: newId(), title: 'Batch fixture', body: 'Synthetic batch row'));
+    final notes = List.generate(
+        51,
+        (_) => Note(
+            id: newId(), title: 'Batch fixture', body: 'Synthetic batch row'));
     for (final note in notes) {
       await client.notes.save(note);
     }
@@ -933,7 +944,8 @@ void main() {
     final request = jsonDecode(capture.bodies.single) as Map;
     expect(request['mode'], 'standard');
     expect(request['rows'], hasLength(50));
-    expect(utf8.encode(capture.bodies.single).length, lessThanOrEqualTo(2500000));
+    expect(
+        utf8.encode(capture.bodies.single).length, lessThanOrEqualTo(2500000));
     final waiting = await diagnostic('/__fixture/state');
     expect(wallet(waiting)['energy'], (wallet(before)['energy'] as int) - 5);
     expect(waiting['writes'], (before['writes'] as int) + 50);
@@ -958,7 +970,8 @@ void main() {
     expect(remaining['requestId'], isNot(request['requestId']));
     expect(remaining['rows'], hasLength(1));
     final sentIds = capture.bodies.expand((body) =>
-        ((jsonDecode(body) as Map)['rows'] as List).map((row) => (row as Map)['id']));
+        ((jsonDecode(body) as Map)['rows'] as List)
+            .map((row) => (row as Map)['id']));
     expect(sentIds.toSet(), notes.map((note) => note.id).toSet());
     expect(sentIds, hasLength(51));
     final finished = await diagnostic('/__fixture/state');
@@ -977,19 +990,21 @@ void main() {
     }
   });
 
-  wireTest('utf8_envelope_budget_splits_large_rows_without_loss_or_extra_retries',
+  wireTest(
+      'utf8_envelope_budget_splits_large_rows_without_loss_or_extra_retries',
       () async {
     final uid = descriptor['batchOwner'] as String;
     final capture = _CapturePushes(transport);
     final client = await device('batch-bytes', 'atomic-disposable-batch', uid,
         deviceTransport: capture);
     Map<String, dynamic> wallet(Map<String, dynamic> state) =>
-        (state['users'] as List).cast<Map<String, dynamic>>()
+        (state['users'] as List)
+            .cast<Map<String, dynamic>>()
             .singleWhere((user) => user['userId'] == uid);
     final body = List.filled(60000, '雪').join();
     expect(utf8.encode(body).length, 180000);
-    final notes = List.generate(14,
-        (_) => Note(id: newId(), title: 'UTF-8 fixture', body: body));
+    final notes = List.generate(
+        14, (_) => Note(id: newId(), title: 'UTF-8 fixture', body: body));
     for (final note in notes) {
       await client.notes.save(note);
     }
@@ -1013,7 +1028,8 @@ void main() {
       ..['rows'] = [...first['rows'] as List, (second['rows'] as List).single];
     expect(utf8.encode(jsonEncode(overflow)).length, greaterThan(2500000));
     final sentIds = capture.bodies.expand((encoded) =>
-        ((jsonDecode(encoded) as Map)['rows'] as List).map((row) => (row as Map)['id']));
+        ((jsonDecode(encoded) as Map)['rows'] as List)
+            .map((row) => (row as Map)['id']));
     expect(sentIds.toSet(), notes.map((note) => note.id).toSet());
     expect(sentIds, hasLength(14));
     for (final note in notes) {
@@ -1026,22 +1042,27 @@ void main() {
         (wallet(before)['ledger'] as List).length + 2);
     expect(wallet(finished)['notes'], (wallet(before)['notes'] as int) + 14);
     expect(finished['writes'], (before['writes'] as int) + 14);
-    expect(Hive.box('device-batch-bytes').get('__pending_sync_operation'), isNull);
+    expect(
+        Hive.box('device-batch-bytes').get('__pending_sync_operation'), isNull);
   });
 
   wireTest('current_revoked_session_retires_without_deleting_unsent_hive_work',
       () async {
     final uid = descriptor['owner'] as String;
     final storage = _Storage(uid, 'atomic-disposable-client-a');
-    final client = await device('retired-current', 'atomic-disposable-client-a', uid,
+    final client = await device(
+        'retired-current', 'atomic-disposable-client-a', uid,
         storage: storage);
-    final note = Note(id: newId(), title: 'Retired session fixture',
+    final note = Note(
+        id: newId(),
+        title: 'Retired session fixture',
         body: 'Synthetic preserved offline work');
     await client.notes.save(note);
     final box = Hive.box('device-retired-current');
     final savedRow = box.get(note.id);
     final before = await diagnostic('/__fixture/state');
-    final logout = await transport.post(origin.replace(path: '/api/auth/logout'),
+    final logout = await transport.post(
+        origin.replace(path: '/api/auth/logout'),
         headers: {'authorization': 'Bearer atomic-disposable-client-a'});
     expect(logout.statusCode, 200);
     final ended = client.api.onSessionEnded.first;
@@ -1057,7 +1078,8 @@ void main() {
     expect(box.get(note.id), savedRow);
     expect((box.get(note.id) as Map)['dirty'], isTrue);
     expect(box.get('__cache_owner__'), uid);
-    final pending = Map<dynamic, dynamic>.from(box.get('__pending_sync_operation') as Map);
+    final pending =
+        Map<dynamic, dynamic>.from(box.get('__pending_sync_operation') as Map);
     expect(pending['userId'], uid);
     expect((pending['rows'] as List).single['id'], note.id);
     await client.api.init(); // Wait for queued secure-storage deletion.
@@ -1085,9 +1107,12 @@ void main() {
     final uid = descriptor['owner'] as String;
     final storage = _Storage(uid, 'atomic-disposable-client-a');
     final held = _HoldCountReply(transport);
-    final client = await device('retired-late', 'atomic-disposable-client-a', uid,
+    final client = await device(
+        'retired-late', 'atomic-disposable-client-a', uid,
         storage: storage, deviceTransport: held);
-    final note = Note(id: newId(), title: 'New session fixture',
+    final note = Note(
+        id: newId(),
+        title: 'New session fixture',
         body: 'Synthetic current-session offline work');
     await client.notes.save(note);
     final box = Hive.box('device-retired-late');
@@ -1097,8 +1122,10 @@ void main() {
     final subscription = client.api.onSessionEnded.listen((_) => ended++);
     try {
       final staleRequest = client.api.remoteNoteCount();
-      final assertion = expectLater(staleRequest, throwsA(isA<ApiException>()
-          .having((error) => error.code, 'code', 'session_changed')));
+      final assertion = expectLater(
+          staleRequest,
+          throwsA(isA<ApiException>()
+              .having((error) => error.code, 'code', 'session_changed')));
       await held.received.future.timeout(const Duration(seconds: 5));
       expect(held.status, 401);
       storage.values['atomic_api_session_token'] = 'atomic-disposable-client-b';
@@ -1110,7 +1137,8 @@ void main() {
       expect(client.api.isSignedIn, isTrue);
       expect(client.api.currentUserId, uid);
       expect(ended, 0);
-      expect(storage.values['atomic_api_session_token'], 'atomic-disposable-client-b');
+      expect(storage.values['atomic_api_session_token'],
+          'atomic-disposable-client-b');
       expect(client.notes.byId(note.id)!.body, note.body);
       expect(client.notes.byId(note.id)!.dirty, isTrue);
       expect(box.toMap(), snapshot);
@@ -1123,4 +1151,122 @@ void main() {
       await subscription.cancel();
     }
   });
+
+  for (final mode in ['partial', 'full']) {
+    wireTest('${mode}_capped_refund_keeps_dirty_work_and_replays_once',
+        () async {
+      final uid = descriptor['owner'] as String;
+      // Test-only public key in the guarded loopback fixture, never production.
+      final initial = await diagnostic('/__fixture/state');
+      final initialEnergy = ownerState(initial)['energy'] as int;
+      if (initialEnergy < 100) {
+        final grant =
+            await transport.post(origin.replace(path: '/api/admin/energy'),
+                headers: {
+                  'content-type': 'application/json',
+                  'x-admin-api-key': 'atomic-disposable-admin-key'
+                },
+                body: jsonEncode({
+                  'user_id': uid,
+                  'request_id': newId(),
+                  'energy_delta': 100 - initialEnergy,
+                  'coins_delta': 0,
+                  'note': 'Synthetic fixture budget'
+                }));
+        expect(grant.statusCode, 200);
+      }
+      final capture = _CapturePushes(transport);
+      final client = await device(
+          'capped-$mode', 'atomic-disposable-client-b', uid,
+          deviceTransport: capture);
+      final note = Note(
+          id: newId(),
+          title: 'Capped refund fixture',
+          body: 'Synthetic preserved offline work');
+      await client.notes.save(note);
+      final box = Hive.box('device-capped-$mode');
+      Future<void> arm(String selected) async {
+        final response = await transport.post(
+            origin.replace(path: '/__fixture/refund-fault'),
+            headers: {
+              'content-type': 'application/json',
+              'authorization': 'Bearer atomic-disposable-client-a'
+            },
+            body: jsonEncode({'noteId': note.id, 'mode': selected}));
+        expect(response.statusCode, 200);
+      }
+
+      final before = await diagnostic('/__fixture/state');
+      await arm(mode);
+      try {
+        await client.cubit.sync(uploadAll: false);
+        final report = client.cubit.state.lastReport!;
+        final refund = mode == 'partial' ? 1 : 0;
+        expect(report.completed, isFalse);
+        expect(report.charged, 10);
+        expect(report.refunded, refund);
+        expect(report.netCharge, 10 - refund);
+        expect(report.operations, hasLength(1));
+        expect(client.notes.byId(note.id)!.body, note.body);
+        expect(client.notes.byId(note.id)!.dirty, isTrue);
+        expect(client.notes.pendingCount, 1);
+        expect(box.get('__pending_sync_operation'), isNull);
+        expect((box.get(note.id) as Map)['dirty'], isTrue);
+        expect(capture.bodies, hasLength(1));
+        final request = jsonDecode(capture.bodies.single) as Map;
+        final after = await diagnostic('/__fixture/state');
+        expect(after['writes'], before['writes']);
+        expect(ownerState(after)['notes'], ownerState(before)['notes']);
+        expect(ownerState(after)['energy'], 120);
+        final grant = (mode == 'partial' ? 119 : 120) -
+            ((ownerState(before)['energy'] as int) - 10);
+        final addedDeltas = (ownerState(after)['ledger'] as List)
+            .map((row) => (row as Map)['energyDelta'] as int)
+            .toList();
+        // Diagnostic reads have no order contract; preserve duplicate counts.
+        for (final previous in ownerState(before)['ledger'] as List) {
+          expect(addedDeltas.remove((previous as Map)['energyDelta']), isTrue);
+        }
+        addedDeltas.sort();
+        final expectedDeltas =
+            mode == 'partial' ? [-10, grant, 1] : [-10, grant];
+        expectedDeltas.sort();
+        expect(addedDeltas, expectedDeltas);
+        final replay = await client.api.pushNotes(
+            (request['rows'] as List)
+                .map((row) => Map<String, dynamic>.from(row as Map))
+                .toList(),
+            requestId: request['requestId'] as String,
+            instant: true);
+        expect(replay.receipt!.charged, 10);
+        expect(replay.receipt!.refunded, refund);
+        expect(replay.results.single['ok'], isFalse);
+        expect(replay.results.single['error'], 'note_write_failed');
+        final replayed = await diagnostic('/__fixture/state');
+        expect(replayed, after);
+        expect(client.notes.byId(note.id)!.dirty, isTrue);
+        expect(capture.bodies, hasLength(2));
+        expect(capture.bodies[1], capture.bodies[0]);
+        await arm('none');
+        await client.cubit.sync(uploadAll: false);
+        final retry = client.cubit.state.lastReport!;
+        expect(retry.completed, isTrue);
+        expect(retry.netCharge, 10);
+        expect(retry.operations.single.requestId, isNot(request['requestId']));
+        expect(client.notes.byId(note.id)!.body, note.body);
+        expect(client.notes.byId(note.id)!.dirty, isFalse);
+        expect(client.notes.pendingCount, 0);
+        expect(box.get('__pending_sync_operation'), isNull);
+        final finished = await diagnostic('/__fixture/state');
+        expect(finished['writes'], (after['writes'] as int) + 1);
+        expect(ownerState(finished)['notes'],
+            (ownerState(after)['notes'] as int) + 1);
+        expect(ownerState(finished)['energy'], 110);
+        expect((ownerState(finished)['ledger'] as List).length,
+            (ownerState(after)['ledger'] as List).length + 1);
+      } finally {
+        await arm('none');
+      }
+    });
+  }
 }
