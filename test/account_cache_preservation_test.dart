@@ -57,6 +57,15 @@ void main() {
     api.sessionRevision++;
   }
 
+  Future<bool> refusedStart() async {
+    try {
+      await repository.start();
+      return false;
+    } on StateError {
+      return true;
+    }
+  }
+
   test('same owner can reload unsynced work', () async {
     final note = await save();
     final stored = Map.from(box.get(note.id) as Map);
@@ -84,7 +93,10 @@ void main() {
       final stored = Map.from(box.get(note.id) as Map);
       await retire('user-b');
       vault.unlocked = false;
-      await expectLater(repository.start(), throwsStateError);
+      final refused = await refusedStart();
+      expect(box.containsKey(note.id), isTrue,
+          reason: 'Pending cache must not be deleted');
+      expect(refused, isTrue);
       expect(repository.count, 0,
           reason: 'Never display previous-account content');
       expect(box.get(note.id), stored);
@@ -113,7 +125,10 @@ void main() {
     };
     await box.put('__pending_sync_operation', pending);
     await retire('user-b');
-    await expectLater(repository.start(), throwsStateError);
+    final refused = await refusedStart();
+    expect(box.containsKey('__pending_sync_operation'), isTrue,
+        reason: 'Saved request must not be deleted');
+    expect(refused, isTrue);
     expect(box.get('__pending_sync_operation'), pending);
     expect(box.get(note.id), isNotNull);
     expect(box.get('__cache_owner__'), 'user-a');
