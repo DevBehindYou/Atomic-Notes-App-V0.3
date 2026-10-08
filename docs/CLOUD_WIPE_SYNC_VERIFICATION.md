@@ -46,6 +46,16 @@ verification with Flutter 3.44.8 passes all 488 tests, with 22 dedicated live
 wire cases intentionally skipped, and strict analysis finds no issues.
 CI results are recorded in the PR and root acceptance report.
 
+The first wire head `faa7b3a` (run `37805579111`, later cancelled by the
+follow-up) passes the existing 21 cases and fails the new case. Head `806222c`
+(run `37806098462`) locates that failure at `final_wallet`; its independent
+analysis/tests/debug-APK job passes. Inspection of Server
+`tests/clientFixture.ts` confirms its `writes` counter includes file deletion.
+The new assertion incorrectly expected no counter increment during deletion.
+It is corrected to count exactly the removed files, while still refusing any
+additional upload. Both fixed-code failure artifacts are retained. This is a
+fixture assertion correction, not evidence of a second production defect.
+
 `test/server_wire_integration_test.dart` adds
 `cloud_wipe_waits_for_committed_reply_and_preserves_local_reset`: a transport
 barrier fully receives a real successful push reply after commit, then withholds

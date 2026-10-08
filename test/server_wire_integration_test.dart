@@ -1555,7 +1555,10 @@ void main() {
       expect(ownerState(wiped)['notes'], 0);
       expect(ownerState(wiped)['energy'], ownerState(committed)['energy']);
       expect(ownerState(wiped)['ledger'], ownerState(committed)['ledger']);
-      expect(wiped['writes'], committed['writes']);
+      // The fake Drive counter includes deletion, as well as uploads. Each
+      // removed file is expected; there must be no additional upload afterward.
+      expect(wiped['writes'], (committed['writes'] as int) +
+          (committed['liveFiles'] as int) - (wiped['liveFiles'] as int));
       expect(wiped['liveFiles'], lessThan(committed['liveFiles'] as int));
       expect((wiped['users'] as List).cast<Map>().singleWhere(
           (user) => user['userId'] == descriptor['other']),
