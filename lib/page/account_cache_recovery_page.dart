@@ -52,9 +52,10 @@ class _AccountCacheRecoveryPageState extends State<AccountCacheRecoveryPage> {
                         style: Theme.of(context).textTheme.headlineMedium),
                     const SizedBox(height: AppSpace.lg),
                     const Text(
-                        'This device still has unfinished changes from another '
+                        'This device still has unfinished changes or local-only notes from another '
                         'account. Those notes are preserved and hidden from this account. '
-                        'Sign back into the previous account to finish syncing before switching.'),
+                        'Sign back into the previous account. Unlock the vault if needed, '
+                        'use Upload all in Cloud Notes for local-only notes, and finish syncing before switching.'),
                     const SizedBox(height: AppSpace.md),
                     const Text('Do not uninstall the app or clear its storage. '
                         'If the vault is enabled, you may need your recovery phrase after signing in.'),

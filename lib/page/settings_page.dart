@@ -110,7 +110,9 @@ class _SettingsPageState extends State<SettingsPage> {
       if (_api.isSignedIn) await repo.start();
       if (!_isMounted) return;
       MySnackBar(
-        text: error is StateError
+        text: error is LocalOnlyCacheError
+            ? LocalOnlyCacheError.messageText
+            : error is StateError
             ? "Logout cancelled. Unlock your vault and sync all pending changes first."
             : "Unable to logout",
         sec: 4000,

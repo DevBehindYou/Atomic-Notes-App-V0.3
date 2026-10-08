@@ -114,6 +114,65 @@ void main() {
     await directory.delete(recursive: true);
   });
 
+  for (final encrypted in [false, true]) {
+    test('local-only wiped cache blocks logout (encrypted=$encrypted)', () async {
+      vault.unlocked = encrypted;
+      final note = Note.create()..body = 'Public synthetic retained only copy';
+      await repository.save(note);
+      expect(await repository.syncNow(instant: true), isTrue);
+      expect((await repository.wipeRemote()).ok, isTrue);
+      expect(repository.byId(note.id)!.dirty, isFalse);
+      expect(repository.byId(note.id)!.serverVersion, 0);
+      if (encrypted) await repository.lockVault();
+      final retained = Map<dynamic, dynamic>.from(box.get(note.id) as Map);
+      await repository.stop(waitForSync: true);
+      await expectLater(repository.clearLocal(), throwsStateError);
+      expect(box.get(note.id), retained);
+      expect(box.get('__cache_owner__'), 'user-a');
+    });
+
+    test('local-only wiped cache blocks another account (encrypted=$encrypted)', () async {
+      vault.unlocked = encrypted;
+      final note = Note.create()..body = 'Public synthetic owner retained copy';
+      await repository.save(note);
+      expect(await repository.syncNow(instant: true), isTrue);
+      expect((await repository.wipeRemote()).ok, isTrue);
+      if (encrypted) await repository.lockVault();
+      final retained = Map<dynamic, dynamic>.from(box.get(note.id) as Map);
+      await repository.stop(waitForSync: true);
+      repository.clearMemory();
+      api.user = 'user-b';
+      await expectLater(repository.start(), throwsA(isA<ForeignPendingCacheError>()));
+      expect(repository.hasForeignPendingCache, isTrue);
+      expect(repository.visible(), isEmpty);
+      expect(box.get(note.id), retained);
+      expect(box.get('__cache_owner__'), 'user-a');
+      api.user = 'user-a';
+      vault.unlocked = encrypted;
+      await repository.start();
+      expect(repository.byId(note.id)!.body, note.body);
+      expect(repository.byId(note.id)!.serverVersion, 0);
+      expect(repository.byId(note.id)!.dirty, isFalse);
+      expect(await repository.markAllForUpload(), 1);
+      expect(await repository.syncNow(instant: true), isTrue);
+      expect(repository.byId(note.id)!.serverVersion, 1);
+      await repository.stop(waitForSync: true);
+      await repository.clearLocal();
+      expect(box.isEmpty, isTrue);
+    });
+  }
+
+  test('local-only deleted notes still allow explicit logout clearing', () async {
+    final note = Note.create()..body = 'Public synthetic intentionally deleted copy';
+    await repository.save(note);
+    await repository.deleteNotes([note.id]);
+    expect(repository.byId(note.id)!.dirty, isFalse);
+    expect(repository.byId(note.id)!.deleted, isTrue);
+    await repository.stop(waitForSync: true);
+    await repository.clearLocal();
+    expect(box.isEmpty, isTrue);
+  });
+
   test('cloud wipe waits for an in-flight receipt before resetting versions', () async {
     final note = Note.create()..body = 'Public synthetic cloud wipe note';
     await repository.save(note);
