@@ -43,6 +43,13 @@ class ForeignPendingCacheError extends StateError {
       'Its notes are still stored on this device.';
 }
 
+/// A cloud wipe leaves live notes on this device without a cloud version.
+class LocalOnlyCacheError extends StateError {
+  LocalOnlyCacheError() : super(messageText);
+  static const messageText = 'Logout cancelled. Some notes are only on this device. '
+      'Unlock your vault if needed, then use Upload all in Cloud Notes and sync before logging out.';
+}
+
 /// Single source of truth for notes, and the sync engine.
 ///
 /// Replaces the old model where seven screens each built their own
@@ -116,10 +123,17 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     return owner is! String || owner == uid;
   }
 
+  // Read public local metadata without decrypting hidden vault rows. A clean
+  // flag describes upload work, not whether a live note has a cloud copy.
+  bool get _hasLocalOnlyNotes => _box.values.any((raw) => raw is Map &&
+      raw['id'] is String && raw['deleted'] != true &&
+      (raw['serverVersion'] is! num || (raw['serverVersion'] as num) <= 0));
+
   /// Read raw metadata so locked ciphertext and unanswered requests count too.
   bool get hasForeignPendingCache => _cacheReady && !_ownsCache(_userId) &&
       (_box.get(_pendingPushKey) != null ||
-       _box.values.any((raw) => raw is Map && raw['dirty'] == true));
+       _box.values.any((raw) => raw is Map && raw['dirty'] == true) ||
+       _hasLocalOnlyNotes);
 
   bool _activeFor(String uid) => !_stopped && _userId == uid && _ownsCache(uid);
 
@@ -528,6 +542,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
         _box.values.any((raw) => raw is Map && raw['dirty'] == true) || pendingCount > 0) {
       throw StateError('Sync all pending changes before logging out.');
     }
+    if (_hasLocalOnlyNotes) throw LocalOnlyCacheError();
     _notes.clear();
     _encryptedCloudVersions.clear();
     _syncCursor = null;

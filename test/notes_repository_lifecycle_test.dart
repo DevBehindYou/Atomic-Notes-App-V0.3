@@ -153,6 +153,12 @@ void main() {
       expect(repository.byId(note.id)!.body, note.body);
       expect(repository.byId(note.id)!.serverVersion, 0);
       expect(repository.byId(note.id)!.dirty, isFalse);
+      expect(await repository.markAllForUpload(), 1);
+      expect(await repository.syncNow(instant: true), isTrue);
+      expect(repository.byId(note.id)!.serverVersion, 1);
+      await repository.stop(waitForSync: true);
+      await repository.clearLocal();
+      expect(box.isEmpty, isTrue);
     });
   }
 
