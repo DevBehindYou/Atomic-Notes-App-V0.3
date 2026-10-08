@@ -23,6 +23,8 @@ class TestApi implements ApiClient {
   final pushModes = <bool>[];
   List<Map<String, dynamic>>? pushResults;
   Future<void> Function()? beforePush;
+  Future<void> Function()? beforeWipe;
+  int wipeCalls = 0;
   int sequence = 0;
   List<Map<String, dynamic>> pullRows = [];
   Object? pullFailure;
@@ -50,6 +52,11 @@ class TestApi implements ApiClient {
       'rows': pullRows, 'nextCursor': sequence, 'hasMore': false,
       'cursor': DateTime.now().toUtc().toIso8601String(),
     };
+  }
+  @override
+  Future<void> wipeRemoteNotes() async {
+    wipeCalls++;
+    await beforeWipe?.call();
   }
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -105,6 +112,143 @@ void main() {
     repository.dispose();
     await Hive.close();
     await directory.delete(recursive: true);
+  });
+
+  test('cloud wipe waits for an in-flight receipt before resetting versions', () async {
+    final note = Note.create()..body = 'Public synthetic cloud wipe note';
+    await repository.save(note);
+    final entered = Completer<void>(), release = Completer<void>();
+    api.beforePush = () async { entered.complete(); await release.future; };
+    final sync = repository.syncNow(instant: true);
+    await entered.future;
+    final wipe = repository.wipeRemote();
+    await Future<void>.delayed(Duration.zero);
+    final calledWhileSyncing = api.wipeCalls;
+    release.complete();
+    expect(await sync, isTrue);
+    expect((await wipe).ok, isTrue);
+    expect(calledWhileSyncing, 0);
+    expect(api.wipeCalls, 1);
+    expect(repository.byId(note.id)!.serverVersion, 0);
+    expect(repository.byId(note.id)!.syncedSig, isEmpty);
+    expect(repository.byId(note.id)!.body, note.body);
+    expect(box.get('__pending_sync_operation'), isNull);
+  });
+
+  test('cloud wipe blocks a new sync while its API request is pending', () async {
+    final note = Note.create()..body = 'Public synthetic pending wipe note';
+    await repository.save(note);
+    final entered = Completer<void>(), release = Completer<void>();
+    api.beforeWipe = () async { entered.complete(); await release.future; };
+    final wipe = repository.wipeRemote();
+    await entered.future;
+    try {
+      expect(await repository.syncNow(instant: true), isFalse);
+      expect(api.pushes, isEmpty);
+      expect(api.pullCursors, isEmpty);
+    } finally { release.complete(); await wipe; }
+    expect(repository.byId(note.id)!.body, note.body);
+  });
+
+  test('cloud wipe cannot reset a newer lifecycle for the same account', () async {
+    final note = Note.create()..body = 'Public synthetic restarted cache';
+    await repository.save(note);
+    expect(await repository.syncNow(instant: true), isTrue);
+    final entered = Completer<void>(), release = Completer<void>();
+    api.beforeWipe = () async { entered.complete(); await release.future; };
+    final wipe = repository.wipeRemote();
+    await entered.future;
+    await repository.stop(waitForSync: true);
+    await repository.start();
+    final current = Map<dynamic, dynamic>.from(box.get(note.id) as Map);
+    release.complete();
+    expect((await wipe).ok, isFalse);
+    expect(box.get(note.id), current);
+    expect(repository.byId(note.id)!.serverVersion, 1);
+    expect(repository.byId(note.id)!.body, note.body);
+  });
+
+  test('cloud wipe cannot reset a newer session for the same account', () async {
+    final note = Note.create()..body = 'Public synthetic refreshed session';
+    await repository.save(note);
+    expect(await repository.syncNow(instant: true), isTrue);
+    final entered = Completer<void>(), release = Completer<void>();
+    api.beforeWipe = () async { entered.complete(); await release.future; };
+    final wipe = repository.wipeRemote();
+    await entered.future;
+    api.sessionRevision++;
+    final current = Map<dynamic, dynamic>.from(box.get(note.id) as Map);
+    release.complete();
+    expect((await wipe).ok, isFalse);
+    expect(box.get(note.id), current);
+    expect(repository.byId(note.id)!.serverVersion, 1);
+  });
+
+  test('cloud wipe retires a sync whose connectivity check predates the wipe', () async {
+    await repository.stop(waitForSync: true);
+    repository.dispose();
+    final entered = Completer<void>();
+    final release = Completer<List<ConnectivityResult>>();
+    repository = NotesRepository.forTest(box: box, api: api, vault: vault,
+      checkConnectivity: () async {
+        if (!entered.isCompleted) entered.complete();
+        return release.future;
+      });
+    await repository.start();
+    final note = Note.create()..body = 'Public synthetic connecting sync';
+    await repository.save(note);
+    final sync = repository.syncNow(instant: true);
+    await entered.future;
+    expect((await repository.wipeRemote()).ok, isTrue);
+    release.complete([ConnectivityResult.wifi]);
+    expect(await sync, isFalse);
+    expect(api.pushes, isEmpty);
+    expect(api.pullCursors, isEmpty);
+    expect(repository.byId(note.id)!.body, note.body);
+    expect(repository.byId(note.id)!.dirty, isTrue);
+  });
+
+  test('cloud wipe refuses an overlapping wipe without a second API call', () async {
+    final entered = Completer<void>(), release = Completer<void>();
+    api.beforeWipe = () async {
+      if (!entered.isCompleted) entered.complete();
+      await release.future;
+    };
+    final first = repository.wipeRemote();
+    await entered.future;
+    final second = repository.wipeRemote();
+    await Future<void>.delayed(Duration.zero);
+    final callsWhilePending = api.wipeCalls;
+    release.complete();
+    expect((await first).ok, isTrue);
+    expect((await second).ok, isFalse);
+    expect(callsWhilePending, 1);
+  });
+
+  test('cloud wipe success preserves local content and clears obsolete versions', () async {
+    final note = Note.create()..body = 'Public synthetic normal wipe';
+    await repository.save(note);
+    expect(await repository.syncNow(instant: true), isTrue);
+    final outcome = await repository.wipeRemote();
+    expect(outcome.ok, isTrue);
+    expect(repository.count, 1);
+    expect(repository.byId(note.id)!.body, note.body);
+    expect(repository.byId(note.id)!.serverVersion, 0);
+    expect(repository.byId(note.id)!.syncedSig, isEmpty);
+  });
+
+  test('cloud wipe failure preserves cache and allows a later sync', () async {
+    final note = Note.create()..body = 'Public synthetic failed wipe';
+    await repository.save(note);
+    expect(await repository.syncNow(instant: true), isTrue);
+    final before = Map<dynamic, dynamic>.from(box.get(note.id) as Map);
+    api.beforeWipe = () async { throw ApiException('operation_locked', 423); };
+    expect((await repository.wipeRemote()).ok, isFalse);
+    expect(box.get(note.id), before);
+    note.body = 'Public synthetic edit after failed wipe';
+    await repository.save(note);
+    expect(await repository.syncNow(instant: true), isTrue);
+    expect(repository.byId(note.id)!.dirty, isFalse);
   });
 
   test('R19 offline automatic attempt notifies its failure without a note change', () async {
