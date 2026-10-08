@@ -150,8 +150,10 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   int _networkRetries = 0;
 
   bool _syncing = false;
+  bool _wipingCloud = false;
+  int _cloudWipeRevision = 0;
   @override
-  bool get isSyncing => _syncing;
+  bool get isSyncing => _syncing || _wipingCloud;
 
   @override
   String? lastError;
@@ -220,7 +222,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   /// Sends local changes without a manual sync: a few seconds after the edits
   /// settle when automatic sync is open, else just after the window opens.
   void _scheduleAutoSync() {
-    if (!_automaticSync || _stopped || _lockingVault || _userId == null || !SyncStatusHelper.isSyncOn) return;
+    if (!_automaticSync || _stopped || _lockingVault || _wipingCloud || _userId == null || !SyncStatusHelper.isSyncOn) return;
     final blockedUntil = nextAutoSyncAt;
     final wait = blockedUntil == null
         ? _editSettle
@@ -618,6 +620,11 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
       clearMemory();
       return false;
     }
+    if (_wipingCloud) {
+      lastError = 'Cloud wipe in progress. Wait for it to finish before syncing.';
+      report?.errorMessage = lastError;
+      return false;
+    }
     if (_syncing) {
       report?.activity = SyncAttemptActivity.joined;
       await _whenIdle();
@@ -630,9 +637,14 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     if (uid == null) return false;
     if (!SyncStatusHelper.isSyncOn) return false;
     final lifecycle = _lifecycleRevision;
+    final cloudWipe = _cloudWipeRevision;
 
     // Don't sit on a dead socket when we already know there's no network.
     final conn = await _checkConnectivity();
+    if (cloudWipe != _cloudWipeRevision) {
+      report?.activity = SyncAttemptActivity.retired;
+      return false;
+    }
     if (_syncing || _stopped || _lockingVault || _userId != uid || !_ownsCache(uid) ||
         lifecycle != _lifecycleRevision) {
       return false;
@@ -1149,29 +1161,55 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   Future<WipeOutcome> wipeRemote() async {
     _assertCacheOwner();
     final uid = _userId;
-    if (_userId == null) return const WipeOutcome(false, 'Not signed in.');
-    try {
-      await _api.wipeRemoteNotes();
-    } catch (e) {
-      lastError = e.toString();
-      debugPrint('NotesRepository.wipeRemote failed: $e');
-      return const WipeOutcome(false,
-          'Could not wipe the cloud. Check your connection and try again; nothing on this device was changed.');
+    if (uid == null) return const WipeOutcome(false, 'Not signed in.');
+    if (_stopped || _lockingVault) {
+      return const WipeOutcome(false, 'Notes are changing session. Please retry.');
     }
-    if (_userId != uid) return const WipeOutcome(false, 'Session changed. Reopen Cloud Notes.');
-    _assertCacheOwner();
-    _encryptedCloudVersions.clear();
-    for (final id in _notes.keys.toList()) {
-      _notes[id]?.serverVersion = 0;
-      _notes[id]?.syncedSig = '';
-      await _persist(id);
+    if (_wipingCloud) {
+      return const WipeOutcome(false, 'A cloud wipe is already in progress.');
     }
-    // A saved push refers to cloud versions that no longer exist.
-    await _box.delete(_pendingPushKey);
-    lastSyncedAt = null;
+    final lifecycle = _lifecycleRevision, session = _api.sessionRevision;
+    bool current() => _activeFor(uid) && lifecycle == _lifecycleRevision &&
+        session == _api.sessionRevision;
+    const changed = WipeOutcome(false, 'Session changed. Reopen Cloud Notes.');
+    _wipingCloud = true;
+    _cloudWipeRevision++;
     notifyListeners();
-    return const WipeOutcome(true,
-        'Cloud notes wiped. The notes on this device are untouched.');
+    try {
+      // Consume any earlier receipt/pull before resetting its cloud versions.
+      // Connecting attempts are fenced by the revision even after this ends.
+      await _whenIdle();
+      if (!current()) return changed;
+      try {
+        await _api.wipeRemoteNotes();
+      } catch (e) {
+        if (!current()) return changed;
+        lastError = e.toString();
+        debugPrint('NotesRepository.wipeRemote failed: $e');
+        return const WipeOutcome(false,
+            'Could not wipe the cloud. Check your connection and try again; nothing on this device was changed.');
+      }
+      if (!current()) return changed;
+      _encryptedCloudVersions.clear();
+      for (final id in _notes.keys.toList()) {
+        if (!current()) return changed;
+        _notes[id]?.serverVersion = 0;
+        _notes[id]?.syncedSig = '';
+        await _persist(id);
+      }
+      if (!current()) return changed;
+      // A saved push refers to cloud versions that no longer exist.
+      await _box.delete(_pendingPushKey);
+      if (!current()) return changed;
+      lastSyncedAt = null;
+      lastError = null;
+      return const WipeOutcome(true,
+          'Cloud notes wiped. The notes on this device are untouched.');
+    } finally {
+      _wipingCloud = false;
+      if (pendingCount > 0) _scheduleAutoSync();
+      notifyListeners();
+    }
   }
 
   /// Removes every note from THIS DEVICE only. The cloud copy is not touched, so

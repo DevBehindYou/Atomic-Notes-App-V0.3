@@ -168,6 +168,22 @@ void main() {
     expect(repository.byId(note.id)!.body, note.body);
   });
 
+  test('cloud wipe cannot reset a newer session for the same account', () async {
+    final note = Note.create()..body = 'Public synthetic refreshed session';
+    await repository.save(note);
+    expect(await repository.syncNow(instant: true), isTrue);
+    final entered = Completer<void>(), release = Completer<void>();
+    api.beforeWipe = () async { entered.complete(); await release.future; };
+    final wipe = repository.wipeRemote();
+    await entered.future;
+    api.sessionRevision++;
+    final current = Map<dynamic, dynamic>.from(box.get(note.id) as Map);
+    release.complete();
+    expect((await wipe).ok, isFalse);
+    expect(box.get(note.id), current);
+    expect(repository.byId(note.id)!.serverVersion, 1);
+  });
+
   test('cloud wipe retires a sync whose connectivity check predates the wipe', () async {
     await repository.stop(waitForSync: true);
     repository.dispose();
