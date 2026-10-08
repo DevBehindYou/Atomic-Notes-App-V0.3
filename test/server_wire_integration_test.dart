@@ -1486,6 +1486,7 @@ void main() {
 
   wireTest('cloud_wipe_waits_for_committed_reply_and_preserves_local_reset',
       () async {
+    outcomes['wipe_reply_phase'] = 'isolated_budget';
     final uid = descriptor['owner'] as String;
     // The earlier cases exhausted this disposable owner's budget. Use the
     // existing real admin route with the public loopback-only fixture key.
@@ -1507,6 +1508,7 @@ void main() {
           }));
       expect(grant.statusCode, 200);
     }
+    outcomes['wipe_reply_phase'] = 'opening_client';
     final held = _HoldCommittedPushReply(transport);
     final client = await device('wipe-held-reply',
         'atomic-disposable-client-b', uid, deviceTransport: held);
@@ -1517,7 +1519,9 @@ void main() {
     final syncing = client.notes.syncWithReport(instant: true);
     Future<WipeOutcome>? wiping;
     try {
+      outcomes['wipe_reply_phase'] = 'waiting_committed_reply';
       await held.received.future.timeout(const Duration(seconds: 20));
+      outcomes['wipe_reply_phase'] = 'committed_wallet';
       final committed = await diagnostic('/__fixture/state');
       expect(ownerState(committed)['notes'],
           (ownerState(before)['notes'] as int) + 1);
@@ -1525,14 +1529,17 @@ void main() {
           (ownerState(before)['energy'] as int) - 10);
       expect((ownerState(committed)['ledger'] as List).length,
           (ownerState(before)['ledger'] as List).length + 1);
+      outcomes['wipe_reply_phase'] = 'waiting_wipe';
       wiping = client.notes.wipeRemote();
       await Future<void>.delayed(Duration.zero);
       expect(held.wipes, 0, reason: 'Consume the receipt before deleting cloud rows');
       expect(client.notes.isSyncing, isTrue);
       held.release.complete();
+      outcomes['wipe_reply_phase'] = 'completed_report';
       expect((await syncing).completed, isTrue);
       expect((await wiping).ok, isTrue);
       expect(held.wipes, 1);
+      outcomes['wipe_reply_phase'] = 'local_reset';
       final current = client.notes.byId(note.id)!;
       expect(current.body, note.body);
       expect(current.dirty, isFalse);
@@ -1543,6 +1550,7 @@ void main() {
       expect((box.get(note.id) as Map)['serverVersion'], 0);
       expect((box.get(note.id) as Map)['syncedSig'], '');
       expect(box.get('__pending_sync_operation'), isNull);
+      outcomes['wipe_reply_phase'] = 'final_wallet';
       final wiped = await diagnostic('/__fixture/state');
       expect(ownerState(wiped)['notes'], 0);
       expect(ownerState(wiped)['energy'], ownerState(committed)['energy']);
@@ -1553,6 +1561,7 @@ void main() {
           (user) => user['userId'] == descriptor['other']),
           (before['users'] as List).cast<Map>().singleWhere(
           (user) => user['userId'] == descriptor['other']));
+      outcomes['wipe_reply_phase'] = 'passed';
     } finally {
       if (!held.release.isCompleted) held.release.complete();
       await syncing;
