@@ -130,6 +130,42 @@ void main() {
       expect(box.get('untouched-note'), {'body': 'Public preserved local note'});
     });
 
+    test('completion intent survives restart, replay and ordinary save without regression', () async {
+      final plan = await prepare([row(sealed: true)]);
+      var store = LogoutPlanStore(box);
+      await store.save(plan);
+      expect(await store.phaseOf(plan), LogoutPlanPhase.prepared);
+      await expectLater(store.recordCompletionAcknowledged(plan), throwsStateError);
+      await store.recordCompletionRequested(plan);
+      await box.close(); box = await Hive.openBox('notes', path: directory.path);
+      store = LogoutPlanStore(box);
+      final restored = (await store.load(userId: owner, sessionHash: session))!;
+      expect(await store.phaseOf(restored), LogoutPlanPhase.completing);
+      await store.save(restored);
+      expect(await store.phaseOf(restored), LogoutPlanPhase.completing);
+      await store.recordCompletionAcknowledged(restored);
+      await store.recordCompletionRequested(restored);
+      await store.recordCompletionAcknowledged(restored);
+      expect(await store.phaseOf(restored), LogoutPlanPhase.completed);
+      expect(store.hasPending, isTrue);
+    });
+
+    test('markers cannot change another plan, foreign cache or malformed progress', () async {
+      final plan = await prepare([row()]), other = await prepare([row()]);
+      final store = LogoutPlanStore(box);
+      await store.save(plan);
+      await expectLater(store.recordCompletionRequested(other), throwsStateError);
+      final malformed = {...plan.toMap(), 'phase': 'unknown'};
+      await box.put(LogoutPlanStore.key, malformed);
+      await expectLater(store.phaseOf(plan), throwsFormatException);
+      await expectLater(store.recordCompletionRequested(plan), throwsFormatException);
+      expect(box.get(LogoutPlanStore.key), malformed);
+      await box.put(LogoutPlanStore.key, plan.toMap());
+      await box.put('__cache_owner__', newId());
+      await expectLater(store.recordCompletionRequested(plan), throwsStateError);
+      expect(box.get(LogoutPlanStore.key), plan.toMap());
+    });
+
     test('exact save replay is allowed and overlapping replacement is refused', () async {
       final plan = await prepare([row()]), other = await prepare([row()]);
       final store = LogoutPlanStore(box);

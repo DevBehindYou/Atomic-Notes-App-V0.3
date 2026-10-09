@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:atomic_notes/api/atomic_notes_api.dart';
 import 'package:atomic_notes/database/note.dart';
+import 'package:atomic_notes/database/logout_plan.dart';
 import 'package:atomic_notes/database/notes_repository.dart';
 import 'package:atomic_notes/database/sync_status.dart';
 import 'package:atomic_notes/security/vault.dart';
@@ -112,6 +113,41 @@ void main() {
     repository.dispose();
     await Hive.close();
     await directory.delete(recursive: true);
+  });
+
+  for (final saved in [null, 'public-corrupt-attempt', {'phase': 'completing'}]) {
+    test('pending logout key prevents erasure and ordinary sync even when malformed: $saved', () async {
+      final note = Note.create()..body = 'Public preserved logout content';
+      await repository.save(note);
+      expect(await repository.syncNow(instant: true), isTrue);
+      final preserved = Map.from(box.get(note.id) as Map), pushes = api.pushes.length;
+      await box.put(LogoutPlanStore.key, saved);
+      await expectLater(repository.clearLocal(), throwsStateError);
+      await expectLater(repository.wipeLocalNotes(), throwsStateError);
+      expect((await repository.wipeRemote()).ok, isFalse);
+      expect(api.wipeCalls, 0);
+      expect(await repository.syncNow(instant: true), isFalse);
+      expect(api.pushes.length, pushes);
+      expect(box.get(note.id), preserved);
+      await repository.stop(); repository.clearMemory(); api.user = 'user-b';
+      await expectLater(repository.start(), throwsA(isA<ForeignPendingCacheError>()));
+      expect(repository.visible(), isEmpty);
+      expect(box.get(note.id), preserved);
+      expect(box.containsKey(LogoutPlanStore.key), isTrue);
+      expect(box.get('__cache_owner__'), 'user-a');
+    });
+  }
+
+  test('delete of a version-zero note in saved logout remains a dirty tombstone', () async {
+    final note = Note.create()..body = 'Public uncertain logout delivery';
+    await repository.save(note);
+    await box.put(LogoutPlanStore.key, {'userId': api.user, 'batches': [
+      {'rows': [{'id': note.id}]},
+    ]});
+    await repository.deleteNotes([note.id]);
+    expect(repository.byId(note.id)!.deleted, isTrue);
+    expect(repository.byId(note.id)!.dirty, isTrue);
+    expect((box.get(note.id) as Map)['dirty'], isTrue);
   });
 
   for (final encrypted in [false, true]) {
