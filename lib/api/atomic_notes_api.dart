@@ -6,6 +6,7 @@ import 'package:atomic_notes/authentication/auth_services/cred.dart';
 import 'package:atomic_notes/security/secure_options.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:cryptography/cryptography.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:http/http.dart' as http;
 import 'package:atomic_notes/database/note.dart' show newId;
@@ -62,10 +63,13 @@ class ApiClient {
   static const _tokenKey = 'atomic_api_session_token';
   static const _userIdKey = 'atomic_api_user_id';
   static const _userEmailKey = 'atomic_api_user_email';
+  static const _logoutCompletionKey = 'atomic_api_logout_completion';
+  static final _logoutAttemptPattern = RegExp(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$');
   final CredService _cred = CredService();
   String? _cachedToken;
   String? _cachedUserId;
   String? _cachedUserEmail;
+  String? _logoutCompletionAttempt;
   int _sessionRevision = 0;
   int get sessionRevision => _sessionRevision;
   Future<void> _storageWrites = Future<void>.value();
@@ -84,10 +88,41 @@ class ApiClient {
     _cachedUserId = await _storage.read(key: _userIdKey);
     _cachedUserEmail = await _storage.read(key: _userEmailKey);
     _sessionRevision++;
+    _logoutCompletionAttempt = null;
+    final saved = await _storage.read(key: _logoutCompletionKey);
+    if (saved != null && _cachedToken != null && _cachedUserId != null) {
+      try {
+        final record = jsonDecode(saved);
+        if (record is! Map || record['userId'] is! String || record['sessionHash'] is! String ||
+            record['attemptId'] is! String) {
+          throw const FormatException('Invalid logout completion record');
+        }
+        if (!_logoutAttemptPattern.hasMatch(record['attemptId'] as String) ||
+            !RegExp(r'^[0-9a-f]{64}$').hasMatch(record['sessionHash'] as String)) {
+          throw const FormatException('Invalid logout completion binding');
+        }
+        final binding = await logoutSessionHash();
+        if (record['userId'] == _cachedUserId && record['sessionHash'] == binding) {
+          _logoutCompletionAttempt = record['attemptId'] as String;
+        }
+      } on FormatException {
+        throw ApiException('logout_completion_record_invalid', 409);
+      }
+    }
   }
   String? get currentUserId => _cachedUserId;
   String? get currentUserEmail => _cachedUserEmail;
   bool get isSignedIn => _cachedToken != null;
+
+  /// Stable across restart for this exact token, without exposing the token.
+  /// A same-account re-login has a different binding and cannot adopt its plan.
+  Future<String> logoutSessionHash() async {
+    final revision = _sessionRevision, token = _cachedToken;
+    if (token == null || _cachedUserId == null) throw ApiException('missing_token', 401);
+    final hash = await Sha256().hash(utf8.encode(token));
+    if (revision != _sessionRevision) throw ApiException('session_changed', 409);
+    return hash.bytes.map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
+  }
 
   Uri _uri(String path, [Map<String, String>? query]) {
     final base = _baseUrl ?? Uri.parse(_cred.API_BASE_URL);
@@ -105,11 +140,13 @@ class ApiClient {
     _cachedToken = null;
     _cachedUserId = null;
     _cachedUserEmail = null;
+    _logoutCompletionAttempt = null;
     _sessionRevision++;
     final clearing = _queueStorage(() async {
       await _storage.delete(key: _tokenKey);
       await _storage.delete(key: _userIdKey);
       await _storage.delete(key: _userEmailKey);
+      await _storage.delete(key: _logoutCompletionKey);
     });
     _sessionEndedController.add(null);
     return clearing;
@@ -119,11 +156,13 @@ class ApiClient {
     _cachedToken = token;
     _cachedUserId = userId;
     _cachedUserEmail = email;
+    _logoutCompletionAttempt = null;
     _sessionRevision++;
     return _queueStorage(() async {
       await _storage.write(key: _tokenKey, value: token);
       await _storage.write(key: _userIdKey, value: userId);
       await _storage.write(key: _userEmailKey, value: email);
+      await _storage.delete(key: _logoutCompletionKey);
     });
   }
 
@@ -132,6 +171,9 @@ class ApiClient {
       Duration? timeout, bool acceptSyncFailure = false}) async {
     final revision = _sessionRevision;
     final token = authenticated ? _cachedToken : null;
+    if (authenticated && _logoutCompletionAttempt != null && path != '/notes/logout-attempt/complete') {
+      throw ApiException('logout_completion_pending', 409);
+    }
     final request = http.Request(method, _uri(path, query));
     request.headers['Content-Type'] = 'application/json';
     if (token != null) request.headers['Authorization'] = 'Bearer $token';
@@ -152,7 +194,7 @@ class ApiClient {
     if (response.statusCode >= 200 && response.statusCode < 300) return decoded;
     final code = decoded is Map && decoded['error'] is String
         ? decoded['error'] as String : 'http_${response.statusCode}';
-    if (response.statusCode == 401 && code != 'missing_token' && token != null) {
+    if (response.statusCode == 401 && code != 'missing_token' && token != null && _logoutCompletionAttempt == null) {
       unawaited(_clearSession().catchError((_) {}));
     }
     if (acceptSyncFailure && response.statusCode == 502 && code == 'note_sync_failed') return decoded;
@@ -201,7 +243,39 @@ class ApiClient {
     return _pushReply(data, envelope.requestId, true);
   }
 
-  Future<void> completeLogoutSync(String attemptId) => _closeLogoutAttempt(attemptId, false);
+  Future<void> completeLogoutSync(String attemptId) async {
+    if (!_logoutAttemptPattern.hasMatch(attemptId)) throw const FormatException('Invalid logout attempt');
+    final revision = _sessionRevision, owner = _cachedUserId;
+    final binding = await logoutSessionHash();
+    if (revision != _sessionRevision) throw ApiException('session_changed', 409);
+    if (_logoutCompletionAttempt != null && _logoutCompletionAttempt != attemptId) {
+      throw ApiException('logout_completion_pending', 409);
+    }
+    // Keep the token available after completion reply loss, even if an earlier
+    // ordinary request returns a revoked-session 401. Persist before HTTP.
+    _logoutCompletionAttempt = attemptId;
+    await _queueStorage(() async {
+      if (revision != _sessionRevision) throw ApiException('session_changed', 409);
+      await _storage.write(key: _logoutCompletionKey, value: jsonEncode({
+        'attemptId': attemptId, 'userId': owner, 'sessionHash': binding,
+      }));
+    });
+    if (revision != _sessionRevision) throw ApiException('session_changed', 409);
+    try {
+      await _closeLogoutAttempt(attemptId, false);
+    } on ApiException catch (error) {
+      // These exact replies prove this route did not complete/revoke. Unknown
+      // transport/Server errors retain the marker for completion-first replay.
+      if ((error.code == 'logout_sync_incomplete' || error.code == 'logout_sync_unavailable') &&
+          revision == _sessionRevision) {
+        await _queueStorage(() async {
+          if (revision == _sessionRevision) await _storage.delete(key: _logoutCompletionKey);
+        });
+        if (revision == _sessionRevision) _logoutCompletionAttempt = null;
+      }
+      rethrow;
+    }
+  }
   Future<void> abortLogoutSync(String attemptId) => _closeLogoutAttempt(attemptId, true);
 
   Future<void> _closeLogoutAttempt(String attemptId, bool abort) async {

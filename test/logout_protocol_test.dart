@@ -110,6 +110,71 @@ void main() {
     await expectLater(api.completeLogoutSync(attemptId), throwsFormatException);
     expect(api.isSignedIn, isTrue);
   });
+
+  test('completion response loss survives restart and blocks ordinary token teardown', () async {
+    var calls = 0;
+    final api = await client((request) async {
+      calls++;
+      expect(request.url.path, '/api/notes/logout-attempt/complete');
+      if (calls == 1) throw TimeoutException('public simulated lost completion response');
+      return http.Response(jsonEncode({'ok': true, 'attemptId': attemptId, 'state': 'completed'}), 200);
+    });
+    await expectLater(api.completeLogoutSync(attemptId), throwsA(isA<TimeoutException>()));
+    final marker = jsonDecode((await storage.read(key: 'atomic_api_logout_completion'))!) as Map;
+    expect(marker.keys.toSet(), {'attemptId', 'userId', 'sessionHash'});
+    expect(marker.values, isNot(contains('public-fixture-session')));
+    await api.init();
+    await expectLater(api.energyState(), throwsA(isA<ApiException>()
+      .having((error) => error.code, 'code', 'logout_completion_pending')));
+    expect(calls, 1); expect(api.isSignedIn, isTrue);
+    await api.completeLogoutSync(attemptId);
+    expect(calls, 2); expect(api.isSignedIn, isTrue);
+  });
+
+  test('an earlier ordinary 401 cannot destroy the completion replay token', () async {
+    final entered = Completer<void>(), response = Completer<http.Response>();
+    final api = await client((request) async {
+      if (request.url.path == '/api/energy') { entered.complete(); return response.future; }
+      return http.Response(jsonEncode({'ok': true, 'attemptId': attemptId, 'state': 'completed'}), 200);
+    });
+    final ordinary = expectLater(api.energyState(), throwsA(isA<ApiException>()));
+    await entered.future;
+    await api.completeLogoutSync(attemptId);
+    response.complete(http.Response('{"error":"invalid_token"}', 401));
+    await ordinary;
+    expect(api.isSignedIn, isTrue);
+    expect(await storage.read(key: 'atomic_api_session_token'), 'public-fixture-session');
+  });
+
+  test('a different completion attempt cannot replace a saved one', () async {
+    var calls = 0;
+    final api = await client((_) async { calls++; throw TimeoutException('public simulated loss'); });
+    await expectLater(api.completeLogoutSync(attemptId), throwsA(isA<TimeoutException>()));
+    await expectLater(api.completeLogoutSync(requestId), throwsA(isA<ApiException>()
+      .having((error) => error.code, 'code', 'logout_completion_pending')));
+    expect(calls, 1);
+  });
+
+  test('invalid completion identity cannot poison the saved transport marker', () async {
+    var calls = 0;
+    final api = await client((_) async { calls++; return http.Response('{}', 200); });
+    await expectLater(api.completeLogoutSync('invalid'), throwsFormatException);
+    expect(await storage.read(key: 'atomic_api_logout_completion'), isNull);
+    await api.energyState(); expect(calls, 1);
+  });
+
+  test('definitive incomplete completion reply reopens transport for safe reconciliation', () async {
+    var calls = 0;
+    final api = await client((_) async {
+      calls++;
+      return calls == 1 ? http.Response('{"error":"logout_sync_incomplete"}', 409)
+        : http.Response('{}', 200);
+    });
+    await expectLater(api.completeLogoutSync(attemptId), throwsA(isA<ApiException>()));
+    expect(await storage.read(key: 'atomic_api_logout_completion'), isNull);
+    await api.energyState();
+    expect(calls, 2); expect(api.isSignedIn, isTrue);
+  });
   test('aborting is an authenticated distinct request with an explicit terminal result', () async {
     final api = await client((request) async {
       expect(request.url.path, '/api/notes/logout-attempt/abort');

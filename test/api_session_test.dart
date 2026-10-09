@@ -33,6 +33,27 @@ void main() {
     await api.init();
   }
 
+  test('logout session hash survives restart but changes with same-owner login', () async {
+    var calls = 0;
+    final api = await client((_) async { calls++; return http.Response('{}', 200); });
+    final original = await api.logoutSessionHash();
+    expect(original, matches(RegExp(r'^[0-9a-f]{64}$')));
+    expect(original, isNot('fixture-session-a'));
+    await api.init();
+    expect(await api.logoutSessionHash(), original);
+    await reauthenticate(api, user: 'user-a');
+    expect(await api.logoutSessionHash(), isNot(original));
+    expect(calls, 0);
+  });
+
+  test('missing session cannot yield a logout binding', () async {
+    final api = await client((_) async => http.Response('{}', 200));
+    await storage.delete(key: 'atomic_api_session_token');
+    await api.init();
+    await expectLater(api.logoutSessionHash(), throwsA(isA<ApiException>()
+      .having((e) => e.code, 'code', 'missing_token')));
+  });
+
   for (final sameUser in [false, true]) {
     test('R18 old non-JSON 401 cannot clear a newer ${sameUser ? 'same-account' : 'other-account'} session', () async {
       final entered = Completer<void>(), response = Completer<http.Response>();

@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:atomic_notes/api/atomic_notes_api.dart';
 import 'package:atomic_notes/database/energy_service.dart';
 import 'package:atomic_notes/database/note.dart';
+import 'package:atomic_notes/database/logout_plan.dart';
 import 'package:atomic_notes/database/note_quota.dart';
 import 'package:atomic_notes/database/notes_source.dart';
 import 'package:atomic_notes/database/sync_policy.dart';
@@ -116,6 +117,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   bool _cacheReady = false;
   final ApiClient _api;
   String? get _userId => _api.currentUserId;
+  bool get _hasSavedLogout => _cacheReady && _box.containsKey(LogoutPlanStore.key);
 
   bool _ownsCache(String? uid) {
     if (!_cacheReady) return true; // Empty reads remain safe before initialization.
@@ -131,7 +133,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
 
   /// Read raw metadata so locked ciphertext and unanswered requests count too.
   bool get hasForeignPendingCache => _cacheReady && !_ownsCache(_userId) &&
-      (_box.get(_pendingPushKey) != null ||
+      (_box.get(_pendingPushKey) != null || _hasSavedLogout ||
        _box.values.any((raw) => raw is Map && raw['dirty'] == true) ||
        _hasLocalOnlyNotes);
 
@@ -538,7 +540,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     _assertCacheOwner();
     // Include sealed rows omitted from memory and an unanswered operation.
     // A UI count of zero is not proof that the on-disk cache is backed up.
-    if (_hasUnansweredPush(_userId ?? '') ||
+    if (_hasSavedLogout || _hasUnansweredPush(_userId ?? '') ||
         _box.values.any((raw) => raw is Map && raw['dirty'] == true) || pendingCount > 0) {
       throw StateError('Sync all pending changes before logging out.');
     }
@@ -633,6 +635,11 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     if (!_ownsCache(waitingUser)) {
       unawaited(stop());
       clearMemory();
+      return false;
+    }
+    if (_hasSavedLogout) {
+      lastError = 'A logout sync needs to finish. Your notes remain on this device.';
+      report?.errorMessage = lastError;
       return false;
     }
     if (_wipingCloud) {
@@ -754,6 +761,12 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
 
   bool _mayHaveReachedCloud(String id) {
     if (_inFlightIds.contains(id)) return true;
+    final logout = _box.get(LogoutPlanStore.key);
+    if (logout is Map && logout['userId'] == _userId && logout['batches'] is List &&
+        (logout['batches'] as List).any((batch) => batch is Map && batch['rows'] is List &&
+          (batch['rows'] as List).any((row) => row is Map && row['id'] == id))) {
+      return true;
+    }
     final saved = _box.get(_pendingPushKey);
     return saved is Map && saved['userId'] == _userId && saved['rows'] is List &&
         (saved['rows'] as List).any((row) => row is Map && row['id'] == id);
@@ -1175,6 +1188,9 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   @override
   Future<WipeOutcome> wipeRemote() async {
     _assertCacheOwner();
+    if (_hasSavedLogout) {
+      return const WipeOutcome(false, 'Finish the pending logout before wiping cloud notes.');
+    }
     final uid = _userId;
     if (uid == null) return const WipeOutcome(false, 'Not signed in.');
     if (_stopped || _lockingVault) {
@@ -1233,6 +1249,9 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   @override
   Future<int> wipeLocalNotes() async {
     _assertCacheOwner();
+    if (_hasSavedLogout) {
+      throw StateError('Finish the pending logout before removing local notes.');
+    }
     final removed = _notes.length;
     _notes.clear();
     _syncCursor = null;

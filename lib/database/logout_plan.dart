@@ -4,6 +4,8 @@ import 'package:atomic_notes/api/logout_protocol.dart';
 import 'package:atomic_notes/database/note.dart' show newId;
 import 'package:hive_ce/hive_ce.dart';
 
+enum LogoutPlanPhase { prepared, completing, completed }
+
 /// Local acknowledgement metadata; no plaintext content or session token.
 class LogoutSnapshot {
   const LogoutSnapshot({required this.contentSig, required this.updatedAt,
@@ -117,6 +119,9 @@ class LogoutPlan {
     if (raw['userId'] != userId || raw['sessionHash'] != sessionHash) {
       throw StateError('Saved logout belongs to another session. Notes remain on this device.');
     }
+    if (raw.containsKey('phase') && !LogoutPlanPhase.values.any((phase) => phase.name == raw['phase'])) {
+      throw const FormatException('Invalid saved logout phase');
+    }
     final attempt = raw['attemptId'] as String;
     final batches = <LogoutEnvelope>[];
     if ((raw['batches'] as List).length > 5) throw const FormatException('Invalid saved logout batches');
@@ -155,6 +160,45 @@ class LogoutPlanStore {
   static const key = '__pending_logout_attempt__';
   Future<void> _tail = Future<void>.value();
   bool get hasPending => box.containsKey(key);
+
+  Future<LogoutPlanPhase> phaseOf(LogoutPlan plan) async {
+    await _tail;
+    final raw = await _matching(plan);
+    return LogoutPlanPhase.values.byName(raw['phase'] as String? ?? 'prepared');
+  }
+
+  Future<Map> _matching(LogoutPlan plan) async {
+    if (box.get('__cache_owner__') != plan.userId) throw StateError('Logout cache owner changed');
+    final raw = box.get(key);
+    final existing = await LogoutPlan.restore(raw, userId: plan.userId, sessionHash: plan.sessionHash);
+    if (box.get('__cache_owner__') != plan.userId || jsonEncode(existing.toMap()) != jsonEncode(plan.toMap())) {
+      throw StateError('Saved logout attempt changed');
+    }
+    return raw as Map;
+  }
+
+  /// Persist BEFORE completion HTTP. After restart retry completion first,
+  /// since a lost response may mean the Server already revoked this session.
+  Future<void> recordCompletionRequested(LogoutPlan plan) => _transition(plan, false);
+
+  /// Caller must have validated the matching successful Server receipt. This
+  /// marker is local progress only; it never authorizes deleting note data.
+  Future<void> recordCompletionAcknowledged(LogoutPlan plan) => _transition(plan, true);
+
+  Future<void> _transition(LogoutPlan plan, bool acknowledged) {
+    final write = _tail.then((_) async {
+      final raw = await _matching(plan);
+      final phase = LogoutPlanPhase.values.byName(raw['phase'] as String? ?? 'prepared');
+      if (acknowledged && phase == LogoutPlanPhase.prepared) {
+        throw StateError('Completion must be requested before it is acknowledged');
+      }
+      if (phase == LogoutPlanPhase.completed) return;
+      await box.put(key, {...plan.toMap(), 'phase': acknowledged ? 'completed' : 'completing'});
+      await box.flush();
+    });
+    _tail = write.catchError((_) {});
+    return write;
+  }
 
   Future<LogoutPlan?> load({required String userId, required String sessionHash}) async {
     await _tail;
