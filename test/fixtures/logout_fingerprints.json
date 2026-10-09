@@ -1,0 +1,74 @@
+[
+  {
+    "name": "unicode-default-version",
+    "rows": [
+      {
+        "id": "00000000-0000-4000-8000-000000000003",
+        "kind": "text",
+        "title": "Public synthetic logout",
+        "body": "Public Ω 😀",
+        "items": [],
+        "pinned": false,
+        "deleted": false,
+        "created_at": "2026-10-09T00:00:00.000Z",
+        "enc_v": 0,
+        "payload": null,
+        "user_id": "untrusted-owner"
+      }
+    ],
+    "attemptId": "00000000-0000-4000-8000-000000000004",
+    "requestId": "00000000-0000-4000-8000-000000000002",
+    "fingerprint": "3d0f320eacd90a260d13f79860b50a66133e56a527cfba73f35a1a24a1c0b77b",
+    "wireBytes": 377
+  },
+  {
+    "name": "compact-checklist-and-version",
+    "rows": [
+      {
+        "id": "00000000-0000-4000-8000-000000000003",
+        "kind": "todo",
+        "title": "Public synthetic logout",
+        "body": "Public Ω 😀",
+        "items": [
+          {
+            "t": "Public task",
+            "d": false
+          }
+        ],
+        "pinned": false,
+        "deleted": false,
+        "created_at": "2026-10-09T00:00:00.000Z",
+        "enc_v": 0,
+        "payload": null,
+        "base_version": 3
+      }
+    ],
+    "attemptId": "00000000-0000-4000-8000-000000000004",
+    "requestId": "00000000-0000-4000-8000-000000000002",
+    "fingerprint": "06edf5be3929ec3f37f9a303690c136fa4075def78820297f19f92547d53729c",
+    "wireBytes": 412
+  },
+  {
+    "name": "ciphertext-and-time",
+    "rows": [
+      {
+        "id": "00000000-0000-4000-8000-000000000003",
+        "kind": "text",
+        "title": "",
+        "body": "",
+        "items": [],
+        "pinned": false,
+        "deleted": false,
+        "created_at": "2026-10-09T00:00:00.000Z",
+        "enc_v": 1,
+        "payload": "public-synthetic-ciphertext",
+        "updated_at": "2026-10-09T00:00:01.000Z",
+        "base_version": 4
+      }
+    ],
+    "attemptId": "00000000-0000-4000-8000-000000000004",
+    "requestId": "00000000-0000-4000-8000-000000000002",
+    "fingerprint": "852875b9a08cf8c882d542a502970b132634ba203f475af8b69a801b7680e6a2",
+    "wireBytes": 405
+  }
+]

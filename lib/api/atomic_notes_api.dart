@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:atomic_notes/api/logout_protocol.dart';
 
 import 'package:atomic_notes/authentication/auth_services/cred.dart';
 import 'package:atomic_notes/security/secure_options.dart';
@@ -186,6 +187,35 @@ class ApiClient {
     final data = await _request('POST', '/notes/push',
       body: {'rows': rows, 'requestId': requestId, 'mode': instant ? 'instant' : 'standard'},
       timeout: const Duration(seconds: 90), acceptSyncFailure: true) as Map;
+    return _pushReply(data, requestId, instant);
+  }
+
+  Future<LogoutAdmission> beginLogoutSync(String attemptId, List<Map<String, dynamic>> batches) async {
+    final data = await _request('POST', '/notes/logout-attempt', body: {'attemptId': attemptId, 'batches': batches});
+    return LogoutAdmission.parse(data, attemptId, batches.length);
+  }
+
+  Future<PushReply> pushLogoutNotes(LogoutEnvelope envelope) async {
+    final data = await _request('POST', '/notes/push', body: envelope.toWire(),
+      timeout: const Duration(seconds: 90), acceptSyncFailure: true) as Map;
+    return _pushReply(data, envelope.requestId, true);
+  }
+
+  Future<void> completeLogoutSync(String attemptId) => _closeLogoutAttempt(attemptId, false);
+  Future<void> abortLogoutSync(String attemptId) => _closeLogoutAttempt(attemptId, true);
+
+  Future<void> _closeLogoutAttempt(String attemptId, bool abort) async {
+    final data = await _request('POST', '/notes/logout-attempt/${abort ? 'abort' : 'complete'}',
+      body: {'attemptId': attemptId});
+    if (data is! Map || data['ok'] != true || data['attemptId'] != attemptId ||
+        data['state'] != (abort ? 'aborted' : 'completed')) {
+      throw const FormatException('Invalid logout completion');
+    }
+    // Keep local auth until the caller safely finishes its cache/key handling.
+    // Session-revision fencing above also applies to completion receipt replay.
+  }
+
+  PushReply _pushReply(Map data, String requestId, bool instant) {
     final charged = data['charged'];
     final refunded = data['refunded'];
     // Old Servers omit receipts. Malformed optional billing metadata must not
