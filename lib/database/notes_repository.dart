@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:atomic_notes/api/atomic_notes_api.dart';
+import 'package:atomic_notes/api/logout_protocol.dart';
 import 'package:atomic_notes/database/energy_service.dart';
 import 'package:atomic_notes/database/note.dart';
 import 'package:atomic_notes/database/logout_plan.dart';
@@ -15,6 +16,8 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart' show AppLifecycleState, WidgetsBinding, WidgetsBindingObserver;
 import 'package:hive_ce/hive_ce.dart';
+
+part 'notes_logout.dart';
 
 /// Call-local receipt collection; no result is retained across callers/accounts.
 class _SyncAttemptCollector {
@@ -98,6 +101,20 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   bool _stopped = false;
   int _lifecycleRevision = 0;
   bool _lockingVault = false;
+  bool _loggingOut = false;
+  int _activeNoteMutations = 0;
+  Future<T> _trackNoteMutation<T>(Future<T> Function() operation) async {
+    _activeNoteMutations++;
+    try { return await operation(); }
+    finally { _activeNoteMutations--; }
+  }
+  void _notifyLogoutState() => notifyListeners();
+  bool get _logoutCompleting {
+    if (!_hasSavedLogout) return false;
+    final saved = _box.get(LogoutPlanStore.key);
+    return saved is Map && ['completing', 'completed'].contains(saved['phase']);
+  }
+
   final Set<String> _protectedIds = {};
   // Call-lifetime proof from an actual pull or successful push acknowledgement.
   // Local ciphertext alone does not prove that the cloud version is encrypted.
@@ -169,7 +186,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   bool _wipingCloud = false;
   int _cloudWipeRevision = 0;
   @override
-  bool get isSyncing => _syncing || _wipingCloud;
+  bool get isSyncing => _syncing || _wipingCloud || _loggingOut;
 
   @override
   String? lastError;
@@ -331,7 +348,8 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   /// Returns as soon as the (cheap, local) subscription is registered — the
   /// actual network sync runs in the background. Nothing in the UI should
   /// ever wait for this.
-  Future<void> start() async {
+  Future<void> start() => _trackNoteMutation(() async {
+    if (_loggingOut) return;
     final lifecycle = _lifecycleRevision;
     final uid = _userId;
     if (uid == null) return;
@@ -367,7 +385,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     _hourly?.cancel();
     _hourly = Timer.periodic(
         const Duration(hours: 1), (_) => unawaited(syncNow()));
-  }
+  });
 
   Future<void> stop({bool waitForSync = false}) async {
     _stopped = true;
@@ -393,6 +411,9 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   /// Quiesce writers before forgetting the key. Plaintext T2T creation remains
   /// available after lock; existing protected rows remain sealed on disk.
   Future<void> lockVault() async {
+    if (_loggingOut || _logoutCompleting) {
+      throw StateError('Finish the pending logout before locking the vault.');
+    }
     if (_lockingVault) return;
     _lockingVault = true;
     try {
@@ -414,7 +435,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
 
   void _assertWritable([String? id]) {
     _assertCacheOwner();
-    if (_stopped || _lockingVault) throw StateError('Notes are changing session. Please retry.');
+    if (_stopped || _lockingVault || _loggingOut || _logoutCompleting) throw StateError('Notes are changing session. Please retry.');
     if (id != null && _protectedIds.contains(id) && !_vault.isUnlocked) {
       throw StateError('Unlock the vault to edit this note.');
     }
@@ -497,7 +518,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   // ---- writes -----------------------------------------------------------
 
   @override
-  Future<void> save(Note note) async {
+  Future<void> save(Note note) => _trackNoteMutation(() async {
     _assertWritable(note.id);
     note.touch();
     // Saved without a real change (or edited back to what the cloud holds): nothing to upload.
@@ -506,11 +527,11 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     await _persist(note.id);
     notifyListeners();
     if (note.dirty) _scheduleAutoSync();
-  }
+  });
 
   /// Soft delete, so the removal can reach other devices.
   @override
-  Future<void> deleteNotes(Iterable<String> ids) async {
+  Future<void> deleteNotes(Iterable<String> ids) => _trackNoteMutation(() async {
     _assertWritable();
     for (final id in ids) {
       final n = _notes[id];
@@ -530,7 +551,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     }
     notifyListeners();
     if (_notes.values.any((n) => n.dirty)) _scheduleAutoSync();
-  }
+  });
 
   /// Wipes the local cache only — used on logout. Does not touch the server.
   Future<void> clearLocal() async {
@@ -631,6 +652,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   Future<bool> syncNow({bool instant = false}) => _syncNow(instant: instant);
 
   Future<bool> _syncNow({required bool instant, _SyncAttemptCollector? report}) async {
+    if (_loggingOut) return false;
     final waitingUser = _userId;
     if (!_ownsCache(waitingUser)) {
       unawaited(stop());
@@ -667,7 +689,8 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
       report?.activity = SyncAttemptActivity.retired;
       return false;
     }
-    if (_syncing || _stopped || _lockingVault || _userId != uid || !_ownsCache(uid) ||
+    if (_syncing || _stopped || _lockingVault ||
+        _loggingOut || _userId != uid || !_ownsCache(uid) ||
         lifecycle != _lifecycleRevision) {
       return false;
     }
@@ -858,7 +881,21 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     try {
       if (!_activeFor(uid)) return false;
       report?.submitted(pending['requestId'] as String, pending['instant'] == true, recovered);
-      reply = await _api.pushNotes(rows, requestId: pending['requestId'] as String, instant: pending['instant'] == true);
+      if (pending['logoutAttemptId'] is String) {
+        final envelope = await LogoutEnvelope.prepare(
+            attemptId: pending['logoutAttemptId'] as String,
+            requestId: pending['requestId'] as String,
+            rows: rows);
+        reply = await _api.pushLogoutNotes(envelope);
+        if (reply.receipt?.charged != pending['logoutCharge'] ||
+            (pending['logoutCharge'] == 0 && reply.receipt?.refunded != 0) ||
+            (reply.results.any((result) => result['ok'] == true) &&
+                reply.receipt?.refunded != 0)) {
+          throw const FormatException('Logout funding receipt changed');
+        }
+      } else {
+        reply = await _api.pushNotes(rows, requestId: pending['requestId'] as String, instant: pending['instant'] == true);
+      }
       results = reply.results;
     } on ApiException catch (e) {
       if (e.code == 'sync_cooldown') {
@@ -889,7 +926,19 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
         failed = true;
         if (result['error'] == 'note_conflict') conflicted = true;
         if (result['error'] == 'note_conflict' && local.dirty) {
-          final copy = Note(id: (pending['conflictIds'] as Map)[id] as String, kind: local.kind, title: '${local.title.length > 270 ? local.title.substring(0, 270) : local.title} (conflict copy)',
+          var copyId =  (pending['conflictIds'] as Map)[id] as String;
+          final existingCopy = _notes[copyId];
+          if (existingCopy != null && pending['logoutAttemptId'] is String) {
+            // A user may edit a preserved copy between interrupted logout
+            // attempts. A replay must never overwrite that separate note.
+            copyId = newId();
+            (pending['conflictIds'] as Map)[id] = copyId;
+            await _box.put(_pendingPushKey, pending);
+            await _box.flush();
+          }
+          final copy = Note(
+              id: copyId,
+              kind: local.kind, title: '${local.title.length > 270 ? local.title.substring(0, 270) : local.title} (conflict copy)',
             body: local.body, items: local.items.map((i) => i.copy()).toList(), dirty: true);
           _notes[copy.id] = copy;
           await _persist(copy.id);
@@ -1040,11 +1089,17 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   /// leave those notes plain in the cloud. Returns how many notes are still waiting
   /// to be sent sealed (0 when the migration finished; more when the Server refused
   /// for now, for example without enough energy).
-  Future<int> migrateToVault() async {
+  Future<int> migrateToVault() => _trackNoteMutation(() async {
+    if (_loggingOut || _logoutCompleting) {
+      throw StateError('Finish the pending logout before converting notes.');
+    }
     _assertCacheOwner();
     if (!_vault.isUnlocked) return 0;
     await _whenIdle();
     _assertCacheOwner();
+    if (_loggingOut || _logoutCompleting) {
+      throw StateError('Finish the pending logout before converting notes.');
+    }
     if (_notes.isEmpty) return 0;
     debugPrint('NotesRepository: migrating ${_notes.length} notes into the vault');
     for (final n in _notes.values.toList()) {
@@ -1058,27 +1113,40 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     final waiting = pendingCount;
     debugPrint('NotesRepository: vault migration ${waiting == 0 ? 'complete' : 'left $waiting notes waiting'}');
     return waiting;
-  }
+  });
 
   /// After unlocking on a device that was holding notes it could not read,
   /// re-read the local cache, pull everything, and fold any plaintext notes
   /// into the vault.
-  Future<void> reloadAfterUnlock() async {
+  Future<void> reloadAfterUnlock() => _trackNoteMutation(() async {
+    if (_loggingOut) {
+      throw StateError('Finish the pending logout before reloading notes.');
+    }
     _assertCacheOwner();
     // A sync that started before the unlock may still be merging rows. Let it finish, so the
     // reload below sees every row it stored and its late rows are not merged into a cache that
     // is being rebuilt.
     await _whenIdle();
     _assertCacheOwner();
+    if (_loggingOut) {
+      throw StateError('Finish the pending logout before reloading notes.');
+    }
     await _loadFromDisk();
     _assertCacheOwner();
+    if (_logoutCompleting) {
+      // The security gate must still be able to open local ciphertext after a
+      // restart. Completion replay allows reads only: no pull, cursor change,
+      // migration or new upload may run with a possibly revoked session.
+      notifyListeners();
+      return;
+    }
     // A locked pull skipped encrypted rows but still advanced the cursor.
     await _resetCursor();
     lastSyncedAt = null;
     notifyListeners();
     await syncNow();
     await migrateToVault();
-  }
+  });
 
   /// Any sealed payload this device already holds, so an offline device can
   /// check a recovery phrase without reaching the server.
@@ -1111,7 +1179,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   /// Puts a deleted note back. False when it is not in the bin or the note
   /// limit leaves no room for it.
   @override
-  Future<bool> restoreNote(String id) async {
+  Future<bool> restoreNote(String id) => _trackNoteMutation(() async {
     _assertWritable(id);
     final n = _notes[id];
     if (n == null || !n.deleted || isAtLimit) return false;
@@ -1123,14 +1191,14 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     notifyListeners();
     if (n.dirty) _scheduleAutoSync();
     return true;
-  }
+  });
 
   /// Removes deleted notes from this device for good. A deletion that has not
   /// reached the cloud yet is synced first: forgetting it locally would let the
   /// note come back from the cloud on the next pull. Returns how many were
   /// removed; 0 means nothing was, for example because that sync failed.
   @override
-  Future<int> deleteForever(Iterable<String> ids) async {
+  Future<int> deleteForever(Iterable<String> ids) => _trackNoteMutation(() async {
     _assertWritable();
     final targets = ids.where((id) => _notes[id]?.deleted == true).toList();
     if (targets.isEmpty) return 0;
@@ -1155,7 +1223,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     }
     notifyListeners();
     return removed;
-  }
+  });
 
   // ---- maintenance ------------------------------------------------------
 
@@ -1188,7 +1256,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   @override
   Future<WipeOutcome> wipeRemote() async {
     _assertCacheOwner();
-    if (_hasSavedLogout) {
+    if (_hasSavedLogout || _loggingOut) {
       return const WipeOutcome(false, 'Finish the pending logout before wiping cloud notes.');
     }
     final uid = _userId;
@@ -1247,9 +1315,9 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   /// the notes download again on the next sync. Notes that were never uploaded
   /// are gone for good: [pendingCount] says how many before the caller asks.
   @override
-  Future<int> wipeLocalNotes() async {
+  Future<int> wipeLocalNotes() => _trackNoteMutation(() async {
     _assertCacheOwner();
-    if (_hasSavedLogout) {
+    if (_hasSavedLogout || _loggingOut) {
       throw StateError('Finish the pending logout before removing local notes.');
     }
     final removed = _notes.length;
@@ -1265,12 +1333,12 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     if (uid != null) await _box.put(_ownerKey, uid);
     notifyListeners();
     return removed;
-  }
+  });
 
   /// Marks every live note as waiting to upload, so the next sync writes all of
   /// them to the cloud. Used to refill a cloud that was wiped.
   @override
-  Future<int> markAllForUpload() async {
+  Future<int> markAllForUpload() => _trackNoteMutation(() async {
     _assertWritable();
     var marked = 0;
     for (final n in _notes.values.toList()) {
@@ -1283,5 +1351,5 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     }
     notifyListeners();
     return marked;
-  }
+  });
 }
