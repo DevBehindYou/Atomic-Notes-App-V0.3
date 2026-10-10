@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -103,8 +102,9 @@ void main() {
         }
         transport?.close();
         await Hive.close();
-        if (directory != null) {
-          final resolved = await directory!.resolveSymbolicLinks();
+        final ownedDirectory = directory;
+        if (ownedDirectory != null) {
+          final resolved = await ownedDirectory.resolveSymbolicLinks();
           expect(Directory(resolved).parent.path,
               await Directory.systemTemp.resolveSymbolicLinks());
           expect(
@@ -246,7 +246,9 @@ void main() {
         final local = repo.byId(notes.single.id)!;
         final remote = local.copy()..body = 'Accepted on other device';
         final row = remote.toRemote(uid)
-          ..['base_version'] = local.serverVersion;
+          ..['base_version'] = local.serverVersion
+          ..['enc_v'] = 0
+          ..['payload'] = null;
         expect(
             (await otherApi.pushNotes([row], requestId: newId(), instant: true))
                 .results

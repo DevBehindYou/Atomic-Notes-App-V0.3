@@ -41,8 +41,16 @@ artifact remains independently checked against its existing schema.
 
 ## Verification boundaries
 
-CI outcome is pending until its exact-head metadata and both named sanitized
-artifacts are validated. A passing run proves these seven synthetic scenarios;
+First CI head `ecd13416eceaac861832752c6e03b26a44d93945`, run `38027034250`,
+passed all 22 existing wire cases and the first six logout cases with owned
+namespace cleanup. The conflict setup failed before attempting logout: the
+direct synthetic edit omitted the required `enc_v`/`payload` wire fields.
+The strict-analysis job also failed; unused async import and a redundant nullable
+assertion were removed from the new test. No raw CI/compiler logs were fetched.
+These failed gates receive no merge acceptance; corrected-head outcome is pending
+until metadata and both named sanitized artifacts are validated.
+
+A passing run proves these seven synthetic scenarios;
 it does not prove real Google Drive failures, device keystore behavior, signed
 2.03.5 upgrades, Settings interaction or two physical devices. Feature activation,
 old-worker exclusion and production rollout remain separate gates.
