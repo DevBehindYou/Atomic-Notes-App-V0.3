@@ -113,6 +113,28 @@ class ApiClient {
   String? get currentUserId => _cachedUserId;
   String? get currentUserEmail => _cachedUserEmail;
   bool get isSignedIn => _cachedToken != null;
+  String? get pendingLogoutCompletion => _logoutCompletionAttempt;
+
+  Future<bool> logoutSyncAvailable() async {
+    try {
+      final data = await _request('GET', '/notes/logout-capability');
+      if (data is! Map || data['available'] is! bool) {
+        throw const FormatException('Invalid logout capability');
+      }
+      return data['available'] as bool;
+    } on ApiException catch (error) {
+      if (error.statusCode == 404) return false;
+      rethrow;
+    }
+  }
+
+  Future<void> signOutIfCurrent(int expectedRevision) async {
+    if (expectedRevision != _sessionRevision) {
+      throw ApiException('session_changed', 409);
+    }
+    await signOut();
+    if (isSignedIn) throw ApiException('session_changed', 409);
+  }
 
   /// Stable across restart for this exact token, without exposing the token.
   /// A same-account re-login has a different binding and cannot adopt its plan.
@@ -240,7 +262,33 @@ class ApiClient {
   Future<PushReply> pushLogoutNotes(LogoutEnvelope envelope) async {
     final data = await _request('POST', '/notes/push', body: envelope.toWire(),
       timeout: const Duration(seconds: 90), acceptSyncFailure: true) as Map;
-    return _pushReply(data, envelope.requestId, true);
+    final reply = _pushReply(data, envelope.requestId, true);
+    final expected = envelope.rows.map((row) => row['id']).toSet();
+    final seen = <String>{};
+    if (reply.receipt == null || reply.results.length != expected.length) {
+      throw const FormatException('Invalid logout push receipt');
+    }
+    for (final result in reply.results) {
+      final id = result['id'];
+      if (id is! String ||
+          !expected.contains(id) ||
+          !seen.add(id) ||
+          result['ok'] is! bool) {
+        throw const FormatException('Invalid logout note receipt');
+      }
+      if (result['ok'] == true) {
+        final version = result['version'], updated = result['updated_at'];
+        if (version is! int ||
+            version <= 0 ||
+            updated is! String ||
+            DateTime.tryParse(updated) == null) {
+          throw const FormatException('Invalid logout acknowledgement');
+        }
+      } else if (result['error'] is! String) {
+        throw const FormatException('Invalid logout failure');
+      }
+    }
+    return reply;
   }
 
   Future<void> completeLogoutSync(String attemptId) async {

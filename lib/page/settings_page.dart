@@ -18,19 +18,30 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:hive_ce/hive_ce.dart';
 
+typedef SettingsLogoutOperation = Future<void> Function({
+  required Future<void> Function(void Function() checkCurrent) finishLocal,
+  void Function(String message)? onProgress,
+});
+
 class SettingsPage extends StatefulWidget {
-  const SettingsPage({super.key});
+  const SettingsPage({super.key, this.api, this.repository, this.finishLogout, this.logoutOperation});
+  final ApiClient? api;
+  final NotesRepository? repository;
+  final Future<void> Function(void Function() checkCurrent)? finishLogout;
+  final SettingsLogoutOperation? logoutOperation;
 
   @override
   State<SettingsPage> createState() => _SettingsPageState();
 }
 
 class _SettingsPageState extends State<SettingsPage> {
-  final _api = ApiClient.instance;
+  late final _api = widget.api ?? ApiClient.instance;
   late String? userId = _api.currentUserEmail;
   final AuthServices serve = AuthServices();
-  final NotesRepository repo = NotesRepository.instance;
+  late final NotesRepository repo =
+      widget.repository ?? NotesRepository.instance;
   bool _isLoading = false;
+  String _logoutStatus = 'Checking notes before logout…';
   String? username = AuthServices.cachedHandle;
   bool _isMounted = true;
 
@@ -47,82 +58,54 @@ class _SettingsPageState extends State<SettingsPage> {
       context: context,
       builder: (_) {
         return DialogBoxLogout(
-          action: func,
+          action: () async {
+            // Close confirmation before the long operation; its buttons cannot
+            // race a second logout and progress remains visible on Settings.
+            Navigator.pop(context);
+            await func();
+          },
           text: txt,
         );
       },
     );
   }
 
-  //logout function
   Future<void> _logOut() async {
-    if (!_isMounted) return;
-
+    if (!_isMounted || _isLoading) return;
+    final session = _api.sessionRevision;
     setState(() {
       _isLoading = true;
+      _logoutStatus = 'Checking notes before logout…';
     });
     try {
-      // Flush anything unpushed BEFORE wiping the local cache. Logout clears
-      // the device copy, so an unsynced note would otherwise be gone for good.
-      if (repo.pendingCount > 0) {
-        if (!SyncStatusHelper.isSyncOn) {
-          // Don't push their notes to a cloud they explicitly opted out of —
-          // but don't erase them either. Refusing with an actionable message
-          // is the only option here that can't lose data.
-          if (!_isMounted) return;
-          const MySnackBar(
-            text: "Turn on Cloud Sync and sync first — "
-                "logging out erases the notes on this device",
-            sec: 4000,
-          ).showMySnackBar(context);
-          return;
-        }
-        final synced = await repo.syncNow();
-        if (!synced || repo.pendingCount > 0) {
-          if (!_isMounted) return;
-          final next = repo.nextAutoSyncAt;
-          MySnackBar(
-            text: next != null
-                ? "Logout cancelled — your changes are not sent yet. Automatic "
-                    "sync opens again in ${(next.difference(DateTime.now()).inSeconds / 60).ceil().clamp(1, 60)} min. "
-                    "To log out now, use Sync now in Cloud Notes first."
-                : "Logout cancelled — your notes could not be backed up",
-            sec: next != null ? 6000 : 3000,
-          ).showMySnackBar(context);
-          return;
-        }
-      }
-      await repo.stop(waitForSync: true);
-      await repo.clearLocal();
-      final authBox = await Hive.openBox<bool>('authBox');
-      await authBox.put('isAuthOn', false);
-      await SyncStatusHelper.setSyncStatus(true);
-      // Wipe the encryption key from this device before the session ends.
-      await Vault.instance.clearLocal();
-      // End the session. Logout must never be blocked by the network: if the
-      // server can't be reached, still sign out locally so the app cannot stay
-      // authenticated. ApiClient.signOut() already falls back to a local-only
-      // clear if the revoke call fails, and fires the same signal SessionGuard
-      // reacts to either way — it's what tears down remaining state and resets
-      // the stack to the login screen.
-      await _api.signOut();
+      await (widget.logoutOperation ?? repo.logoutSafely)(
+        onProgress: (message) {
+          if (_isMounted) setState(() => _logoutStatus = message);
+        },
+        finishLocal: widget.finishLogout ??
+            (checkCurrent) async {
+              checkCurrent();
+              final authBox = await Hive.openBox<bool>('authBox');
+              checkCurrent();
+              await authBox.put('isAuthOn', false);
+              checkCurrent();
+              await SyncStatusHelper.setSyncStatus(true);
+              checkCurrent();
+              await Vault.instance.clearLocal();
+              checkCurrent();
+              await _api.signOutIfCurrent(session);
+            },
+      );
     } catch (error) {
-      if (_api.isSignedIn) await repo.start();
       if (!_isMounted) return;
       MySnackBar(
-        text: error is LocalOnlyCacheError
-            ? LocalOnlyCacheError.messageText
-            : error is StateError
-            ? "Logout cancelled. Unlock your vault and sync all pending changes first."
-            : "Unable to logout",
-        sec: 4000,
+        text: error is LogoutBlocked
+            ? error.message
+            : 'Logout could not finish. Your unsynced notes remain on this device.',
+        sec: 6000,
       ).showMySnackBar(context);
     } finally {
-      if (_isMounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
+      if (_isMounted) setState(() => _isLoading = false);
     }
   }
 
@@ -145,141 +128,156 @@ class _SettingsPageState extends State<SettingsPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.paper,
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(
-            AppSpace.md, AppSpace.md, AppSpace.md, AppSpace.xl),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const EditorialHeading('Settings', style: AppType.headlineLg),
-            const SizedBox(height: AppSpace.xs),
-            // The signed-in address, as mono metadata rather than a pill.
-            MonoLabel(userId ?? '—'),
-            const SizedBox(height: AppSpace.md),
-            const HairRule(color: AppColors.ink),
-            const SizedBox(height: AppSpace.md),
+    return PopScope(
+      canPop: !_isLoading,
+      child: Scaffold(
+        backgroundColor: AppColors.paper,
+        body: AbsorbPointer(
+          absorbing: _isLoading,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(
+                AppSpace.md, AppSpace.md, AppSpace.md, AppSpace.xl),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const EditorialHeading('Settings', style: AppType.headlineLg),
+                const SizedBox(height: AppSpace.xs),
+                // The signed-in address, as mono metadata rather than a pill.
+                MonoLabel(userId ?? '—'),
+                const SizedBox(height: AppSpace.md),
+                const HairRule(color: AppColors.ink),
+                const SizedBox(height: AppSpace.md),
 
-            // logout button section
-            ProConatainer(
-              isLoading: _isLoading,
-              logout: () => _showPopUp(
-                  txt:
-                      "Are you sure you want to log out? Before you log out, make sure to backup or sync your notes data to the cloud by tapping on cloud sync button",
-                  func: _logOut),
-            ),
-            const SizedBox(height: AppSpace.lg),
-            const SectionHeader('MANAGE'),
-
-            const SizedBox(height: AppSpace.md),
-            BlocSelector<NotesBloc, NotesState, int>(
-              selector: (state) => state.binCount,
-              builder: (context, binned) {
-                return Column(
-                  children: [
-                    _cardRow(
-                      SettingsCard(
-                        icon: Icons.person_outline,
-                        title: 'Profile',
-                        caption: 'Photo, name, 2FA',
-                        onTap: () =>
-                            Navigator.pushNamed(context, '/editprofilepage'),
-                      ),
-                      SettingsCard(
-                        icon: Icons.cloud_sync_outlined,
-                        title: 'Cloud Sync',
-                        caption: 'Drive backup',
-                        onTap: () =>
-                            Navigator.pushNamed(context, '/cloudsyncpage'),
-                      ),
-                    ),
-                    _cardRow(
-                      SettingsCard(
-                        icon: Icons.delete_outline,
-                        title: 'Recycle Bin',
-                        caption: binned == 0 ? 'Empty' : '$binned deleted',
-                        onTap: () =>
-                            Navigator.pushNamed(context, '/recyclebin'),
-                      ),
-                      SettingsCard(
-                        icon: Icons.lock_outline,
-                        title: 'Security',
-                        caption: 'Lock, screenshots',
-                        onTap: () =>
-                            Navigator.pushNamed(context, '/biompage'),
-                      ),
-                    ),
-                    _cardRow(
-                      SettingsCard(
-                        icon: Icons.enhanced_encryption_outlined,
-                        title: 'Encryption',
-                        caption: 'End-to-end',
-                        onTap: () =>
-                            Navigator.pushNamed(context, '/encryptionpage'),
-                      ),
-                      SettingsCard(
-                        icon: Icons.bolt_outlined,
-                        title: 'Atomic Energy',
-                        caption: 'Coins, quota',
-                        onTap: () =>
-                            Navigator.pushNamed(context, '/energypage'),
-                      ),
-                    ),
-                    // The destructive entry stands apart, on its own row.
-                    SettingsCard(
-                      icon: Icons.warning_amber_rounded,
-                      title: 'Danger Zone',
-                      caption: 'Wipe cloud or this device',
-                      danger: true,
-                      wide: true,
-                      onTap: () =>
-                          Navigator.pushNamed(context, '/dangerzone'),
-                    ),
-                  ],
-                );
-              },
-            ),
-            const SizedBox(height: AppSpace.xl),
-
-            //logo section
-            const LogoContainer(),
-            const SizedBox(height: AppSpace.xl),
-
-            // Colophon: inverted module, the system's way of closing a page.
-            EditorialModule(
-              inverted: true,
-              padding: const EdgeInsets.all(AppSpace.md + 2),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const MonoLabel('ABOUT ATOMIC', color: AppColors.signal),
+                // logout button section
+                ProConatainer(
+                  isLoading: _isLoading,
+                  logout: () => _showPopUp(
+                      txt:
+                          "Atomic will sync unsent changes before logging out. Instant Sync uses Energy; if you cannot cover it, Emergency InstaSync for this logout uses no Energy. If sync fails, you stay signed in and your notes are kept.",
+                      func: _logOut),
+                ),
+                if (_isLoading) ...[
                   const SizedBox(height: AppSpace.sm),
-                  EditorialHeading(
-                    'Local-first notes',
-                    style: AppType.headlineMd.copyWith(color: AppColors.paper),
-                  ),
-                  const SizedBox(height: AppSpace.xs),
-                  Text(
-                    AppInfoText.versionLabel,
-                    style: AppType.labelMonoSm
-                        .copyWith(color: AppColors.outlineVariant),
-                  ),
-                  Text(
-                    AppInfoText.copyright,
-                    style: AppType.labelMonoSm
-                        .copyWith(color: AppColors.outlineVariant),
-                  ),
-                  const SizedBox(height: AppSpace.md),
-                  ArrowLink(
-                    'App info',
-                    onTap: () => Navigator.pushNamed(context, '/appinfo'),
-                  ),
+                  Semantics(
+                      liveRegion: true,
+                      child: Text(_logoutStatus, style: AppType.bodySm)),
+                  const SizedBox(height: AppSpace.sm),
+                  const LinearProgressIndicator(),
                 ],
-              ),
+                const SizedBox(height: AppSpace.lg),
+                const SectionHeader('MANAGE'),
+
+                const SizedBox(height: AppSpace.md),
+                BlocSelector<NotesBloc, NotesState, int>(
+                  selector: (state) => state.binCount,
+                  builder: (context, binned) {
+                    return Column(
+                      children: [
+                        _cardRow(
+                          SettingsCard(
+                            icon: Icons.person_outline,
+                            title: 'Profile',
+                            caption: 'Photo, name, 2FA',
+                            onTap: () => Navigator.pushNamed(
+                                context, '/editprofilepage'),
+                          ),
+                          SettingsCard(
+                            icon: Icons.cloud_sync_outlined,
+                            title: 'Cloud Sync',
+                            caption: 'Drive backup',
+                            onTap: () =>
+                                Navigator.pushNamed(context, '/cloudsyncpage'),
+                          ),
+                        ),
+                        _cardRow(
+                          SettingsCard(
+                            icon: Icons.delete_outline,
+                            title: 'Recycle Bin',
+                            caption: binned == 0 ? 'Empty' : '$binned deleted',
+                            onTap: () =>
+                                Navigator.pushNamed(context, '/recyclebin'),
+                          ),
+                          SettingsCard(
+                            icon: Icons.lock_outline,
+                            title: 'Security',
+                            caption: 'Lock, screenshots',
+                            onTap: () =>
+                                Navigator.pushNamed(context, '/biompage'),
+                          ),
+                        ),
+                        _cardRow(
+                          SettingsCard(
+                            icon: Icons.enhanced_encryption_outlined,
+                            title: 'Encryption',
+                            caption: 'End-to-end',
+                            onTap: () =>
+                                Navigator.pushNamed(context, '/encryptionpage'),
+                          ),
+                          SettingsCard(
+                            icon: Icons.bolt_outlined,
+                            title: 'Atomic Energy',
+                            caption: 'Coins, quota',
+                            onTap: () =>
+                                Navigator.pushNamed(context, '/energypage'),
+                          ),
+                        ),
+                        // The destructive entry stands apart, on its own row.
+                        SettingsCard(
+                          icon: Icons.warning_amber_rounded,
+                          title: 'Danger Zone',
+                          caption: 'Wipe cloud or this device',
+                          danger: true,
+                          wide: true,
+                          onTap: () =>
+                              Navigator.pushNamed(context, '/dangerzone'),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+                const SizedBox(height: AppSpace.xl),
+
+                //logo section
+                const LogoContainer(),
+                const SizedBox(height: AppSpace.xl),
+
+                // Colophon: inverted module, the system's way of closing a page.
+                EditorialModule(
+                  inverted: true,
+                  padding: const EdgeInsets.all(AppSpace.md + 2),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const MonoLabel('ABOUT ATOMIC', color: AppColors.signal),
+                      const SizedBox(height: AppSpace.sm),
+                      EditorialHeading(
+                        'Local-first notes',
+                        style:
+                            AppType.headlineMd.copyWith(color: AppColors.paper),
+                      ),
+                      const SizedBox(height: AppSpace.xs),
+                      Text(
+                        AppInfoText.versionLabel,
+                        style: AppType.labelMonoSm
+                            .copyWith(color: AppColors.outlineVariant),
+                      ),
+                      Text(
+                        AppInfoText.copyright,
+                        style: AppType.labelMonoSm
+                            .copyWith(color: AppColors.outlineVariant),
+                      ),
+                      const SizedBox(height: AppSpace.md),
+                      ArrowLink(
+                        'App info',
+                        onTap: () => Navigator.pushNamed(context, '/appinfo'),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: AppSpace.xl),
+              ],
             ),
-            const SizedBox(height: AppSpace.xl),
-          ],
+          ),
         ),
       ),
     );

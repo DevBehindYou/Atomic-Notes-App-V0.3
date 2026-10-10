@@ -185,6 +185,30 @@ class LogoutPlanStore {
   /// marker is local progress only; it never authorizes deleting note data.
   Future<void> recordCompletionAcknowledged(LogoutPlan plan) => _transition(plan, true);
 
+  /// Caller has received the matching completed Server receipt and fenced all
+  /// note writers. This consumes metadata only; it never deletes note rows.
+  Future<void> consumeCompleted(LogoutPlan plan) => _remove(plan, true);
+
+  /// Caller has received the matching aborted Server receipt. Retain notes;
+  /// a later explicit logout can prepare a new plan for remaining work.
+  Future<void> consumeAborted(LogoutPlan plan) => _remove(plan, false);
+
+  Future<void> _remove(LogoutPlan plan, bool completed) {
+    final write = _tail.then((_) async {
+      final raw = await _matching(plan);
+      final phase =
+          LogoutPlanPhase.values.byName(raw['phase'] as String? ?? 'prepared');
+      if (completed != (phase == LogoutPlanPhase.completed)) {
+        throw StateError(
+            'Logout terminal receipt does not match local progress');
+      }
+      await box.delete(key);
+      await box.flush();
+    });
+    _tail = write.catchError((_) {});
+    return write;
+  }
+
   Future<void> _transition(LogoutPlan plan, bool acknowledged) {
     final write = _tail.then((_) async {
       final raw = await _matching(plan);

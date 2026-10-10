@@ -95,7 +95,68 @@ void main() {
       throwsA(isA<ApiException>().having((e) => e.code, 'code', 'logout_sync_unavailable')));
     expect(calls, 1); expect(api.isSignedIn, isTrue);
   });
-  test('completion replay is validated but never clears local authentication itself', () async {
+  test('capability is advisory and rejects malformed enabled replies',
+      () async {
+    final enabled = await client((request) async {
+      expect(request.method, 'GET');
+      expect(request.url.path, '/api/notes/logout-capability');
+      return http.Response('{"available":true}', 200);
+    });
+    expect(await enabled.logoutSyncAvailable(), isTrue);
+    final oldServer =
+        await client((_) async => http.Response('{"error":"not_found"}', 404));
+    expect(await oldServer.logoutSyncAvailable(), isFalse);
+    final malformed =
+        await client((_) async => http.Response('{"available":"true"}', 200));
+    await expectLater(malformed.logoutSyncAvailable(), throwsFormatException);
+  });
+  test('malformed or incomplete logout push receipts cannot authorize erasure',
+      () async {
+    final prepared = await envelope(),
+        id = (await envelope()).rows.single['id'];
+    final accepted = {
+      'id': id,
+      'ok': true,
+      'version': 1,
+      'updated_at': '2026-10-10T00:00:00Z'
+    };
+    for (final results in <List<Map<String, dynamic>>>[
+      [],
+      [accepted, accepted],
+      [
+        {...accepted, 'id': requestId}
+      ],
+      [
+        {...accepted, 'version': 0}
+      ],
+      [
+        {...accepted, 'version': null}
+      ],
+      [
+        {...accepted, 'updated_at': 'broken'}
+      ],
+      [
+        {...accepted, 'ok': null}
+      ],
+      [
+        {'id': id, 'ok': false}
+      ],
+    ]) {
+      final api = await client((_) async => http.Response(
+          jsonEncode({'charged': 0, 'refunded': 0, 'results': results}), 200));
+      await expectLater(api.pushLogoutNotes(prepared), throwsFormatException);
+      expect(api.isSignedIn, isTrue);
+    }
+    final missingCost = await client((_) async => http.Response(
+        jsonEncode({
+          'results': [accepted]
+        }),
+        200));
+    await expectLater(
+        missingCost.pushLogoutNotes(prepared), throwsFormatException);
+  });
+  test(
+      'completion replay is validated but never clears local authentication itself', () async {
     var calls = 0;
     final api = await client((request) async {
       calls++; expect(request.url.path, '/api/notes/logout-attempt/complete');
@@ -183,6 +244,22 @@ void main() {
     });
     await api.abortLogoutSync(attemptId); expect(api.isSignedIn, isTrue);
   });
+  for (final sameOwner in [true, false]) {
+    test('conditional sign-out refuses a newer session (sameOwner=$sameOwner)', () async {
+      final entered = Completer<void>(), release = Completer<http.Response>();
+      final api = await client((request) async {
+        expect(request.url.path, '/api/auth/logout'); entered.complete(); return release.future;
+      });
+      final logout = expectLater(api.signOutIfCurrent(api.sessionRevision),
+        throwsA(isA<ApiException>().having((error) => error.code, 'code', 'session_changed')));
+      await entered.future;
+      await storage.write(key: 'atomic_api_session_token', value: 'public-new-session');
+      await storage.write(key: 'atomic_api_user_id', value: sameOwner ? 'public-user-a' : 'public-user-b');
+      await api.init(); release.complete(http.Response('{}', 200)); await logout;
+      expect(api.isSignedIn, isTrue);
+      expect(await storage.read(key: 'atomic_api_session_token'), 'public-new-session');
+    });
+  }
   for (final sameOwner in [false, true]) {
     test('late completion cannot affect a newer session (sameOwner=$sameOwner)', () async {
       final entered = Completer<void>(), release = Completer<http.Response>();
