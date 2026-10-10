@@ -295,6 +295,18 @@ class ApiClient {
     return LogoutRecoveryReceipts.parse(data, query);
   }
 
+  /// Settles only the old, fully receipted attempt. It does not sign out this
+  /// fresh session or authorize erasing notes before durable reconciliation.
+  Future<LogoutRecoveryReceipts> commitLogoutRecovery(LogoutRecoveryQuery query) async {
+    final data = await _request('POST', '/notes/logout-attempt/recovery-commit',
+      body: query.toWire(), maxResponseBytes: LogoutRecoveryReceipts.maxWireBytes);
+    final receipt = LogoutRecoveryReceipts.parse(data, query);
+    if (receipt.state == LogoutRecoveryState.prepared) {
+      throw const FormatException('Logout recovery is not terminal');
+    }
+    return receipt;
+  }
+
   Future<PushReply> pushLogoutNotes(LogoutEnvelope envelope) async {
     final data = await _request('POST', '/notes/push', body: envelope.toWire(),
       timeout: const Duration(seconds: 90), acceptSyncFailure: true) as Map;

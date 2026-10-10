@@ -66,6 +66,8 @@ jobs:
         run: python3 tool/run_logout_wire_fixture.py
       - name: Verify read-only recovery inspection and owned cleanup
         run: python3 tool/run_logout_recovery_wire_fixture.py
+      - name: Verify explicit same-owner logout recovery and owned cleanup
+        run: python3 tool/run_logout_handoff_wire_fixture.py
       - name: Upload sanitized wire outcomes
         if: always()
         continue-on-error: true
@@ -91,6 +93,15 @@ jobs:
         with:
           name: sanitized-logout-recovery-server-wire-proof
           path: ci-logout-recovery-server-wire-proof.json
+          if-no-files-found: warn
+          retention-days: 1
+      - name: Upload sanitized same-owner recovery outcomes
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: sanitized-logout-handoff-server-wire-proof
+          path: ci-logout-handoff-server-wire-proof.json
           if-no-files-found: warn
           retention-days: 1
       - name: Remove owned disposable MongoDB container

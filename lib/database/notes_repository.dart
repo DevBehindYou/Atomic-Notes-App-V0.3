@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:atomic_notes/api/atomic_notes_api.dart';
 import 'package:atomic_notes/api/logout_protocol.dart';
+import 'package:atomic_notes/api/logout_recovery.dart';
 import 'package:atomic_notes/database/energy_service.dart';
 import 'package:atomic_notes/database/note.dart';
 import 'package:atomic_notes/database/logout_plan.dart';
