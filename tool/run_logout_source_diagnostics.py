@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+from urllib.parse import unquote, urljoin, urlparse
 
 FILES = {'lib/api/atomic_notes_api.dart', 'lib/database/logout_plan.dart',
          'lib/database/notes_logout.dart', 'lib/database/notes_repository.dart',
@@ -46,6 +47,32 @@ CODES = {'argument_type_not_assignable', 'invalid_override', 'undefined_method',
          'undefined_enum_constant', 'unnecessary_to_list_in_spreads'}
 
 
+def installed_analyzer_codes(root):
+    """Inventory exact generated names from the already resolved CI package.
+
+    Only the known analyzer package and its generated enum file are read. No
+    dependency process, cache change, diagnostic text or path is emitted.
+    """
+    config = root / '.dart_tool/package_config.json'
+    packages = json.loads(config.read_text(encoding='utf-8'))['packages']
+    analyzer = [package for package in packages if package['name'] == 'analyzer']
+    if len(analyzer) != 1:
+        raise ValueError('analyzer inventory')
+    uri = urlparse(urljoin(config.as_uri(), analyzer[0]['rootUri']))
+    if uri.scheme != 'file' or uri.netloc or uri.query or uri.fragment:
+        raise ValueError('analyzer origin')
+    package = Path(unquote(uri.path))
+    if package.name != 'analyzer-12.1.0':
+        raise ValueError('analyzer revision')
+    source = package / 'lib/src/diagnostic/diagnostic.g.dart'
+    if source.stat().st_size > 4_000_000:
+        raise ValueError('analyzer source bound')
+    codes = set(re.findall(r"\bname:\s*'([a-z][a-z0-9_]{0,79})'", source.read_text(encoding='utf-8')))
+    if not 500 <= len(codes) <= 2000:
+        raise ValueError('analyzer code inventory')
+    return CODES | codes
+
+
 def main():
     root = Path(__file__).resolve().parent.parent
     head = os.environ.get('ATOMIC_REPAIR_SOURCE_HEAD', '')
@@ -57,6 +84,7 @@ def main():
     try:
         if os.environ.get('GITHUB_ACTIONS') != 'true' or report['sourceHead'] is None:
             raise ValueError('guard')
+        known_codes = installed_analyzer_codes(root)
         report['phase'] = 'analyzing'
         result = subprocess.run(['flutter', '--no-wrap', 'analyze', '--no-pub', '--fatal-warnings',
                                  '--fatal-infos', '--no-preamble'], cwd=root,
@@ -77,8 +105,8 @@ def main():
                 continue
             severity, _, location, code = fields
             match = re.fullmatch(r'(.+):(\d+):(\d+)', location)
-            if severity not in {'error', 'warning', 'info'} or code not in CODES or match is None:
-                report['rejections']['unknown_code' if code not in CODES else
+            if severity not in {'error', 'warning', 'info'} or code not in known_codes or match is None:
+                report['rejections']['unknown_code' if code not in known_codes else
                                      'unparsed_diagnostic'] += 1
                 invalid = True
                 continue
