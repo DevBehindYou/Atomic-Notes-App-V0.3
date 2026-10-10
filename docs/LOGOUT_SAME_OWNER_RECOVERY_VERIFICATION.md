@@ -40,7 +40,10 @@ retaining disk notes; foreign-owner pending-cache protection is unchanged.
 Controlled tests use actual Hive reopen and public synthetic auth/receipts. They
 cover paid/free push and completion recovery, newer edits, foreign-account and
 locked-ciphertext refusal, missing receipts, tampering, late same-owner replacement,
-reply/write/flush interruption and edited conflict-copy replay. Transport controls
+reply/write/flush interruption, before/after pending and plan metadata deletion,
+same-instance/reopened conflict-copy put loss and edited conflict-copy replay. A
+bounded CI runner emits 23 fixed outcome codes, discarding all raw machine/log
+output, in `sanitized-logout-recovery-controls-proof`. Transport controls
 reject nonterminal commit replies without changing auth/completion markers.
 
 The CI-only handoff runner starts a fresh generated localhost Mongo namespace per

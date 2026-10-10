@@ -153,6 +153,20 @@ jobs:
       - name: Run existing tests
         run: flutter test --no-pub --reporter expanded 2>&1 | tee ci-logs/test.log
 
+      - name: Verify controlled logout recovery with fixed outcome codes
+        if: always()
+        run: python3 tool/run_logout_recovery_controls.py
+
+      - name: Upload sanitized logout recovery controls
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: sanitized-logout-recovery-controls-proof
+          path: ci-logout-recovery-controls-proof.json
+          if-no-files-found: warn
+          retention-days: 1
+
       - name: Build verification APK
         run: flutter build apk --debug --no-pub 2>&1 | tee ci-logs/build-apk.log
 
