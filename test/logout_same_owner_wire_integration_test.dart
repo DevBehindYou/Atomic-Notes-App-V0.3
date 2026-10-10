@@ -233,6 +233,11 @@ void main() {
             headers: {'authorization': 'Bearer atomic-disposable-client-b'},
           );
           expect(probe.statusCode, 200);
+          final remote = jsonDecode(probe.body) as Map;
+          expect(
+            (remote['rows'] as List).cast<Map>().single['body'],
+            note.body,
+          );
           await reopen();
         }
         phase = 'retry';
