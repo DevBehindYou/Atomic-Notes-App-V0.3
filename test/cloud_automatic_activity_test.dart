@@ -107,9 +107,11 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      debugPrint('atomic_cloud_activity_phase:mounted');
       source.changeBehindTheScenes(() => source.isSyncing = true);
       await tester.pump();
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      debugPrint('atomic_cloud_activity_phase:automatic_indicator');
       for (final label in ['CHECK CLOUD', 'SYNC NOW  ·', 'UPLOAD ALL  ·']) {
         final button = find.textContaining(label);
         await tester.ensureVisible(button);
@@ -121,17 +123,21 @@ void main() {
       expect(source.countCalls, 1);
       final context = tester.element(find.byType(Scaffold).first);
       expect(context.read<CloudNotesCubit>().state.checking, isFalse);
+      debugPrint('atomic_cloud_activity_phase:disabled_controls');
       source.changeBehindTheScenes(() => source.isSyncing = false);
       await tester.pumpAndSettle();
       expect(find.byType(CircularProgressIndicator), findsNothing);
+      debugPrint('atomic_cloud_activity_phase:idle_indicator');
       final sync = find.textContaining('SYNC NOW  ·');
       await tester.ensureVisible(sync);
       await tester.tap(sync);
       await tester.pumpAndSettle();
       expect(source.syncCalls, 1);
       expect(source.markAllCalls, 0);
+      debugPrint('atomic_cloud_activity_phase:retry_action');
       expect(tester.takeException(), isNull);
       expect(source.all.single.dirty, isFalse);
+      debugPrint('atomic_cloud_activity_phase:complete');
     },
   );
 }
