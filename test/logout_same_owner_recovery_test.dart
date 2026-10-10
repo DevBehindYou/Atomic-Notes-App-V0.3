@@ -67,6 +67,7 @@ class _FaultBox implements Box {
   final Box inner;
   bool failFlush = false;
   String? failPut;
+  String? failDeleteBefore, failDeleteAfter;
   @override
   dynamic get(dynamic key, {dynamic defaultValue}) =>
       inner.get(key, defaultValue: defaultValue);
@@ -86,7 +87,18 @@ class _FaultBox implements Box {
   }
 
   @override
-  Future<void> delete(dynamic key) => inner.delete(key);
+  Future<void> delete(dynamic key) async {
+    if (key == failDeleteBefore) {
+      failDeleteBefore = null;
+      throw StateError('Public fixture interrupted metadata deletion');
+    }
+    await inner.delete(key);
+    if (key == failDeleteAfter) {
+      failDeleteAfter = null;
+      throw StateError('Public fixture lost metadata deletion acknowledgement');
+    }
+  }
+
   @override
   Future<int> clear() => inner.clear();
   @override
@@ -438,4 +450,33 @@ void main() {
       expect(finished, 1);
     },
   );
+  for (final key in ['__pending_sync_operation', LogoutPlanStore.key]) {
+    for (final after in [false, true]) {
+      test(
+        'metadata deletion interruption keeps notes (key=$key after=$after)',
+        () async {
+          final note = await interrupted();
+          if (after) {
+            box.failDeleteAfter = key;
+          } else {
+            box.failDeleteBefore = key;
+          }
+          await expectLater(logout(), throwsA(isA<LogoutBlocked>()));
+          expect((raw.get(note.id) as Map)['body'], note.body);
+          expect((raw.get(note.id) as Map)['dirty'], isFalse);
+          expect(finished, 0);
+          expect(
+            raw.containsKey(LogoutPlanStore.key),
+            !(key == LogoutPlanStore.key && after),
+          );
+          await restart();
+          await logout();
+          expect(api.logoutRequests.length, 1);
+          expect(api.admissions, 1);
+          expect(api.recoveries, key == LogoutPlanStore.key && after ? 1 : 2);
+          expect(finished, 1);
+        },
+      );
+    }
+  }
 }
