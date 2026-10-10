@@ -31,6 +31,7 @@ def main():
             cwd=root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             timeout=180, check=False, encoding='utf-8', errors='replace')
         ids = {}
+        loader_name = 'loading ' + str(root / 'test/cloud_automatic_activity_test.dart')
         completed = set()
         done = False
         invalid = False
@@ -54,7 +55,7 @@ def main():
                         invalid = True
                         continue
                     ids[test_id] = CASES[name]
-                elif test.get('hidden') is not True:
+                elif name != loader_name and test.get('hidden') is not True:
                     invalid = True
             elif kind == 'testDone' and event.get('testID') in ids:
                 case = ids[event['testID']]

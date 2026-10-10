@@ -110,6 +110,8 @@ void main() {
       debugPrint('atomic_cloud_activity_phase:mounted');
       source.changeBehindTheScenes(() => source.isSyncing = true);
       await tester.pump();
+      // Cubit delivery schedules BlocBuilder's next frame asynchronously.
+      await tester.pump();
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
       debugPrint('atomic_cloud_activity_phase:automatic_indicator');
       for (final label in ['CHECK CLOUD', 'SYNC NOW  ·', 'UPLOAD ALL  ·']) {
