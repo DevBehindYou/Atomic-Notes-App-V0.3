@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 
 SCOPE = 'controlled same-owner logout recovery; real Hive; synthetic auth and receipts'
 NAMES = {
@@ -16,6 +17,7 @@ NAMES = {
     'interrupted conflict recovery never overwrites an edited copy on replay': 'edited_copy_replay',
     'aborted failed old receipt does not regress an already newer acknowledged row': 'newer_acknowledged',
     'partial settled recovery keeps failed work and never uploads the accepted row again': 'partial_settlement',
+    'same-content post-plan vault migration remains dirty until a new sealed attempt': 'vault_same_content',
 }
 for funding in ('free', 'paid'):
     for stage in ('push', 'completion'):
@@ -30,20 +32,22 @@ for key, code in (('__pending_sync_operation', 'pending'), ('__pending_logout_at
 
 
 def main():
-    if os.environ.get('GITHUB_ACTIONS') != 'true':
-        raise RuntimeError('Dedicated GitHub Actions controlled proof required')
+    root = Path(__file__).resolve().parent.parent
     proof = {'version': 1, 'scope': SCOPE,
              'outcomes': {code: 'not_executed' for code in NAMES.values()},
              'outcome': 'failed'}
-    ids = {}
-    seen = set()
-    invalid = False
-    process = subprocess.Popen(['flutter', 'test', '--no-pub', '--machine',
-                                'test/logout_same_owner_recovery_test.dart'],
-                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                               text=True, encoding='utf-8', errors='replace')
     try:
-        for line in process.stdout:
+        if os.environ.get('GITHUB_ACTIONS') != 'true':
+            raise ValueError('guard')
+        result = subprocess.run(['flutter', 'test', '--no-pub', '--machine',
+                                 'test/logout_same_owner_recovery_test.dart'],
+                                cwd=root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                timeout=180, check=False, encoding='utf-8', errors='replace')
+        ids, loader_ids, seen, completed = {}, set(), set(), set()
+        invalid, done = False, False
+        done_count = 0
+        loader_name = 'loading ' + str(root / 'test/logout_same_owner_recovery_test.dart')
+        for line in result.stdout.splitlines():
             try:
                 event = json.loads(line)
             except (ValueError, TypeError):
@@ -52,37 +56,53 @@ def main():
             if not isinstance(event, dict):
                 invalid = True
                 continue
-            if event.get('type') == 'testStart' and isinstance(event.get('test'), dict):
-                test = event['test']
+            if event.get('type') == 'testStart':
+                test = event.get('test')
+                if not isinstance(test, dict) or type(test.get('id')) is not int:
+                    invalid = True
+                    continue
+                test_id = test['id']
                 code = NAMES.get(test.get('name'))
+                if test_id in ids or test_id in loader_ids:
+                    invalid = True
+                    continue
                 if code is not None:
-                    if code in seen or not isinstance(test.get('id'), int) or test['id'] in ids:
+                    if code in seen or test.get('hidden') is True:
                         invalid = True
                         continue
                     seen.add(code)
-                    ids[test['id']] = code
+                    ids[test_id] = code
                     proof['outcomes'][code] = 'started'
-            elif event.get('type') == 'testDone' and event.get('testID') in ids:
-                if proof['outcomes'][ids[event['testID']]] != 'started':
+                elif test.get('name') == loader_name and test.get('hidden') is True:
+                    loader_ids.add(test_id)
+                else:
                     invalid = True
-                proof['outcomes'][ids[event['testID']]] = (
-                    'passed' if event.get('result') == 'success' and not event.get('skipped') else 'failed')
-        exit_code = process.wait()
-        if not invalid and exit_code == 0 and len(seen) == len(NAMES) and all(value == 'passed' for value in proof['outcomes'].values()):
+            elif event.get('type') == 'testDone':
+                test_id = event.get('testID')
+                if type(test_id) is not int or (test_id not in ids and test_id not in loader_ids):
+                    invalid = True
+                    continue
+                if test_id in loader_ids:
+                    continue
+                code = ids[test_id]
+                if code in completed or proof['outcomes'][code] != 'started':
+                    invalid = True
+                completed.add(code)
+                proof['outcomes'][code] = (
+                    'passed' if event.get('result') == 'success' and event.get('skipped') is False else 'failed')
+            elif event.get('type') == 'done':
+                done_count += 1
+                done = event.get('success') is True
+        if not invalid and result.returncode == 0 and done and done_count == 1 and len(seen) == len(NAMES) and len(completed) == len(NAMES) and all(value == 'passed' for value in proof['outcomes'].values()):
             proof['outcome'] = 'passed'
+    except Exception:
+        # Timeout, crash, guard and parse failures retain fixed failed outcomes;
+        # no raw output, exception, stack or data is written or printed.
+        pass
     finally:
-        if process.poll() is None:
-            process.terminate()
-            try:
-                process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=10)
-        process.stdout.close()
-        Path('ci-logout-recovery-controls-proof.json').write_text(json.dumps(proof))
-    if proof['outcome'] != 'passed':
-        raise RuntimeError('Controlled logout recovery proof failed; inspect fixed outcome codes')
+        (root / 'ci-logout-recovery-controls-proof.json').write_text(json.dumps(proof))
+    return 0 if proof['outcome'] == 'passed' else 1
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

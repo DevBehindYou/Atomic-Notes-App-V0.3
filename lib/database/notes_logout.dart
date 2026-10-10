@@ -98,6 +98,12 @@ extension SafeNotesLogout on NotesRepository {
         local.dirty = local.contentSig != snapshot.contentSig;
         if (!local.dirty) local.updatedAt = DateTime.parse(result.updatedAt!).toUtc();
         final sent = envelope.rows.firstWhere((row) => row['id'] == result.id);
+        // A later vault migration can require identical content to be sealed.
+        // Cleared syncedSig alone also occurs on ordinary first upload, so
+        // recompute the existing format policy against the frozen accepted row.
+        if (rowNeedsSealing(sent, vaultUnlocked: _vault.isUnlocked)) {
+          local.requireResend();
+        }
         if (sent['enc_v'] == Vault.encVersion) {
           _encryptedCloudVersions[local.id] = local.serverVersion;
         } else {

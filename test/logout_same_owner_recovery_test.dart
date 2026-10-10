@@ -513,4 +513,38 @@ void main() {
       expect(finished, 1);
     },
   );
+  test(
+    'same-content post-plan vault migration remains dirty until a new sealed attempt',
+    () async {
+      final note = await interrupted();
+      final signature = repository.byId(note.id)!.contentSig;
+      vault.unlocked = true;
+      expect(await repository.migrateToVault(), 1);
+      expect(repository.byId(note.id)!.contentSig, signature);
+      expect((raw.get(note.id) as Map)['enc_v'], 1);
+      await restart();
+      await expectLater(logout(), throwsA(isA<LogoutBlocked>()));
+      expect(repository.byId(note.id)!.contentSig, signature);
+      expect(repository.byId(note.id)!.dirty, isTrue);
+      expect(repository.byId(note.id)!.syncedSig, isEmpty);
+      expect(repository.byId(note.id)!.serverVersion, 1);
+      expect((raw.get(note.id) as Map)['enc_v'], 1);
+      expect(raw.containsKey(LogoutPlanStore.key), isFalse);
+      expect(api.logoutRequests.length, 1);
+      expect(finished, 0);
+      api.beforePush = () async {
+        final frozen = raw.get(LogoutPlanStore.key) as Map;
+        final envelope = (frozen['batches'] as List).single as Map;
+        final row = (envelope['rows'] as List).single as Map;
+        expect(row['enc_v'], 1);
+        expect(row['title'], isEmpty);
+        expect(row['body'], isEmpty);
+        expect(row['payload'], isNotEmpty);
+      };
+      await logout();
+      expect(api.admissions, 2);
+      expect(api.logoutRequests.length, 2);
+      expect(finished, 1);
+    },
+  );
 }
