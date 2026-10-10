@@ -479,4 +479,38 @@ void main() {
       );
     }
   }
+  test(
+    'partial settled recovery keeps failed work and never uploads the accepted row again',
+    () async {
+      final accepted = Note.create()..body = 'Accepted local content';
+      final failed = Note.create()..body = 'Unsent local content';
+      await repository.save(accepted);
+      await repository.save(failed);
+      api.pushResults = [
+        {
+          'id': accepted.id,
+          'ok': true,
+          'version': 1,
+          'updated_at': '2026-10-10T00:00:00.000Z',
+        },
+        {'id': failed.id, 'ok': false, 'error': 'drive_failed'},
+      ];
+      api.dropPushReply = true;
+      await expectLater(logout(), throwsA(isA<LogoutBlocked>()));
+      api.reauthenticate();
+      await expectLater(logout(), throwsA(isA<LogoutBlocked>()));
+      expect(repository.byId(accepted.id)!.dirty, isFalse);
+      expect(repository.byId(failed.id)!.dirty, isTrue);
+      expect(repository.byId(failed.id)!.body, failed.body);
+      expect(raw.containsKey(LogoutPlanStore.key), isFalse);
+      expect(api.logoutRequests.length, 1);
+      expect(finished, 0);
+      api.pushResults = null;
+      await logout();
+      expect(api.admissions, 2);
+      expect(api.logoutRequests.length, 2);
+      expect(api.receipts.values.last.results.single['id'], failed.id);
+      expect(finished, 1);
+    },
+  );
 }
