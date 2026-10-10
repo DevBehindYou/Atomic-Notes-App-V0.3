@@ -150,6 +150,19 @@ jobs:
       - name: Analyze (errors, warnings, and infos are fatal)
         run: flutter analyze --no-pub --fatal-warnings --fatal-infos 2>&1 | tee ci-logs/analyze.log
 
+      - name: Verify controlled Cloud Notes automatic activity
+        run: python3 tool/run_cloud_activity_fixture.py
+
+      - name: Upload sanitized Cloud Notes activity outcomes
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: sanitized-cloud-activity-proof
+          path: ci-cloud-activity-proof.json
+          if-no-files-found: warn
+          retention-days: 1
+
       - name: Run existing tests
         run: flutter test --no-pub --reporter expanded 2>&1 | tee ci-logs/test.log
 
