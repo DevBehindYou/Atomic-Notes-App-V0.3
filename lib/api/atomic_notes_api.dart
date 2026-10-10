@@ -287,6 +287,14 @@ class ApiClient {
     return LogoutRecoveryStatus.parse(data, query);
   }
 
+  /// Read-only receipt delivery. Applying these results requires a separately
+  /// authorized/fenced recovery operation and durable local reconciliation.
+  Future<LogoutRecoveryReceipts> readLogoutRecoveryReceipts(LogoutRecoveryQuery query) async {
+    final data = await _request('POST', '/notes/logout-attempt/recovery-receipts',
+      body: query.toWire(), maxResponseBytes: LogoutRecoveryReceipts.maxWireBytes);
+    return LogoutRecoveryReceipts.parse(data, query);
+  }
+
   Future<PushReply> pushLogoutNotes(LogoutEnvelope envelope) async {
     final data = await _request('POST', '/notes/push', body: envelope.toWire(),
       timeout: const Duration(seconds: 90), acceptSyncFailure: true) as Map;

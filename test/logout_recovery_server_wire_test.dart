@@ -173,6 +173,28 @@ void main() {
       expect(first.batches.single.refunded, 0);
       expect(first.batches.single.accepted, 1);
       expect(first.batches.single.failed, 0);
+      phase = 'receipt_delivery';
+      final delivered = await currentApi.readLogoutRecoveryReceipts(query);
+      final repeated = await currentApi.readLogoutRecoveryReceipts(query);
+      expect(delivered.state, LogoutRecoveryState.completed);
+      expect(
+        repeated.batches.single.requestId,
+        delivered.batches.single.requestId,
+      );
+      expect(delivered.batches.single.requestId, plan.batches.single.requestId);
+      expect(delivered.batches.single.charged, receipt.receipt!.charged);
+      expect(delivered.batches.single.refunded, receipt.receipt!.refunded);
+      final acknowledgement = delivered.batches.single.results.single;
+      final original = receipt.results.single;
+      expect(acknowledgement.id, original['id']);
+      expect(acknowledgement.ok, original['ok']);
+      expect(acknowledgement.version, original['version']);
+      expect(acknowledgement.updatedAt, original['updated_at']);
+      expect(acknowledgement.sequence, original['seq']);
+      expect(
+        repeated.batches.single.results.single.version,
+        acknowledgement.version,
+      );
       phase = 'checking';
       expect(jsonEncode(reopened.toMap()), localBefore);
       expect(reopened.containsKey(note.id), isTrue);
