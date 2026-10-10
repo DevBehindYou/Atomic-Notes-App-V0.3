@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:atomic_notes/api/logout_protocol.dart';
+import 'package:atomic_notes/api/logout_recovery.dart';
 
 import 'package:atomic_notes/authentication/auth_services/cred.dart';
 import 'package:atomic_notes/security/secure_options.dart';
@@ -190,7 +191,7 @@ class ApiClient {
 
   Future<dynamic> _request(String method, String path, {Object? body,
       Map<String, String>? query, bool authenticated = true,
-      Duration? timeout, bool acceptSyncFailure = false}) async {
+      Duration? timeout, bool acceptSyncFailure = false, int? maxResponseBytes}) async {
     final revision = _sessionRevision;
     final token = authenticated ? _cachedToken : null;
     if (authenticated && _logoutCompletionAttempt != null && path != '/notes/logout-attempt/complete') {
@@ -200,13 +201,32 @@ class ApiClient {
     request.headers['Content-Type'] = 'application/json';
     if (token != null) request.headers['Authorization'] = 'Bearer $token';
     if (body != null) request.body = jsonEncode(body);
-    final response = await _client.send(request).then(http.Response.fromStream)
-        .timeout(timeout ?? _requestTimeout);
+    late http.Response response;
+    try {
+      response = await _client.send(request).then((streamed) async {
+        if (maxResponseBytes == null) return http.Response.fromStream(streamed);
+        final bytes = <int>[];
+        // Do not trust Content-Length. Throwing cancels the owned subscription.
+        await for (final chunk in streamed.stream) {
+          if (bytes.length + chunk.length > maxResponseBytes) {
+            throw ApiException('invalid_response', streamed.statusCode);
+          }
+          bytes.addAll(chunk);
+        }
+        return http.Response.bytes(bytes, streamed.statusCode, headers: streamed.headers);
+      }).timeout(timeout ?? _requestTimeout);
+    } catch (_) {
+      if (revision != _sessionRevision) throw ApiException('session_changed', 409);
+      rethrow;
+    }
     // Reject both success and failure from old sessions before interpreting
     // anything. Account ID alone cannot detect A -> sign-out -> A.
     if (revision != _sessionRevision) throw ApiException('session_changed', 409);
     dynamic decoded;
-    try { decoded = response.body.isEmpty ? <String, dynamic>{} : jsonDecode(response.body); }
+    try {
+      final text = maxResponseBytes == null ? response.body : utf8.decode(response.bodyBytes);
+      decoded = text.isEmpty ? <String, dynamic>{} : jsonDecode(text);
+    }
     on FormatException {
       if (response.statusCode >= 200 && response.statusCode < 300) {
         throw ApiException('invalid_response', response.statusCode);
@@ -257,6 +277,14 @@ class ApiClient {
   Future<LogoutAdmission> beginLogoutSync(String attemptId, List<Map<String, dynamic>> batches) async {
     final data = await _request('POST', '/notes/logout-attempt', body: {'attemptId': attemptId, 'batches': batches});
     return LogoutAdmission.parse(data, attemptId, batches.length);
+  }
+
+  /// Read-only and session-fenced. No plan adoption, receipt application,
+  /// completion marker or local logout is authorized by this snapshot.
+  Future<LogoutRecoveryStatus> inspectLogoutRecovery(LogoutRecoveryQuery query) async {
+    final data = await _request('POST', '/notes/logout-attempt/recovery-status',
+      body: query.toWire(), maxResponseBytes: LogoutRecoveryQuery.maxWireBytes);
+    return LogoutRecoveryStatus.parse(data, query);
   }
 
   Future<PushReply> pushLogoutNotes(LogoutEnvelope envelope) async {
