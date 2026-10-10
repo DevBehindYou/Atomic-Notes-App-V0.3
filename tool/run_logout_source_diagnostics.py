@@ -1,0 +1,140 @@
+"""Repair-only analyzer metadata. Never retain messages, paths or raw streams."""
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+from urllib.parse import unquote, urljoin, urlparse
+
+FILES = {'lib/api/atomic_notes_api.dart', 'lib/database/logout_plan.dart',
+         'lib/database/notes_logout.dart', 'lib/database/notes_repository.dart',
+         'test/logout_recovery_receipts_test.dart', 'test/logout_same_owner_recovery_test.dart',
+         'test/logout_same_owner_wire_integration_test.dart'}
+CODES = {'argument_type_not_assignable', 'invalid_override', 'undefined_method',
+         'undefined_getter', 'ambiguous_import', 'unnecessary_non_null_assertion',
+         'unused_import', 'prefer_const_constructors', 'dead_code',
+         'invalid_use_of_protected_member', 'return_of_invalid_type',
+         'missing_required_argument', 'not_enough_positional_arguments',
+         'extra_positional_arguments', 'assignment_to_final_local',
+         'undefined_identifier', 'unnecessary_cast', 'avoid_dynamic_calls',
+         'invalid_annotation', 'unused_local_variable', 'unused_element',
+         'override_on_non_overriding_member', 'unchecked_use_of_nullable_value',
+         'const_with_non_const', 'undefined_named_parameter',
+         'type_argument_not_matching_bounds', 'non_abstract_class_inherits_abstract_member',
+         'undefined_operator', 'curly_braces_in_flow_control_structures',
+         'undefined_function', 'undefined_class', 'invalid_assignment',
+         'return_of_invalid_type_from_closure', 'body_might_complete_normally',
+         'invocation_of_non_function_expression', 'use_of_void_result',
+         'not_assigned_potentially_non_nullable_local_variable',
+         'invalid_use_of_visible_for_testing_member', 'unnecessary_import',
+         'invalid_null_aware_operator', 'missing_return', 'missing_identifier',
+         'expected_token', 'duplicate_definition', 'duplicate_named_argument',
+         'non_bool_condition', 'non_bool_negation_expression',
+         'non_type_as_type_argument', 'wrong_number_of_type_arguments',
+         'assignment_to_final', 'invalid_constant', 'const_eval_method_invocation',
+         'const_with_non_constant_argument', 'non_constant_list_element',
+         'non_constant_map_value', 'invalid_override_of_non_virtual_member',
+         'nullable_type_in_catch_clause', 'inconsistent_inheritance',
+         'argument_type_not_assignable_to_error_handler', 'not_initialized_non_nullable_instance_field',
+         'unnecessary_no_such_method', 'unnecessary_null_comparison',
+         'unused_element_parameter', 'unused_field', 'unused_shown_name',
+         'deprecated_member_use', 'deprecated_member_use_from_same_package',
+         'invalid_use_of_internal_member', 'invalid_use_of_visible_for_overriding_member',
+         'invalid_use_of_visible_for_template_member', 'unnecessary_question_mark',
+         'unused_catch_clause', 'unused_catch_stack', 'unused_label', 'unused_result',
+         'unnecessary_type_check', 'unnecessary_final', 'duplicate_import',
+         'depend_on_referenced_packages', 'unnecessary_overrides',
+         'undefined_enum_constant', 'unnecessary_to_list_in_spreads'}
+
+
+def installed_analyzer_codes(root):
+    """Inventory exact generated names from the already resolved CI package.
+
+    Only the known analyzer package and its generated enum file are read. No
+    dependency process, cache change, diagnostic text or path is emitted.
+    """
+    config = root / '.dart_tool/package_config.json'
+    packages = json.loads(config.read_text(encoding='utf-8'))['packages']
+    analyzer = [package for package in packages if package['name'] == 'analyzer']
+    if len(analyzer) != 1:
+        raise ValueError('analyzer inventory')
+    uri = urlparse(urljoin(config.as_uri(), analyzer[0]['rootUri']))
+    if uri.scheme != 'file' or uri.netloc or uri.query or uri.fragment:
+        raise ValueError('analyzer origin')
+    package = Path(unquote(uri.path))
+    if package.name != 'analyzer-12.1.0':
+        raise ValueError('analyzer revision')
+    source = package / 'lib/src/diagnostic/diagnostic.g.dart'
+    if source.stat().st_size > 4_000_000:
+        raise ValueError('analyzer source bound')
+    codes = set(re.findall(r"\bname:\s*'([a-z][a-z0-9_]{0,79})'", source.read_text(encoding='utf-8')))
+    if not 500 <= len(codes) <= 2000:
+        raise ValueError('analyzer code inventory')
+    return CODES | codes
+
+
+def main():
+    root = Path(__file__).resolve().parent.parent
+    head = os.environ.get('ATOMIC_REPAIR_SOURCE_HEAD', '')
+    report = {'version': 1, 'scope': 'redacted changed-source analyzer diagnostics',
+              'sourceHead': head if re.fullmatch('[0-9a-f]{40}', head) else None,
+              'phase': 'guard', 'outcome': 'incomplete', 'diagnostics': [],
+              'rejections': {'unknown_code': 0, 'unallowlisted_file': 0,
+                             'unparsed_diagnostic': 0, 'missing_terminal': 0}}
+    try:
+        if os.environ.get('GITHUB_ACTIONS') != 'true' or report['sourceHead'] is None:
+            raise ValueError('guard')
+        known_codes = installed_analyzer_codes(root)
+        report['phase'] = 'analyzing'
+        result = subprocess.run(['flutter', '--no-wrap', 'analyze', '--no-pub', '--fatal-warnings',
+                                 '--fatal-infos', '--no-preamble'], cwd=root,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                timeout=180, check=False, encoding='utf-8', errors='replace',
+                                env={**os.environ, 'NO_COLOR': '1'})
+        invalid, terminal = False, False
+        for raw in result.stdout.splitlines():
+            line = re.sub(r'\x1b\[[0-9;]*m', '', raw).strip()
+            if re.fullmatch(r'(\d+ issues? found\.|No issues found!) \(ran in [0-9.]+s\)', line):
+                terminal = True
+                continue
+            fields = line.split(' • ')
+            if len(fields) != 4:
+                if re.match(r'^(error|warning|info)\b', line):
+                    report['rejections']['unparsed_diagnostic'] += 1
+                    invalid = True
+                continue
+            severity, _, location, code = fields
+            match = re.fullmatch(r'(.+):(\d+):(\d+)', location)
+            if severity not in {'error', 'warning', 'info'} or code not in known_codes or match is None:
+                report['rejections']['unknown_code' if code not in known_codes else
+                                     'unparsed_diagnostic'] += 1
+                invalid = True
+                continue
+            filename, row, column = match.groups()
+            filename = filename.replace('\\', '/')
+            if filename not in FILES or len(report['diagnostics']) >= 100:
+                report['rejections']['unallowlisted_file'] += 1
+                invalid = True
+                continue
+            row, column = int(row), int(column)
+            source = (root / filename).read_text(encoding='utf-8').splitlines()
+            if not (1 <= row <= len(source) and 1 <= column <= len(source[row - 1]) + 1):
+                report['rejections']['unparsed_diagnostic'] += 1
+                invalid = True
+                continue
+            report['diagnostics'].append({'file': filename, 'line': row,
+                                          'column': column, 'severity': severity, 'code': code})
+        report['rejections']['missing_terminal'] = int(not terminal)
+        if terminal and not invalid and result.returncode in {0, 1}:
+            report['phase'] = 'complete'
+            report['outcome'] = ('issues' if report['diagnostics'] else
+                                 'clean' if result.returncode == 0 else 'incomplete')
+    except subprocess.TimeoutExpired:
+        report['phase'] = 'timeout'
+    except Exception:
+        report['phase'] = 'guard' if report['phase'] == 'guard' else 'runner_failure'
+    (root / 'ci-logout-source-diagnostics.json').write_text(json.dumps(report))
+
+
+if __name__ == '__main__':
+    main()

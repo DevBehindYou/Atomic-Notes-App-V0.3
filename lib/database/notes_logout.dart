@@ -6,6 +6,145 @@ class LogoutBlocked implements Exception {
 }
 
 extension SafeNotesLogout on NotesRepository {
+  /// Called only by an explicit logout, after the existing login/device/TOTP/
+  /// vault routes. The old plan is never rebound or sent again with new auth.
+  Future<void> _recoverSavedLogout(LogoutPlan plan, LogoutPlanStore store,
+      void Function() checkCurrent) async {
+    checkCurrent();
+    for (final envelope in plan.batches) {
+      if (envelope.rows.any((row) => !_notes.containsKey(row['id']))) {
+        throw const LogoutBlocked(
+            'Unlock your vault and retry logout recovery. Your notes remain on this device.');
+      }
+    }
+    final pending = _box.get(NotesRepository._pendingPushKey);
+    LogoutEnvelope? pendingEnvelope;
+    if (_box.containsKey(NotesRepository._pendingPushKey)) {
+      if (pending is! Map || pending['userId'] != plan.userId ||
+          pending['logoutAttemptId'] != plan.attemptId || pending['instant'] != true ||
+          pending['rows'] is! List || pending['sigs'] is! Map ||
+          pending['versions'] is! Map || pending['conflictIds'] is! Map ||
+          !plan.batches.any((batch) => batch.requestId == pending['requestId'])) {
+        throw const LogoutBlocked('The saved sync needs recovery. Your notes remain on this device.');
+      }
+      final expected = plan.batches.firstWhere((batch) => batch.requestId == pending['requestId']);
+      pendingEnvelope = await LogoutEnvelope.prepare(attemptId: plan.attemptId,
+          requestId: expected.requestId,
+          rows: (pending['rows'] as List).map((row) => Map<String, dynamic>.from(row as Map)).toList());
+      checkCurrent();
+      if (pendingEnvelope.fingerprint != expected.fingerprint ||
+          pendingEnvelope.wireBytes != expected.wireBytes ||
+          expected.rows.any((row) =>
+              (pending['sigs'] as Map)[row['id']] != plan.snapshots[row['id']]!.contentSig ||
+              (pending['versions'] as Map)[row['id']] != plan.snapshots[row['id']]!.updatedAt ||
+              (pending['conflictIds'] as Map)[row['id']] != plan.snapshots[row['id']]!.conflictId)) {
+        throw const LogoutBlocked('The saved sync changed. Your notes remain on this device.');
+      }
+    }
+    final receipts = await _api.commitLogoutRecovery(LogoutRecoveryQuery(
+        previousSessionHash: plan.sessionHash, batches: plan.batches));
+    checkCurrent();
+    if (receipts.state == LogoutRecoveryState.prepared) {
+      throw const FormatException('Recovered logout is not terminal');
+    }
+    final pendingRequestId = pendingEnvelope?.requestId;
+    if (pendingRequestId != null && receipts.batches
+        .firstWhere((batch) => batch.requestId == pendingRequestId).charged != pending['logoutCharge']) {
+      throw const FormatException('Recovered logout funding changed');
+    }
+    var conflicted = false;
+    for (var index = 0; index < receipts.batches.length; index++) {
+      final envelope = plan.batches[index];
+      for (final result in receipts.batches[index].results) {
+        checkCurrent();
+        final local = _notes[result.id]!;
+        final snapshot = plan.snapshots[result.id]!;
+        if (!result.ok) {
+          if (result.error == 'note_conflict') {
+            conflicted = true;
+            if (local.dirty) {
+              final copy = Note(id: snapshot.conflictId, kind: local.kind,
+                  title: '${local.title.length > 270 ? local.title.substring(0, 270) : local.title} (conflict copy)',
+                  body: local.body, items: local.items.map((item) => item.copy()).toList(), dirty: true);
+              final existing = _notes[copy.id];
+              if (existing == null) {
+                _notes[copy.id] = copy;
+              }
+              // Memory can contain a copy whose earlier put failed. Retry its
+              // write even without a restart; preserve an edited existing copy.
+              await _persist(copy.id);
+              checkCurrent();
+              await _box.flush();
+              checkCurrent();
+              // An edited copy is never overwritten on replay. Likewise newer
+              // original edits remain dirty; only the exact frozen original may
+              // be replaced by the pull after its separate copy is durable.
+              if ((existing == null || existing.contentSig == copy.contentSig) &&
+                  local.contentSig == snapshot.contentSig &&
+                  local.updatedAt.toIso8601String() == snapshot.updatedAt) {
+                local.dirty = false;
+                local.serverVersion = 0;
+                await _persist(local.id);
+                checkCurrent();
+              }
+            }
+          }
+          continue;
+        }
+        // A retained receipt must not regress a later acknowledged version.
+        if (local.serverVersion > result.version!) continue;
+        local.serverVersion = result.version!;
+        local.syncedSig = snapshot.contentSig;
+        local.dirty = local.contentSig != snapshot.contentSig;
+        if (!local.dirty) local.updatedAt = DateTime.parse(result.updatedAt!).toUtc();
+        final sent = envelope.rows.firstWhere((row) => row['id'] == result.id);
+        // A later vault migration can require identical content to be sealed.
+        // Cleared syncedSig alone also occurs on ordinary first upload, so
+        // recompute the existing format policy against the frozen accepted row.
+        if (rowNeedsSealing(sent, vaultUnlocked: _vault.isUnlocked)) {
+          local.requireResend();
+        }
+        if (sent['enc_v'] == Vault.encVersion) {
+          _encryptedCloudVersions[local.id] = local.serverVersion;
+        } else {
+          _encryptedCloudVersions.remove(local.id);
+        }
+        await _persist(local.id);
+        checkCurrent();
+      }
+    }
+    await _drainWrites();
+    checkCurrent();
+    await _box.flush();
+    checkCurrent();
+    if (conflicted) {
+      await _resetCursor();
+      checkCurrent();
+      await _pull(plan.userId);
+      checkCurrent();
+      await _drainWrites();
+      await _box.flush();
+      checkCurrent();
+    }
+    // The plan remains the crash-replay journal until every local note write is
+    // flushed. Only the exact validated pending batch metadata is removed.
+    if (pendingEnvelope != null) {
+      if (jsonEncode(_box.get(NotesRepository._pendingPushKey)) != jsonEncode(pending)) {
+        throw const LogoutBlocked('The saved sync changed. Your notes remain on this device.');
+      }
+      await _box.delete(NotesRepository._pendingPushKey);
+      await _box.flush();
+      checkCurrent();
+    }
+    await store.consumeRecovered(plan, checkCurrent: checkCurrent);
+    checkCurrent();
+    _notifyLogoutState();
+    if (hasPendingLogoutWork) {
+      throw const LogoutBlocked(
+          'The previous sync was recovered. Remaining edits are safe on this device. Retry logout to sync them in a new attempt.');
+    }
+  }
+
   bool get hasPendingLogoutWork =>
       _cacheReady &&
       (_hasSavedLogout ||
@@ -113,8 +252,12 @@ extension SafeNotesLogout on NotesRepository {
         try {
           plan = await store.load(userId: uid, sessionHash: hash);
         } catch (_) {
-          throw const LogoutBlocked(
-              'The saved logout needs recovery. Your notes remain on this device.');
+          checkCurrent();
+          final previous = await store.loadForRecovery(userId: uid, currentSessionHash: hash);
+          checkCurrent();
+          onProgress?.call('Recovering the previous logout sync…');
+          await _recoverSavedLogout(previous, store, checkCurrent);
+          checkCurrent();
         }
         checkCurrent();
       }
