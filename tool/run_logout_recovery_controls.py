@@ -36,6 +36,8 @@ def main():
              'outcomes': {code: 'not_executed' for code in NAMES.values()},
              'outcome': 'failed'}
     ids = {}
+    seen = set()
+    invalid = False
     process = subprocess.Popen(['flutter', 'test', '--no-pub', '--machine',
                                 'test/logout_same_owner_recovery_test.dart'],
                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
@@ -45,25 +47,37 @@ def main():
             try:
                 event = json.loads(line)
             except (ValueError, TypeError):
+                invalid = True
                 continue
             if not isinstance(event, dict):
+                invalid = True
                 continue
             if event.get('type') == 'testStart' and isinstance(event.get('test'), dict):
                 test = event['test']
                 code = NAMES.get(test.get('name'))
                 if code is not None:
+                    if code in seen or not isinstance(test.get('id'), int) or test['id'] in ids:
+                        invalid = True
+                        continue
+                    seen.add(code)
                     ids[test['id']] = code
                     proof['outcomes'][code] = 'started'
             elif event.get('type') == 'testDone' and event.get('testID') in ids:
+                if proof['outcomes'][ids[event['testID']]] != 'started':
+                    invalid = True
                 proof['outcomes'][ids[event['testID']]] = (
                     'passed' if event.get('result') == 'success' and not event.get('skipped') else 'failed')
         exit_code = process.wait()
-        if exit_code == 0 and all(value == 'passed' for value in proof['outcomes'].values()):
+        if not invalid and exit_code == 0 and len(seen) == len(NAMES) and all(value == 'passed' for value in proof['outcomes'].values()):
             proof['outcome'] = 'passed'
     finally:
         if process.poll() is None:
             process.terminate()
-            process.wait(timeout=10)
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=10)
         process.stdout.close()
         Path('ci-logout-recovery-controls-proof.json').write_text(json.dumps(proof))
     if proof['outcome'] != 'passed':
