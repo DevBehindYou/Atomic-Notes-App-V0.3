@@ -103,6 +103,7 @@ class CloudNotesCubit extends Cubit<CloudNotesState> {
   final NotesSource _source;
   Object? _sourceIdentity;
   int _checkRevision = 0;
+  bool _requestWorking = false;
   Object? get _identity {
     final source = _source;
     return source is SyncReportSource
@@ -111,7 +112,8 @@ class CloudNotesCubit extends Cubit<CloudNotesState> {
   }
 
   /// [base] with the numbers the store holds now.
-  static CloudNotesState _read(NotesSource source, CloudNotesState base) =>
+  static CloudNotesState _read(NotesSource source, CloudNotesState base,
+          {bool? working}) =>
       CloudNotesState(
         onDevice: source.count,
         waiting: source.pendingCount,
@@ -119,7 +121,7 @@ class CloudNotesCubit extends Cubit<CloudNotesState> {
         cloud: base.cloud,
         checked: base.checked,
         checking: base.checking,
-        working: base.working,
+        working: working ?? source.isSyncing,
         checkedAt: base.checkedAt,
         lastSyncedAt: source.lastSyncedAt,
         nextAutoSyncAt: source.nextAutoSyncAt,
@@ -142,7 +144,8 @@ class CloudNotesCubit extends Cubit<CloudNotesState> {
       );
     }
     _sourceIdentity = identity;
-    final next = _read(_source, base);
+    final next = _read(_source, base,
+        working: _requestWorking || _source.isSyncing);
     if (next != state) emit(next);
   }
 
@@ -183,8 +186,11 @@ class CloudNotesCubit extends Cubit<CloudNotesState> {
   /// sync: Server pricing applies per charged upload batch. Answers with the message to show,
   /// or null when a sync was already running or the screen has gone.
   Future<UiMessage?> sync({required bool uploadAll}) async {
+    if (isClosed) return null;
+    _sourceChanged();
     if (state.working) return null;
     final identity = _identity;
+    _requestWorking = true;
     emit(state.copyWith(working: true, clearReport: true));
     try {
       if (uploadAll) await _source.markAllForUpload();
@@ -215,7 +221,10 @@ class CloudNotesCubit extends Cubit<CloudNotesState> {
       return const UiMessage(
           'Sync could not finish. Your notes remain on this device.', 3000);
     } finally {
-      if (!isClosed) emit(state.copyWith(working: false));
+      // Source notifications can arrive before this request's receipt. Keep
+      // either owner busy until its own work has ended.
+      _requestWorking = false;
+      if (!isClosed) _sourceChanged();
     }
   }
 }
