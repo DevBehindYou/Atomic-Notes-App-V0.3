@@ -40,7 +40,7 @@ def main():
         invalid, terminal = False, False
         for raw in result.stdout.splitlines():
             line = re.sub(r'\x1b\[[0-9;]*m', '', raw).strip()
-            if re.fullmatch(r'(\d+ issues? found|No issues found)!? \(ran in [0-9.]+s\)', line):
+            if re.fullmatch(r'(\d+ issues? found\.|No issues found!) \(ran in [0-9.]+s\)', line):
                 terminal = True
                 continue
             fields = line.split(' • ')
