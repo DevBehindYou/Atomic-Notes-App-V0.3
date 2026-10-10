@@ -10,6 +10,11 @@ import threading
 
 
 def main():
+    run_fixture()
+
+
+def run_fixture(test_file='test/server_wire_integration_test.dart',
+                fixture_args=(), dart_defines=()):
     if os.environ.get('GITHUB_ACTIONS') != 'true':
         raise RuntimeError('Dedicated GitHub Actions disposable fixture required')
     server = Path.cwd() / 'server-fixture'
@@ -22,7 +27,7 @@ def main():
     descriptor = None
     with tempfile.TemporaryFile(mode='w+') as private_errors:
         child = subprocess.Popen(
-            ['node', '--import', 'tsx', 'tests/clientFixture.ts'], cwd=server,
+            ['node', '--import', 'tsx', 'tests/clientFixture.ts', *fixture_args], cwd=server,
             env=environment, stdout=subprocess.PIPE, stderr=private_errors, text=True)
         # Bounded startup: do not block forever reading a failed child's pipe.
         def first_line():
@@ -42,8 +47,9 @@ def main():
             threading.Thread(target=lambda: child.stdout.read(), daemon=True).start()
             subprocess.run([
                 'flutter', 'test', '--no-pub', '--reporter', 'expanded',
-                'test/server_wire_integration_test.dart',
+                test_file,
                 f'--dart-define=ATOMIC_FIXTURE_ORIGIN={origin}',
+                *dart_defines,
             ], check=True)
         finally:
             # This Popen handle owns the child; no PID lookup or unrelated kill.
