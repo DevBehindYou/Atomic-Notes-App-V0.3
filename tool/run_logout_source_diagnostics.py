@@ -42,7 +42,9 @@ def main():
     head = os.environ.get('ATOMIC_REPAIR_SOURCE_HEAD', '')
     report = {'version': 1, 'scope': 'redacted changed-source analyzer diagnostics',
               'sourceHead': head if re.fullmatch('[0-9a-f]{40}', head) else None,
-              'phase': 'guard', 'outcome': 'incomplete', 'diagnostics': []}
+              'phase': 'guard', 'outcome': 'incomplete', 'diagnostics': [],
+              'rejections': {'unknown_code': 0, 'unallowlisted_file': 0,
+                             'unparsed_diagnostic': 0, 'missing_terminal': 0}}
     try:
         if os.environ.get('GITHUB_ACTIONS') != 'true' or report['sourceHead'] is None:
             raise ValueError('guard')
@@ -60,24 +62,32 @@ def main():
                 continue
             fields = line.split(' • ')
             if len(fields) != 4:
+                if re.match(r'^(error|warning|info)\b', line):
+                    report['rejections']['unparsed_diagnostic'] += 1
+                    invalid = True
                 continue
             severity, _, location, code = fields
             match = re.fullmatch(r'(.+):(\d+):(\d+)', location)
             if severity not in {'error', 'warning', 'info'} or code not in CODES or match is None:
+                report['rejections']['unknown_code' if code not in CODES else
+                                     'unparsed_diagnostic'] += 1
                 invalid = True
                 continue
             filename, row, column = match.groups()
             filename = filename.replace('\\', '/')
             if filename not in FILES or len(report['diagnostics']) >= 100:
+                report['rejections']['unallowlisted_file'] += 1
                 invalid = True
                 continue
             row, column = int(row), int(column)
             source = (root / filename).read_text(encoding='utf-8').splitlines()
             if not (1 <= row <= len(source) and 1 <= column <= len(source[row - 1]) + 1):
+                report['rejections']['unparsed_diagnostic'] += 1
                 invalid = True
                 continue
             report['diagnostics'].append({'file': filename, 'line': row,
                                           'column': column, 'severity': severity, 'code': code})
+        report['rejections']['missing_terminal'] = int(not terminal)
         if terminal and not invalid and result.returncode in {0, 1}:
             report['phase'] = 'complete'
             report['outcome'] = ('issues' if report['diagnostics'] else
