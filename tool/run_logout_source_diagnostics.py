@@ -34,7 +34,16 @@ CODES = {'argument_type_not_assignable', 'invalid_override', 'undefined_method',
          'const_with_non_constant_argument', 'non_constant_list_element',
          'non_constant_map_value', 'invalid_override_of_non_virtual_member',
          'nullable_type_in_catch_clause', 'inconsistent_inheritance',
-         'argument_type_not_assignable_to_error_handler', 'not_initialized_non_nullable_instance_field'}
+         'argument_type_not_assignable_to_error_handler', 'not_initialized_non_nullable_instance_field',
+         'unnecessary_no_such_method', 'unnecessary_null_comparison',
+         'unused_element_parameter', 'unused_field', 'unused_shown_name',
+         'deprecated_member_use', 'deprecated_member_use_from_same_package',
+         'invalid_use_of_internal_member', 'invalid_use_of_visible_for_overriding_member',
+         'invalid_use_of_visible_for_template_member', 'unnecessary_question_mark',
+         'unused_catch_clause', 'unused_catch_stack', 'unused_label', 'unused_result',
+         'unnecessary_type_check', 'unnecessary_final', 'duplicate_import',
+         'depend_on_referenced_packages', 'unnecessary_overrides',
+         'undefined_enum_constant', 'unnecessary_to_list_in_spreads'}
 
 
 def main():
@@ -49,7 +58,7 @@ def main():
         if os.environ.get('GITHUB_ACTIONS') != 'true' or report['sourceHead'] is None:
             raise ValueError('guard')
         report['phase'] = 'analyzing'
-        result = subprocess.run(['flutter', 'analyze', '--no-pub', '--fatal-warnings',
+        result = subprocess.run(['flutter', '--no-wrap', 'analyze', '--no-pub', '--fatal-warnings',
                                  '--fatal-infos', '--no-preamble'], cwd=root,
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 timeout=180, check=False, encoding='utf-8', errors='replace',
