@@ -54,9 +54,12 @@ class _Replies extends http.BaseClient {
   int uploads = 0, recoveries = 0;
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) async {
-    if (request.url.path == '/api/notes/push') uploads++;
-    if (request.url.path == '/api/notes/logout-attempt/recovery-commit')
+    if (request.url.path == '/api/notes/push') {
+      uploads++;
+    }
+    if (request.url.path == '/api/notes/logout-attempt/recovery-commit') {
       recoveries++;
+    }
     final reply = await inner.send(request);
     if (request.url.path == dropPath) {
       dropPath = null;
@@ -86,7 +89,7 @@ void main() {
           transport?.close();
           await Hive.close();
           if (directory != null) {
-            final resolved = await directory!.resolveSymbolicLinks();
+            final resolved = await directory.resolveSymbolicLinks();
             expect(
               Directory(resolved).parent.path,
               await Directory.systemTemp.resolveSymbolicLinks(),

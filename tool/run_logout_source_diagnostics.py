@@ -19,7 +19,8 @@ CODES = {'argument_type_not_assignable', 'invalid_override', 'undefined_method',
          'invalid_annotation', 'unused_local_variable', 'unused_element',
          'override_on_non_overriding_member', 'unchecked_use_of_nullable_value',
          'const_with_non_const', 'undefined_named_parameter',
-         'type_argument_not_matching_bounds', 'non_abstract_class_inherits_abstract_member'}
+         'type_argument_not_matching_bounds', 'non_abstract_class_inherits_abstract_member',
+         'undefined_operator', 'curly_braces_in_flow_control_structures'}
 
 
 def main():
