@@ -29,7 +29,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           repository: DevBehindYou/Atomic-Notes-Server-V0.3
-          ref: cea850875d932235ac6ab2c8846529d01646589a
+          ref: 0791687672961a3468f2c1b4efcb116fe583bd1d
           path: server-fixture
           persist-credentials: false
       - uses: actions/setup-node@v5
@@ -62,6 +62,8 @@ jobs:
           exit 1
       - name: Verify real wire contract and owned namespace cleanup
         run: python3 tool/run_server_wire_fixture.py
+      - name: Verify opt-in logout wire contract and per-case cleanup
+        run: python3 tool/run_logout_wire_fixture.py
       - name: Upload sanitized wire outcomes
         if: always()
         continue-on-error: true
@@ -69,6 +71,15 @@ jobs:
         with:
           name: sanitized-server-wire-proof
           path: ci-wire-proof.json
+          if-no-files-found: warn
+          retention-days: 1
+      - name: Upload sanitized logout wire outcomes
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: sanitized-logout-server-wire-proof
+          path: ci-logout-server-wire-proof.json
           if-no-files-found: warn
           retention-days: 1
       - name: Remove owned disposable MongoDB container
