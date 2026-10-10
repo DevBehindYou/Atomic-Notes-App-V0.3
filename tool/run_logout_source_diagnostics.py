@@ -20,7 +20,21 @@ CODES = {'argument_type_not_assignable', 'invalid_override', 'undefined_method',
          'override_on_non_overriding_member', 'unchecked_use_of_nullable_value',
          'const_with_non_const', 'undefined_named_parameter',
          'type_argument_not_matching_bounds', 'non_abstract_class_inherits_abstract_member',
-         'undefined_operator', 'curly_braces_in_flow_control_structures'}
+         'undefined_operator', 'curly_braces_in_flow_control_structures',
+         'undefined_function', 'undefined_class', 'invalid_assignment',
+         'return_of_invalid_type_from_closure', 'body_might_complete_normally',
+         'invocation_of_non_function_expression', 'use_of_void_result',
+         'not_assigned_potentially_non_nullable_local_variable',
+         'invalid_use_of_visible_for_testing_member', 'unnecessary_import',
+         'invalid_null_aware_operator', 'missing_return', 'missing_identifier',
+         'expected_token', 'duplicate_definition', 'duplicate_named_argument',
+         'non_bool_condition', 'non_bool_negation_expression',
+         'non_type_as_type_argument', 'wrong_number_of_type_arguments',
+         'assignment_to_final', 'invalid_constant', 'const_eval_method_invocation',
+         'const_with_non_constant_argument', 'non_constant_list_element',
+         'non_constant_map_value', 'invalid_override_of_non_virtual_member',
+         'nullable_type_in_catch_clause', 'inconsistent_inheritance',
+         'argument_type_not_assignable_to_error_handler', 'not_initialized_non_nullable_instance_field'}
 
 
 def main():
