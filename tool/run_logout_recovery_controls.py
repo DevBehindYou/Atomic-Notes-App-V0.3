@@ -42,6 +42,9 @@ def main():
                   'sourceHead': head if re.fullmatch('[0-9a-f]{40}', head) else None,
                   'phase': 'guard', 'exitStatus': 'unavailable',
                   'privateStderrLines': 0,
+                  'parseKinds': {'blank': 0, 'other': 0},
+                  'nonobjectKinds': {code: 0 for code in ('null', 'list', 'bool', 'number', 'string')},
+                  'noisePosition': {code: 0 for code in ('before_protocol', 'during_protocol', 'after_terminal')},
                   'started': 0, 'completed': 0, 'terminalCount': 0, 'terminalSuccess': False,
                   'rejections': {code: 0 for code in ('parse', 'not_object', 'invalid_start',
                                 'duplicate_start', 'unknown_hidden', 'unknown_visible',
@@ -56,23 +59,37 @@ def main():
                                 timeout=180, check=False, encoding='utf-8', errors='replace')
         ids, loader_ids, loader_completed, seen, completed = {}, set(), set(), set(), set()
         invalid, done = False, False
+        protocol_started = False
         diagnostic['exitStatus'] = 'zero' if result.returncode == 0 else 'nonzero'
         diagnostic['privateStderrLines'] = min(100, len((getattr(result, 'stderr', '') or '').splitlines()))
         def reject(code):
             nonlocal invalid
             invalid = True
             diagnostic['rejections'][code] = min(100, diagnostic['rejections'][code] + 1)
+        def record_noise():
+            position = 'after_terminal' if done else 'during_protocol' if protocol_started else 'before_protocol'
+            diagnostic['noisePosition'][position] = min(100, diagnostic['noisePosition'][position] + 1)
         done_count = 0
         loader_name = 'loading ' + str(root / 'test/logout_same_owner_recovery_test.dart')
         for line in result.stdout.splitlines():
             try:
                 event = json.loads(line)
             except (ValueError, TypeError):
+                kind = 'blank' if not line.strip() else 'other'
+                diagnostic['parseKinds'][kind] = min(100, diagnostic['parseKinds'][kind] + 1)
+                record_noise()
                 reject('parse')
                 continue
             if not isinstance(event, dict):
+                kind = ('null' if event is None else 'list' if isinstance(event, list)
+                        else 'bool' if isinstance(event, bool) else 'number'
+                        if isinstance(event, (int, float)) else 'string')
+                diagnostic['nonobjectKinds'][kind] = min(100, diagnostic['nonobjectKinds'][kind] + 1)
+                record_noise()
                 reject('not_object')
                 continue
+            if event.get('type') in ('start', 'testStart'):
+                protocol_started = True
             if event.get('type') == 'testStart':
                 test = event.get('test')
                 if not isinstance(test, dict) or type(test.get('id')) is not int:
