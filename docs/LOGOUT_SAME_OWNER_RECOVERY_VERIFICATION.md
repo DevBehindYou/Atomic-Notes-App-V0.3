@@ -75,11 +75,13 @@ mock acknowledgements also use the Server's millisecond ISO contract at initial
 receipt creation; recovery returns those exact retained timestamps. The
 production receipt decoder remains strict. Neither repair
 artifact nor local parser checks substitute for complete CI acceptance.
-The machine checker parses reporter stdout separately from discarded private
-stderr. It requires a successful exit, one successful terminal event, all 24
+The machine checker uses the installed test runner's official JSON file reporter
+in an owned temporary directory. Console stdout/stderr are discarded; missing,
+oversized or malformed private reports fail closed. The raw report is removed
+before the fixed artifacts are written. It requires a successful exit, one successful terminal event, all 24
 unique visible/non-skipped test completions, and a successful hidden completion
 for the exact known loader. The reporter supplies `hidden` on `testDone`, not
-`testStart`. Unknown tests, malformed stdout, duplicates and missing events
+`testStart`. Unknown tests, malformed private JSON, duplicates and missing events
 still fail closed; repair counters are separate from the six acceptance proofs.
 
 Google authentication, Android keystore/secure storage, native device/TOTP UI,

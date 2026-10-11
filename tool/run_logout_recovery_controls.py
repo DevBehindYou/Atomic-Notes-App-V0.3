@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 
 SCOPE = 'controlled same-owner logout recovery; real Hive; synthetic auth and receipts'
 NAMES = {
@@ -41,6 +42,7 @@ def main():
     diagnostic = {'version': 1, 'scope': 'redacted controlled recovery machine metadata',
                   'sourceHead': head if re.fullmatch('[0-9a-f]{40}', head) else None,
                   'phase': 'guard', 'exitStatus': 'unavailable',
+                  'protocolSource': 'private_json_file', 'reportState': 'unavailable',
                   'privateStderrLines': 0,
                   'parseKinds': {'blank': 0, 'other': 0},
                   'nonobjectKinds': {code: 0 for code in ('null', 'list', 'bool', 'number', 'string')},
@@ -53,15 +55,34 @@ def main():
         if os.environ.get('GITHUB_ACTIONS') != 'true':
             raise ValueError('guard')
         diagnostic['phase'] = 'tests'
-        result = subprocess.run(['flutter', 'test', '--no-pub', '--machine',
-                                 'test/logout_same_owner_recovery_test.dart'],
-                                cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                timeout=180, check=False, encoding='utf-8', errors='replace')
+        # The official file reporter is the sole protocol channel. Flutter tool
+        # console notices are not test events; both console streams stay private.
+        # The context removes the owned report on success, timeout and failure,
+        # before either allowlisted artifact is written below.
+        with tempfile.TemporaryDirectory(prefix='atomic-recovery-machine-') as owned:
+            report = Path(owned) / 'report.jsonl'
+            result = subprocess.run(['flutter', 'test', '--no-pub', '--machine',
+                                     '--file-reporter=json:' + str(report),
+                                     'test/logout_same_owner_recovery_test.dart'],
+                                    cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                    timeout=180, check=False, encoding='utf-8', errors='replace')
+            diagnostic['exitStatus'] = 'zero' if result.returncode == 0 else 'nonzero'
+            diagnostic['privateStderrLines'] = min(100, len((getattr(result, 'stderr', '') or '').splitlines()))
+            if not report.is_file():
+                diagnostic['reportState'] = 'missing'
+                raise ValueError('report')
+            if report.stat().st_size > 4 * 1024 * 1024:
+                diagnostic['reportState'] = 'oversized'
+                raise ValueError('report')
+            protocol = report.read_bytes()
+            if len(protocol) > 4 * 1024 * 1024:
+                diagnostic['reportState'] = 'oversized'
+                raise ValueError('report')
+            protocol = protocol.decode('utf-8')
+            diagnostic['reportState'] = 'read'
         ids, loader_ids, loader_completed, seen, completed = {}, set(), set(), set(), set()
         invalid, done = False, False
         protocol_started = False
-        diagnostic['exitStatus'] = 'zero' if result.returncode == 0 else 'nonzero'
-        diagnostic['privateStderrLines'] = min(100, len((getattr(result, 'stderr', '') or '').splitlines()))
         def reject(code):
             nonlocal invalid
             invalid = True
@@ -71,7 +92,7 @@ def main():
             diagnostic['noisePosition'][position] = min(100, diagnostic['noisePosition'][position] + 1)
         done_count = 0
         loader_name = 'loading ' + str(root / 'test/logout_same_owner_recovery_test.dart')
-        for line in result.stdout.splitlines():
+        for line in protocol.splitlines():
             try:
                 event = json.loads(line)
             except (ValueError, TypeError):
