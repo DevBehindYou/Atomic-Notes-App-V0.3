@@ -81,8 +81,11 @@ class LogoutTestApi extends TestApi {
                           'ok': true,
                           'version': (row['base_version'] as int) + 1,
                           'seq': ++sequence,
-                          'updated_at':
-                              DateTime.now().toUtc().toIso8601String(),
+                          // Match JavaScript Date's millisecond precision at
+                          // receipt creation; recovery returns this exact value.
+                          'updated_at': DateTime.fromMillisecondsSinceEpoch(
+                              DateTime.now().millisecondsSinceEpoch,
+                              isUtc: true).toIso8601String(),
                         })
                     .toList()));
     if (dropPushReply && receipts.length == dropBatch) {

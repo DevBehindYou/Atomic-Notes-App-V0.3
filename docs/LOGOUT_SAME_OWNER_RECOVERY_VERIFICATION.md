@@ -71,8 +71,9 @@ Repair-only analyzer diagnostics retain the exact public source revision and
 allowlisted source locations/error codes, with no messages or raw logs. They
 identified an inherited test-helper field named `completion` that resolved to
 the imported Flutter matcher; the helper now uses `this.completion`. Recovery
-mock acknowledgements also copy Dart timestamps into the Server's millisecond
-ISO contract. The production receipt decoder remains strict. Neither repair
+mock acknowledgements also use the Server's millisecond ISO contract at initial
+receipt creation; recovery returns those exact retained timestamps. The
+production receipt decoder remains strict. Neither repair
 artifact nor local parser checks substitute for complete CI acceptance.
 
 Google authentication, Android keystore/secure storage, native device/TOTP UI,

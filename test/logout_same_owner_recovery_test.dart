@@ -54,20 +54,7 @@ class _RecoveryApi extends LogoutTestApi {
           'requestId': batch.requestId,
           'charged': receipt.receipt!.charged,
           'refunded': receipt.receipt!.refunded,
-          // The inherited mock uses Dart microseconds; actual Server receipts
-          // use JavaScript's millisecond ISO format. Copy the DTO into that
-          // contract without relaxing the production timestamp decoder.
-          'results': receipt.results.map((row) {
-            if (row['ok'] != true) return row;
-            final updated = DateTime.parse(row['updated_at'] as String);
-            return {
-              ...row,
-              'updated_at': DateTime.fromMillisecondsSinceEpoch(
-                updated.millisecondsSinceEpoch,
-                isUtc: true,
-              ).toIso8601String(),
-            };
-          }).toList(),
+          'results': receipt.results,
         };
       }).toList(),
     }, query);
