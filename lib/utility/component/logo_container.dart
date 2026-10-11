@@ -2,9 +2,7 @@ import 'package:atomic_notes/theme/app_tokens.dart';
 import 'package:atomic_notes/theme/editorial.dart';
 import 'package:flutter/material.dart';
 
-/// Wordmark lockup. The atom PNG is light-on-dark, so it sits inside an Ink
-/// block — the reference treats logos the same way, and it keeps the mark
-/// legible on the Paper canvas without redrawing the asset.
+/// Atomic Notes wordmark lockup using the current DevBehindYou icon library.
 class LogoContainer extends StatelessWidget {
   final bool showTagline;
   const LogoContainer({super.key, this.showTagline = true});

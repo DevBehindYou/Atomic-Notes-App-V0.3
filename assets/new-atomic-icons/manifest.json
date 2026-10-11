@@ -1,0 +1,511 @@
+{
+  "version": 1,
+  "supportedConfiguredReleasePlatforms": [
+    "android"
+  ],
+  "artworkAuthority": "assets/atomic-icon.jpg (unchanged JPEG); supplied editable vector companion for transparent/native derivatives",
+  "transparencyMethod": "audited supplied vector geometry; no JPEG extension rename, color-threshold removal or AI redraw",
+  "visualBoundary": "Companion is a symmetric reconstruction, not pixel-identical JPEG extraction. On-dark intentionally substitutes Paper for Ink to preserve contrast.",
+  "colors": {
+    "paper": "#F4F5F1",
+    "ink": "#15171B",
+    "signal": "#3A2FF0"
+  },
+  "sources": {
+    "atomic-icon.jpg": {
+      "sha256": "3114c97ad9fe8ce43d5760e9399be135c0a0a1608b528e3aab6f4155bfa546e9",
+      "operation": "unchanged copy"
+    },
+    "Atomic Icons/devbehindyou-worker.gif": {
+      "sha256": "e5993ff1ada52aa281a720d0307d53a7cffccc48839cfccca142041b8783c96a",
+      "operation": "unchanged copy"
+    },
+    "Atomic Icons/dotgrid-blink-transparent.gif": {
+      "sha256": "208a81c983c0060f4a16252e9fabf97353c272269f639c2c0134cdac6f119377",
+      "operation": "unchanged copy"
+    },
+    "new-atomic-icons/svg/atomic-icon-on-light.svg": {
+      "sha256": "d2603ad8c602cd30ca12aa182c4154c0679eef71f3ecc03c239f876b7b7e1a18",
+      "operation": "visual primitives retained; metadata omitted"
+    },
+    "new-atomic-icons/png/atomic-icon-on-light.png": {
+      "sha256": "1d0e0945f0f0c61cca93acdc3b26fda01f56ffee5731d669a353de23571ba2e6",
+      "operation": "unchanged copy"
+    },
+    "new-atomic-icons/svg/atomic-icon-on-dark.svg": {
+      "sha256": "16175f3fffa22aab17e66248dae4ab7ec7b6f6e5f49c1c9eeb6987edd10521cd",
+      "operation": "visual primitives retained; metadata omitted"
+    },
+    "new-atomic-icons/png/atomic-icon-on-dark.png": {
+      "sha256": "fd6ed4161ff8785c3d081b999084a4d53c924accacf87e194ef2d9573ab7f3da",
+      "operation": "unchanged copy"
+    },
+    "new-atomic-icons/svg/atomic-icon-mono-ink.svg": {
+      "sha256": "bf968278e75c02b09672d3759b0beb719c325a44b383613faf7f49532d97aa1d",
+      "operation": "visual primitives retained; metadata omitted"
+    },
+    "new-atomic-icons/png/atomic-icon-mono-ink.png": {
+      "sha256": "8e5da4e2faa14bf5e5f8a7bec9854a79a83a3fc7914183a3f9b7c3daf74499f0",
+      "operation": "unchanged copy"
+    },
+    "new-atomic-icons/svg/atomic-icon-mono-white.svg": {
+      "sha256": "3375798d86cc09d82d03fda9a9f893e44f884ee0339f3782a26af04b2a4c82f2",
+      "operation": "visual primitives retained; metadata omitted"
+    },
+    "new-atomic-icons/png/atomic-icon-mono-white.png": {
+      "sha256": "ab5788f6cd6600163e8de5dc52e10f108e83c2a150705824bd16690b9ce47c32",
+      "operation": "unchanged copy"
+    },
+    "new-atomic-icons/gif/atomic-spin-on-light.gif": {
+      "sha256": "f69699310495b8e5cba138ea57b978f927f60b464deb5ab4f99e51bb1d475b28",
+      "operation": "unchanged optional library copy; not native splash"
+    },
+    "new-atomic-icons/gif/atomic-spin-on-dark.gif": {
+      "sha256": "37be0cbe56f1d787a4c72ee8fbe9c203116a76be70a10b051569f1b732f91cfe",
+      "operation": "unchanged optional library copy; not native splash"
+    }
+  },
+  "android": {
+    "adaptiveCanvasDp": 108,
+    "adaptiveSafeDiameterDp": 66,
+    "measuredImportantArtworkMaxRadiusDp": 32.978,
+    "nativeSplashCanvasDp": 288,
+    "nativeSplashSafeDiameterDp": 192,
+    "nativeSplashArtworkDiameterDp": 176,
+    "legacyPixels": [
+      48,
+      72,
+      96,
+      144,
+      192
+    ],
+    "play": {
+      "pixels": 512,
+      "mode": "RGBA",
+      "maxBytes": 1048576
+    },
+    "notification": "prepared simplified white-alpha resource; app currently has no native notification channel",
+    "animation": "Native splash static vector. Optional supplied transparent GIFs are library-only; no startup hold."
+  },
+  "unverifiedPlatforms": [
+    "ios",
+    "macos",
+    "windows",
+    "linux",
+    "web"
+  ],
+  "files": [
+    {
+      "path": "new-atomic-icons/android/adaptive-background.svg",
+      "bytes": 136,
+      "sha256": "bedf9c60bbb1fb4026b10c71d9be63f82a157b0b56addea205d250a50a0b1cb4"
+    },
+    {
+      "path": "new-atomic-icons/android/adaptive-foreground.png",
+      "bytes": 38871,
+      "sha256": "9dcf4969fbd0bbad66c7e955a953866aba5eb14f4a98e1914c69cbc65d905e75",
+      "width": 432,
+      "height": 432,
+      "mode": "RGBA",
+      "frames": 1,
+      "alphaRange": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "new-atomic-icons/android/adaptive-monochrome.png",
+      "bytes": 19657,
+      "sha256": "6a08ca0fd21f3a5e14998c4440dec79a5545be5dbbb18664a94e675bae39344a",
+      "width": 432,
+      "height": 432,
+      "mode": "RGBA",
+      "frames": 1,
+      "alphaRange": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "new-atomic-icons/android/google-play-512.png",
+      "bytes": 72731,
+      "sha256": "04c08d3135e3c50c5846b6e0a1ecc53f3c04017a91c5271cfd6dcd6db82df5b6",
+      "width": 512,
+      "height": 512,
+      "mode": "RGBA",
+      "frames": 1,
+      "alphaRange": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "new-atomic-icons/android/launcher-source-1024.png",
+      "bytes": 192375,
+      "sha256": "9e9c5ba74e1b56e5cb632d0f79c373c3eeadfb270a1a70f9eab6c18705038b31",
+      "width": 1024,
+      "height": 1024,
+      "mode": "RGBA",
+      "frames": 1,
+      "alphaRange": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "new-atomic-icons/android/legacy/launcher-144.png",
+      "bytes": 12734,
+      "sha256": "2f1bc1d99e7b1033c354dbe2dd065c6ea4b7943f9c382a7ca4d9aa9cf1679201",
+      "width": 144,
+      "height": 144,
+      "mode": "RGBA",
+      "frames": 1,
+      "alphaRange": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "new-atomic-icons/android/legacy/launcher-192.png",
+      "bytes": 19256,
+      "sha256": "f4aa5a612d0f0073c60aeefb415a1c57d2fb1bc736e4551bddaf9e44d6997715",
+      "width": 192,
+      "height": 192,
+      "mode": "RGBA",
+      "frames": 1,
+      "alphaRange": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "new-atomic-icons/android/legacy/launcher-48.png",
+      "bytes": 3072,
+      "sha256": "8d0e5f4e092e5106782ae9613156e403d1293dac151029caf96aed6d3a01a2cf",
+      "width": 48,
+      "height": 48,
+      "mode": "RGBA",
+      "frames": 1,
+      "alphaRange": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "new-atomic-icons/android/legacy/launcher-72.png",
+      "bytes": 5243,
+      "sha256": "0af3303e35d2ed2cb995857f9afa0f6efee06074113a18760dd806b937e5c5c0",
+      "width": 72,
+      "height": 72,
+      "mode": "RGBA",
+      "frames": 1,
+      "alphaRange": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "new-atomic-icons/android/legacy/launcher-96.png",
+      "bytes": 7485,
+      "sha256": "ec08ebc88e062da6eddcf70e080997adad3917603d675c956ed50c463b78e9fc",
+      "width": 96,
+      "height": 96,
+      "mode": "RGBA",
+      "frames": 1,
+      "alphaRange": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "new-atomic-icons/android/native/drawable/atomic_launcher_foreground.xml",
+      "bytes": 1519,
+      "sha256": "dcc22a54c64f9ccb54ae3d7b39e016258ad45a11d037114534beccafff21933f"
+    },
+    {
+      "path": "new-atomic-icons/android/native/drawable/atomic_launcher_monochrome.xml",
+      "bytes": 1482,
+      "sha256": "b8830f88d19a76ccc287a8eb887f482f062563c01e872baa3cf28457e0ac240f"
+    },
+    {
+      "path": "new-atomic-icons/android/native/drawable/atomic_notification.xml",
+      "bytes": 709,
+      "sha256": "c817fcbd2febf4c208b0905fb398115dcc4ae90c994384936db210a73b5f4e8f"
+    },
+    {
+      "path": "new-atomic-icons/android/native/drawable/atomic_splash_logo.xml",
+      "bytes": 1521,
+      "sha256": "d0c8747b3c64d1f108a0b1e7df861a3d07b36dc2690d34eae86dacb8db998a52"
+    },
+    {
+      "path": "new-atomic-icons/android/native/drawable/launch_background.xml",
+      "bytes": 273,
+      "sha256": "f62c84451f839cc0ac12e93db23cbad0af8d2c5ac9fe0dac361cb4df45fb586d"
+    },
+    {
+      "path": "new-atomic-icons/android/native/drawable-night/atomic_splash_logo.xml",
+      "bytes": 1521,
+      "sha256": "864362157dc2d8d671db7f91413a931cc96537d03ae39bc210204fadf79e2e75"
+    },
+    {
+      "path": "new-atomic-icons/android/native/drawable-v21/launch_background.xml",
+      "bytes": 273,
+      "sha256": "f62c84451f839cc0ac12e93db23cbad0af8d2c5ac9fe0dac361cb4df45fb586d"
+    },
+    {
+      "path": "new-atomic-icons/android/native/mipmap-anydpi-v26/ic_launcher.xml",
+      "bytes": 346,
+      "sha256": "6261f48188d1eb7b8d5a9d11331a51728385879e0e7b483bc01cf979941d99f9"
+    },
+    {
+      "path": "new-atomic-icons/android/native/mipmap-anydpi-v26/launcher_icon.xml",
+      "bytes": 346,
+      "sha256": "6261f48188d1eb7b8d5a9d11331a51728385879e0e7b483bc01cf979941d99f9"
+    },
+    {
+      "path": "new-atomic-icons/android/native/values/atomic_brand_colors.xml",
+      "bytes": 117,
+      "sha256": "23fc06242287f0e6b6037f60e09ac058f70e0f138f03cb359849e63e50760188"
+    },
+    {
+      "path": "new-atomic-icons/android/native/values/ic_launcher_background.xml",
+      "bytes": 115,
+      "sha256": "e4cdfdeb57622d1a552a6303bef5f26010fdf9a32a1dbc05fb0f1b3e8dca904e"
+    },
+    {
+      "path": "new-atomic-icons/android/native/values-night/atomic_brand_colors.xml",
+      "bytes": 117,
+      "sha256": "d948037d4498e41bc8e2781d03fd90553a0d8637c90d53e67bc441573f6c956d"
+    },
+    {
+      "path": "new-atomic-icons/android/native/values-night-v31/styles.xml",
+      "bytes": 429,
+      "sha256": "6dba15daec5ad874fba32cbab7e297e67bdcc2922d555a8493fb00a1bfe7033b"
+    },
+    {
+      "path": "new-atomic-icons/android/native/values-v31/styles.xml",
+      "bytes": 429,
+      "sha256": "80e63766b74f7496dacfc6b3f0a8e410c38e2a2db9a77749b42f0cbb5a1ca657"
+    },
+    {
+      "path": "new-atomic-icons/android/notification/notification-24.png",
+      "bytes": 617,
+      "sha256": "0d1981e12bcdc75a4606430c221a6dc1aa7b5dd6a12e944b5348c09a44856e46",
+      "width": 24,
+      "height": 24,
+      "mode": "RGBA",
+      "frames": 1,
+      "alphaRange": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "new-atomic-icons/android/notification/notification-36.png",
+      "bytes": 1026,
+      "sha256": "e41b6c11505c0943ad0766e05e1add15540aba789bd364e7601d508efdcf1f3b",
+      "width": 36,
+      "height": 36,
+      "mode": "RGBA",
+      "frames": 1,
+      "alphaRange": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "new-atomic-icons/android/notification/notification-48.png",
+      "bytes": 1465,
+      "sha256": "a47bf589496051650f4dffe6fc7347b230438fc39501b88bf2d04747b78c4a57",
+      "width": 48,
+      "height": 48,
+      "mode": "RGBA",
+      "frames": 1,
+      "alphaRange": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "new-atomic-icons/android/notification/notification-72.png",
+      "bytes": 2295,
+      "sha256": "58943d7f7f88686e53ed4a9ccd0e2c07dc4194705dfe168b26138333d738446e",
+      "width": 72,
+      "height": 72,
+      "mode": "RGBA",
+      "frames": 1,
+      "alphaRange": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "new-atomic-icons/android/notification/notification-96.png",
+      "bytes": 698,
+      "sha256": "665a2c5dd74bd2941bae1ddd3a63b121e83a4a2c1c32d15f728d80ad3fc00d6b",
+      "width": 96,
+      "height": 96,
+      "mode": "RGBA",
+      "frames": 1,
+      "alphaRange": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "new-atomic-icons/gif/atomic-spin-on-dark.gif",
+      "bytes": 1153531,
+      "sha256": "37be0cbe56f1d787a4c72ee8fbe9c203116a76be70a10b051569f1b732f91cfe",
+      "width": 480,
+      "height": 480,
+      "mode": "P",
+      "frames": 100
+    },
+    {
+      "path": "new-atomic-icons/gif/atomic-spin-on-light.gif",
+      "bytes": 767386,
+      "sha256": "f69699310495b8e5cba138ea57b978f927f60b464deb5ab4f99e51bb1d475b28",
+      "width": 480,
+      "height": 480,
+      "mode": "P",
+      "frames": 100
+    },
+    {
+      "path": "new-atomic-icons/png/atomic-icon-mono-ink.png",
+      "bytes": 92458,
+      "sha256": "8e5da4e2faa14bf5e5f8a7bec9854a79a83a3fc7914183a3f9b7c3daf74499f0",
+      "width": 1024,
+      "height": 1024,
+      "mode": "RGBA",
+      "frames": 1,
+      "alphaRange": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "new-atomic-icons/png/atomic-icon-mono-white.png",
+      "bytes": 89779,
+      "sha256": "ab5788f6cd6600163e8de5dc52e10f108e83c2a150705824bd16690b9ce47c32",
+      "width": 1024,
+      "height": 1024,
+      "mode": "RGBA",
+      "frames": 1,
+      "alphaRange": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "new-atomic-icons/png/atomic-icon-on-dark.png",
+      "bytes": 95244,
+      "sha256": "fd6ed4161ff8785c3d081b999084a4d53c924accacf87e194ef2d9573ab7f3da",
+      "width": 1024,
+      "height": 1024,
+      "mode": "RGBA",
+      "frames": 1,
+      "alphaRange": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "new-atomic-icons/png/atomic-icon-on-light.png",
+      "bytes": 96088,
+      "sha256": "1d0e0945f0f0c61cca93acdc3b26fda01f56ffee5731d669a353de23571ba2e6",
+      "width": 1024,
+      "height": 1024,
+      "mode": "RGBA",
+      "frames": 1,
+      "alphaRange": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "new-atomic-icons/png/devbehindyou-worker-static.png",
+      "bytes": 24086,
+      "sha256": "5e6ebe1fd1ea829ddccc0287f59affd467d594f1a6b7d56eeb640618ddbf8676",
+      "width": 1285,
+      "height": 1285,
+      "mode": "RGBA",
+      "frames": 1,
+      "alphaRange": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "new-atomic-icons/png/dotgrid-static.png",
+      "bytes": 14019,
+      "sha256": "0c6f063e02fb1aecd6b785d03e561c580e73869d2bf1a820d307921e244b1b9e",
+      "width": 400,
+      "height": 480,
+      "mode": "RGBA",
+      "frames": 1,
+      "alphaRange": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "new-atomic-icons/previews/android-masks-safe-zones.png",
+      "bytes": 150747,
+      "sha256": "7700e4a08be53b95a4bf3cf88066230ee7d11f953cce1c67a1a51a606b47284a",
+      "width": 1200,
+      "height": 660,
+      "mode": "RGB",
+      "frames": 1,
+      "alphaRange": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "new-atomic-icons/splash/atomic-splash-on-dark.png",
+      "bytes": 59742,
+      "sha256": "dea952e6b96ad87fdfbdb40819dd46808f9f6324cd431db4156f70e63877a9db",
+      "width": 576,
+      "height": 576,
+      "mode": "RGBA",
+      "frames": 1,
+      "alphaRange": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "new-atomic-icons/splash/atomic-splash-on-light.png",
+      "bytes": 56789,
+      "sha256": "84f640d8f2695e9649230c3314d8fa1b67233934f0cf951b0fbfc5846ee8e702",
+      "width": 576,
+      "height": 576,
+      "mode": "RGBA",
+      "frames": 1,
+      "alphaRange": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "new-atomic-icons/svg/atomic-icon-mono-ink.svg",
+      "bytes": 716,
+      "sha256": "8bb7d9e85b5569bd658797e851c5662dec7e95f3c51e9fada2da846a0da29663"
+    },
+    {
+      "path": "new-atomic-icons/svg/atomic-icon-mono-white.svg",
+      "bytes": 716,
+      "sha256": "36697b0768b5f86adee7ccd54825354e8ccc677342bc0578fbcfd94f0f9791fb"
+    },
+    {
+      "path": "new-atomic-icons/svg/atomic-icon-on-dark.svg",
+      "bytes": 646,
+      "sha256": "50f5299482038ddf23dd0fc1b0f851423b87b35595813846366bfb7686724fca"
+    },
+    {
+      "path": "new-atomic-icons/svg/atomic-icon-on-light.svg",
+      "bytes": 646,
+      "sha256": "af610305edf162d77232b8c09d98fa2796528ceef7a541b6a95e2b6f31616e10"
+    }
+  ]
+}

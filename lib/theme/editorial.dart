@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:atomic_notes/theme/app_tokens.dart';
+import 'package:atomic_notes/utility/component/atomic_brand.dart';
 
 /// Reusable pieces of the Technical Editorial language.
 ///
@@ -369,9 +370,7 @@ class ArrowLink extends StatelessWidget {
   }
 }
 
-/// The app's logo mark. The source PNG is a light-on-dark atom, so on a Paper
-/// canvas it is framed in an Ink block — which is exactly how the reference
-/// treats logos, and avoids needing to redraw the asset.
+/// The Atomic Notes mark uses the supplied dark variant on an Ink block.
 class InkLogoMark extends StatelessWidget {
   final double size;
   const InkLogoMark({this.size = 44, super.key});
@@ -386,7 +385,7 @@ class InkLogoMark extends StatelessWidget {
         color: AppColors.ink,
         borderRadius: AppRadius.std,
       ),
-      child: Image.asset('assets/logo_x.png', fit: BoxFit.contain),
+      child: AtomicBrandMark(size: size * 0.72, onDark: true),
     );
   }
 }

@@ -5,6 +5,7 @@ import 'package:atomic_notes/page/notes_editor_page.dart';
 import 'package:atomic_notes/state/notes/notes_bloc.dart';
 import 'package:atomic_notes/theme/app_tokens.dart';
 import 'package:atomic_notes/theme/editorial.dart';
+import 'package:atomic_notes/utility/component/atomic_brand.dart';
 import 'package:atomic_notes/utility/component/my_snackbar.dart';
 import 'package:atomic_notes/utility/component/note_skeliton.dart';
 import 'package:atomic_notes/utility/component/notes_builder.dart';
@@ -255,12 +256,12 @@ class _FilterAndSearch extends StatelessWidget {
   }
 }
 
-/// "Atomi", the app's mascot. A tap opens a small chat bubble saying how sync
+/// DevBehindYou, the app's mascot. A tap opens a small chat bubble saying how sync
 /// stands; it closes by itself after a few seconds or on a second tap.
 class _Mascot extends StatefulWidget {
   const _Mascot();
 
-  /// What Atomi says: whether changes are waiting, and when automatic sync next opens.
+  /// What DevBehindYou says: whether changes wait, and when automatic sync opens.
   /// "Syncing now" only while a sync is running: offline, changes just wait.
   static String syncMessage(DateTime? next, int pending,
       {bool syncing = false, String? error}) {
@@ -343,16 +344,10 @@ class _MascotState extends State<_Mascot> {
         child: GestureDetector(
           onTap: _onTap,
           behavior: HitTestBehavior.opaque,
-          child: const ClipRect(
-            child: SizedBox(
-              width: 72,
-              height: 72,
-              child: Image(
-                image: AssetImage(
-                    'assets/Atomic Icons/dotgrid-blink-transparent.gif'),
-                fit: BoxFit.contain,
-              ),
-            ),
+          child: Semantics(
+            label: 'DevBehindYou sync status',
+            button: true,
+            child: const ClipRect(child: DevBehindYouMascot()),
           ),
         ),
       ),

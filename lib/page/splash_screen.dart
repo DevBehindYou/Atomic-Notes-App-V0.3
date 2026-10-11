@@ -11,6 +11,7 @@ import 'package:atomic_notes/security/vault.dart';
 import 'package:atomic_notes/theme/app_tokens.dart';
 import 'package:atomic_notes/theme/editorial.dart';
 import 'package:atomic_notes/utility/app_info.dart';
+import 'package:atomic_notes/utility/component/atomic_brand.dart';
 import 'package:atomic_notes/utility/component/logo_container.dart';
 import 'package:atomic_notes/utility/splash_route_resolver.dart';
 import 'package:flutter/material.dart';
@@ -167,14 +168,7 @@ class _SplashPageState extends State<SplashPage> {
               SizedBox(height: AppSpace.md),
               Row(
                 children: [
-                  SizedBox(
-                    height: 14,
-                    width: 14,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: AppColors.signal,
-                    ),
-                  ),
+                  DevBehindYouMascot(size: 24, secondary: true),
                   SizedBox(width: AppSpace.md - 4),
                   Expanded(
                     child: MonoLabel('INITIALISING · CHECKING SESSION'),

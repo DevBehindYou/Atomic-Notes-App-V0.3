@@ -166,6 +166,21 @@ jobs:
           if-no-files-found: warn
           retention-days: 1
 
+      - name: Verify committed Android branding assets
+        run: |
+          python3 tool/test_verify_branding_assets.py
+          python3 tool/verify_branding_assets.py --proof ci-branding-assets-proof.json
+
+      - name: Upload sanitized Android branding outcomes
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: sanitized-branding-assets-proof
+          path: ci-branding-assets-proof.json
+          if-no-files-found: warn
+          retention-days: 1
+
       - name: Verify controlled Cloud Notes automatic activity
         run: python3 tool/run_cloud_activity_fixture.py
 
