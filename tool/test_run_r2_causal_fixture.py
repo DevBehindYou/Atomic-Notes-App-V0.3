@@ -12,7 +12,7 @@ import unittest
 from unittest.mock import patch
 
 from run_r2_causal_fixture import (
-    CASES, OBSERVATIONS, classify, execute_package, relocated_config, run_fixture,
+    CASES, OBSERVATIONS, classify, execute_package, relocated_config, resolved_graph, run_fixture,
 )
 
 
@@ -213,6 +213,7 @@ class R2CausalProofControls(unittest.TestCase):
                     with patch('run_r2_causal_fixture.HISTORICAL_HASHES',
                                {'lib/fixture.dart': hashlib.sha256(b'source').hexdigest()}), \
                             patch('run_r2_causal_fixture.read_source', return_value='source'), \
+                            patch('run_r2_causal_fixture.resolved_graph', return_value=b'{}'), \
                             patch('run_r2_causal_fixture.prepare_package'), \
                             patch('run_r2_causal_fixture.execute_package', side_effect=execute):
                         report = run_fixture(fixture_root, temporary_factory=lambda **kwargs: temporary)
@@ -222,6 +223,41 @@ class R2CausalProofControls(unittest.TestCase):
                     self.assertEqual(owned.exists(), variant == 'cleanup_failure')
                 finally:
                     real_cleanup()
+
+    def test_locked_graph_is_copied_only_when_valid_and_bounded(self):
+        graph = {'configVersion': 1, 'roots': ['atomic_notes'], 'packages': [
+            {'name': 'atomic_notes', 'dependencies': ['fixture_dependency'], 'devDependencies': []},
+            {'name': 'fixture_dependency', 'dependencies': []},
+        ]}
+        for variant in ['valid', 'missing', 'oversized', 'invalid_json', 'wrong_root',
+                        'duplicate_own', 'bool_version', 'bad_dependencies']:
+            with self.subTest(variant=variant), tempfile.TemporaryDirectory(
+                    dir=Path(__file__).resolve().parent.parent) as temp:
+                root = Path(temp)
+                (root / '.dart_tool').mkdir()
+                data = json.dumps(graph).encode()
+                if variant == 'oversized':
+                    data = b'x' * (2 * 1024 * 1024 + 1)
+                elif variant == 'invalid_json':
+                    data = b'invalid'
+                else:
+                    changed = json.loads(data)
+                    if variant == 'wrong_root':
+                        changed['roots'] = ['foreign']
+                    elif variant == 'duplicate_own':
+                        changed['packages'].append(changed['packages'][0])
+                    elif variant == 'bool_version':
+                        changed['configVersion'] = True
+                    elif variant == 'bad_dependencies':
+                        changed['packages'][0]['dependencies'] = 'bad'
+                    data = json.dumps(changed).encode()
+                if variant != 'missing':
+                    (root / '.dart_tool/package_graph.json').write_bytes(data)
+                if variant == 'valid':
+                    self.assertEqual(resolved_graph(root), data)
+                else:
+                    with self.assertRaises(ValueError):
+                        resolved_graph(root)
 
 
 if __name__ == '__main__':

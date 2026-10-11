@@ -33,7 +33,7 @@ TEST_PATH = 'test/r2_logout_causal_test.dart'
 FAILURE_CODES = {'git_source_guard', 'source_path_guard', 'source_count_guard',
                  'package_config_guard', 'own_package_guard', 'pubspec_guard',
                  'historical_hash_guard', 'common_fixture_guard',
-                 'private_report_missing', 'private_report_oversized'}
+                 'private_report_missing', 'private_report_oversized', 'package_graph_guard'}
 
 
 def phase_report():
@@ -209,7 +209,34 @@ def relocated_config(config, source_path, destination):
     return result
 
 
-def prepare_package(root, destination, revision, fixture, config, config_path):
+def resolved_graph(root):
+    path = root / '.dart_tool/package_graph.json'
+    if not path.is_file() or path.stat().st_size > 2 * 1024 * 1024:
+        raise ValueError('package_graph_guard')
+    data = path.read_bytes()
+    try:
+        graph = json.loads(data)
+        if (not isinstance(graph, dict) or type(graph.get('configVersion')) is not int
+                or graph['configVersion'] != 1 or graph.get('roots') != ['atomic_notes']
+                or not isinstance(graph.get('packages'), list) or len(graph['packages']) > 512):
+            raise ValueError('package_graph_guard')
+        own = 0
+        for package in graph['packages']:
+            if not isinstance(package, dict) or not isinstance(package.get('name'), str):
+                raise ValueError('package_graph_guard')
+            own += package['name'] == 'atomic_notes'
+            for key in ['dependencies', 'devDependencies']:
+                values = package.get(key, [])
+                if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
+                    raise ValueError('package_graph_guard')
+        if own != 1:
+            raise ValueError('package_graph_guard')
+    except (ValueError, TypeError, UnicodeError):
+        raise ValueError('package_graph_guard') from None
+    return data
+
+
+def prepare_package(root, destination, revision, fixture, config, config_path, graph=None):
     destination.mkdir()
     pubspec = (root / 'pubspec.yaml').read_text(encoding='utf-8')
     parts = re.split(r'^flutter:\s*$', pubspec, flags=re.MULTILINE)
@@ -223,6 +250,9 @@ def prepare_package(root, destination, revision, fixture, config, config_path):
     dart_tool.mkdir()
     (dart_tool / 'package_config.json').write_text(
         json.dumps(relocated_config(config, config_path, destination)), encoding='utf-8')
+    # Flutter 3.44 loads this already-resolved dependency graph before its
+    # test reporter starts. Copy it byte-for-byte; do not resolve dependencies.
+    (dart_tool / 'package_graph.json').write_bytes(resolved_graph(root) if graph is None else graph)
     export_dependencies(root, revision, destination, TEST_PATH, fixture, set())
 
 
@@ -255,6 +285,7 @@ def run_fixture(root, run=subprocess.run, temporary_factory=tempfile.TemporaryDi
         if not config_path.is_file() or config_path.stat().st_size > 2 * 1024 * 1024:
             raise ValueError('package_config_guard')
         config = json.loads(config_path.read_text(encoding='utf-8'))
+        graph = resolved_graph(root)
         fixture = (root / TEST_PATH).read_text(encoding='utf-8')
         if fixture.count('void main() {') != 1:
             raise ValueError('common_fixture_guard')
@@ -267,9 +298,9 @@ def run_fixture(root, run=subprocess.run, temporary_factory=tempfile.TemporaryDi
         temporary = temporary_factory(prefix='atomic-r2-causal-')
         owned = Path(temporary.name).resolve()
         report['phase'] = 'prepare_before'
-        prepare_package(root, owned / 'before', BASELINE, before_fixture, config, config_path)
+        prepare_package(root, owned / 'before', BASELINE, before_fixture, config, config_path, graph)
         report['phase'] = 'prepare_after'
-        prepare_package(root, owned / 'after', 'HEAD', fixture, config, config_path)
+        prepare_package(root, owned / 'after', 'HEAD', fixture, config, config_path, graph)
         report['phase'] = 'before_tests'
         report['before'] = execute_package(owned / 'before', 'before', run)
         report['phase'] = 'after_tests'

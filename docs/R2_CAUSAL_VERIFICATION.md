@@ -48,7 +48,8 @@ The runner exports only dependency-reachable public Dart source from the
 fixed historical commit or the checked-out candidate, never a credential
 file. `cred.dart` is created exclusively from tracked public
 `cred.example.dart`. It reuses CI's already resolved, locked dependency
-configuration with relocated package paths; no extra dependency resolution,
+configuration with relocated package paths and its already-resolved
+`package_graph.json` copied unchanged; no extra dependency resolution,
 installation, bootstrap or cache refresh occurs. Repository-only temporary
 packages omit artwork declarations while retaining the same dependency
 manifest/lockfile. No source in the candidate checkout is replaced.
