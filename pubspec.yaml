@@ -87,17 +87,21 @@ dev_dependencies:
   # package's declared floor of 3.3.0. Bump both together when you're ready.
   flutter_lints: ^3.0.1
 
-# The Android mipmaps in android/app/src/main/res are generated and committed,
-# so a build does not depend on this tool having been run. Re-run
-# `dart run flutter_launcher_icons` only if you change assets/icon.png and want
-# iOS regenerated too.
+# Android resources are committed: builds never run an icon generator.
+# The unchanged JPEG is the master artwork; Android packaging uses its supplied
+# editable vector companion. tool/generate_android_branding.py is authoritative
+# for the vector native splash, safe zones and committed resource library.
+# This existing generator configuration is an optional raster fallback only.
+# iOS and desktop/web scaffolds are not configured release targets.
 flutter_launcher_icons:
   android: "launcher_icon"
-  ios: true
-  image_path: "assets/icon.png"
-  adaptive_icon_background: "#12101C"
-  adaptive_icon_foreground: "assets/icon_foreground.png"
-  remove_alpha_ios: true
+  ios: false
+  image_path: "assets/atomic-icon.jpg"
+  image_path_android: "assets/new-atomic-icons/android/launcher-source-1024.png"
+  adaptive_icon_background: "#F4F5F1"
+  adaptive_icon_foreground: "assets/new-atomic-icons/android/adaptive-foreground.png"
+  adaptive_icon_foreground_inset: 0
+  adaptive_icon_monochrome: "assets/new-atomic-icons/android/adaptive-monochrome.png"
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is
@@ -123,6 +127,10 @@ flutter:
   # so the Atomic icon sets are listed explicitly.
   assets:
     - assets/
+    - assets/new-atomic-icons/png/atomic-icon-on-light.png
+    - assets/new-atomic-icons/png/atomic-icon-on-dark.png
+    - assets/new-atomic-icons/png/devbehindyou-worker-static.png
+    - assets/new-atomic-icons/png/dotgrid-static.png
     - assets/Atomic Icons/
     - assets/Atomic Icons/Icons-With-label/
     - assets/Atomic Icons/Icons-Without-label/

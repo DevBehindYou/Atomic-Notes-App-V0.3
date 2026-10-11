@@ -19,3 +19,10 @@ gradlew.bat text eol=crlf
 *.zip     binary
 *.keystore binary
 *.jks     binary
+
+# The branding manifest verifies these exact bytes on Windows and Linux.
+android/app/src/main/res/**/*.xml text eol=lf
+assets/new-atomic-icons/**/*.xml text eol=lf
+assets/new-atomic-icons/**/*.svg text eol=lf
+assets/new-atomic-icons/manifest.json text eol=lf
+*.gif binary

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:atomic_notes/utility/component/atomic_brand.dart';
 
 /// The brief screen shown between sign-out and the login screen.
 ///
@@ -44,10 +45,7 @@ class _LoggedOutScreenState extends State<LoggedOutScreen> {
           child: SizedBox(
             width: 120,
             height: 120,
-            child: Image(
-              image: AssetImage('assets/logo_x.png'),
-              fit: BoxFit.contain,
-            ),
+            child: AtomicBrandMark(size: 120, onDark: true),
           ),
         ),
       ),
