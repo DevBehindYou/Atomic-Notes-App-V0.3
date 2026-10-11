@@ -184,7 +184,19 @@ jobs:
 
       - name: Verify controlled logout recovery with fixed outcome codes
         if: always()
+        env:
+          ATOMIC_REPAIR_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: python3 tool/run_logout_recovery_controls.py
+
+      - name: Upload redacted controlled-recovery machine diagnostics
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: sanitized-logout-machine-diagnostics
+          path: ci-logout-machine-diagnostics.json
+          if-no-files-found: warn
+          retention-days: 1
 
       - name: Upload sanitized logout recovery controls
         if: always()

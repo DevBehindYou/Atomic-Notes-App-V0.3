@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -36,39 +37,53 @@ def main():
     proof = {'version': 1, 'scope': SCOPE,
              'outcomes': {code: 'not_executed' for code in NAMES.values()},
              'outcome': 'failed'}
+    head = os.environ.get('ATOMIC_REPAIR_SOURCE_HEAD', '')
+    diagnostic = {'version': 1, 'scope': 'redacted controlled recovery machine metadata',
+                  'sourceHead': head if re.fullmatch('[0-9a-f]{40}', head) else None,
+                  'phase': 'guard', 'exitStatus': 'unavailable',
+                  'started': 0, 'completed': 0, 'terminalCount': 0, 'terminalSuccess': False,
+                  'rejections': {code: 0 for code in ('parse', 'not_object', 'invalid_start',
+                                'duplicate_start', 'unknown_hidden', 'unknown_visible',
+                                'invalid_done', 'duplicate_done')}}
     try:
         if os.environ.get('GITHUB_ACTIONS') != 'true':
             raise ValueError('guard')
+        diagnostic['phase'] = 'tests'
         result = subprocess.run(['flutter', 'test', '--no-pub', '--machine',
                                  'test/logout_same_owner_recovery_test.dart'],
                                 cwd=root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 timeout=180, check=False, encoding='utf-8', errors='replace')
         ids, loader_ids, seen, completed = {}, set(), set(), set()
         invalid, done = False, False
+        diagnostic['exitStatus'] = 'zero' if result.returncode == 0 else 'nonzero'
+        def reject(code):
+            nonlocal invalid
+            invalid = True
+            diagnostic['rejections'][code] = min(100, diagnostic['rejections'][code] + 1)
         done_count = 0
         loader_name = 'loading ' + str(root / 'test/logout_same_owner_recovery_test.dart')
         for line in result.stdout.splitlines():
             try:
                 event = json.loads(line)
             except (ValueError, TypeError):
-                invalid = True
+                reject('parse')
                 continue
             if not isinstance(event, dict):
-                invalid = True
+                reject('not_object')
                 continue
             if event.get('type') == 'testStart':
                 test = event.get('test')
                 if not isinstance(test, dict) or type(test.get('id')) is not int:
-                    invalid = True
+                    reject('invalid_start')
                     continue
                 test_id = test['id']
                 code = NAMES.get(test.get('name'))
                 if test_id in ids or test_id in loader_ids:
-                    invalid = True
+                    reject('duplicate_start')
                     continue
                 if code is not None:
                     if code in seen or test.get('hidden') is True:
-                        invalid = True
+                        reject('duplicate_start')
                         continue
                     seen.add(code)
                     ids[test_id] = code
@@ -76,17 +91,17 @@ def main():
                 elif test.get('name') == loader_name and test.get('hidden') is True:
                     loader_ids.add(test_id)
                 else:
-                    invalid = True
+                    reject('unknown_hidden' if test.get('hidden') is True else 'unknown_visible')
             elif event.get('type') == 'testDone':
                 test_id = event.get('testID')
                 if type(test_id) is not int or (test_id not in ids and test_id not in loader_ids):
-                    invalid = True
+                    reject('invalid_done')
                     continue
                 if test_id in loader_ids:
                     continue
                 code = ids[test_id]
                 if code in completed or proof['outcomes'][code] != 'started':
-                    invalid = True
+                    reject('duplicate_done')
                 completed.add(code)
                 proof['outcomes'][code] = (
                     'passed' if event.get('result') == 'success' and event.get('skipped') is False else 'failed')
@@ -95,11 +110,16 @@ def main():
                 done = event.get('success') is True
         if not invalid and result.returncode == 0 and done and done_count == 1 and len(seen) == len(NAMES) and len(completed) == len(NAMES) and all(value == 'passed' for value in proof['outcomes'].values()):
             proof['outcome'] = 'passed'
+        diagnostic.update(phase='complete', started=len(seen), completed=len(completed),
+                          terminalCount=min(100, done_count), terminalSuccess=done)
+    except subprocess.TimeoutExpired:
+        diagnostic['phase'] = 'timeout'
     except Exception:
         # Timeout, crash, guard and parse failures retain fixed failed outcomes;
         # no raw output, exception, stack or data is written or printed.
-        pass
+        diagnostic['phase'] = 'guard' if diagnostic['phase'] == 'guard' else 'runner_failure'
     finally:
+        (root / 'ci-logout-machine-diagnostics.json').write_text(json.dumps(diagnostic))
         (root / 'ci-logout-recovery-controls-proof.json').write_text(json.dumps(proof))
     return 0 if proof['outcome'] == 'passed' else 1
 
