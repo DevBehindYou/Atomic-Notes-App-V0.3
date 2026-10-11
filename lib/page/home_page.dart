@@ -344,10 +344,10 @@ class _MascotState extends State<_Mascot> {
         child: GestureDetector(
           onTap: _onTap,
           behavior: HitTestBehavior.opaque,
-          child: const Semantics(
+          child: Semantics(
             label: 'DevBehindYou sync status',
             button: true,
-            child: ClipRect(child: DevBehindYouMascot()),
+            child: const ClipRect(child: DevBehindYouMascot()),
           ),
         ),
       ),
