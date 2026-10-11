@@ -30,6 +30,10 @@ OBSERVATIONS = {
 }
 MAX_PRIVATE_REPORT = 4 * 1024 * 1024
 TEST_PATH = 'test/r2_logout_causal_test.dart'
+FAILURE_CODES = {'git_source_guard', 'source_path_guard', 'source_count_guard',
+                 'package_config_guard', 'own_package_guard', 'pubspec_guard',
+                 'historical_hash_guard', 'common_fixture_guard',
+                 'private_report_missing', 'private_report_oversized'}
 
 
 def phase_report():
@@ -43,6 +47,7 @@ def initial_report():
             'baselineHead': BASELINE, 'historicalHashes': HISTORICAL_HASHES.copy(),
             'commonBodySha256': None,
             'phase': 'guard', 'outcome': 'fail',
+            'failurePhase': None, 'failureCode': None,
             'before': phase_report(), 'after': phase_report(), 'ownedCleanup': 'not_run'}
 
 
@@ -229,8 +234,10 @@ def execute_package(root, phase, run=subprocess.run):
                   '--file-reporter', 'json:' + str(private), TEST_PATH],
                  cwd=root, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                  timeout=180, check=False)
-    if not private.is_file() or private.stat().st_size > MAX_PRIVATE_REPORT:
-        raise ValueError('private_report_guard')
+    if not private.is_file():
+        raise ValueError('private_report_missing')
+    if private.stat().st_size > MAX_PRIVATE_REPORT:
+        raise ValueError('private_report_oversized')
     return classify(private.read_text(encoding='utf-8'), result.returncode,
                     'loading ' + str(root / TEST_PATH), phase)
 
@@ -259,17 +266,25 @@ def run_fixture(root, run=subprocess.run, temporary_factory=tempfile.TemporaryDi
                           + 'void main() {' + fixture.split('void main() {', 1)[1])
         temporary = temporary_factory(prefix='atomic-r2-causal-')
         owned = Path(temporary.name).resolve()
+        report['phase'] = 'prepare_before'
         prepare_package(root, owned / 'before', BASELINE, before_fixture, config, config_path)
+        report['phase'] = 'prepare_after'
         prepare_package(root, owned / 'after', 'HEAD', fixture, config, config_path)
-        report['phase'] = 'tests'
+        report['phase'] = 'before_tests'
         report['before'] = execute_package(owned / 'before', 'before', run)
+        report['phase'] = 'after_tests'
         report['after'] = execute_package(owned / 'after', 'after', run)
         report['phase'] = 'complete'
         if report['before']['outcome'] == report['after']['outcome'] == 'pass':
             report['outcome'] = 'pass'
     except subprocess.TimeoutExpired:
+        report['failurePhase'] = report['phase']
+        report['failureCode'] = 'timeout'
         report['phase'] = 'timeout'
-    except Exception:
+    except Exception as error:
+        report['failurePhase'] = report['phase']
+        candidate = error.args[0] if error.args and isinstance(error.args[0], str) else None
+        report['failureCode'] = candidate if candidate in FAILURE_CODES else 'redacted_runner_failure'
         report['phase'] = 'runner_failure'
     finally:
         if temporary is not None:
