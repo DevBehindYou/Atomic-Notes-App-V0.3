@@ -276,6 +276,33 @@ void main() {
     },
   );
   test(
+    'recovery commit uses the exact manifest and rejects a nonterminal receipt',
+    () async {
+      for (final state in ['completed', 'prepared']) {
+        final api = await client((request) async {
+          expect(request.url.path, '/api/notes/logout-attempt/recovery-commit');
+          expect(jsonDecode(request.body), query.toWire());
+          return http.Response(jsonEncode({...reply(), 'state': state}), 200);
+        });
+        final revision = api.sessionRevision;
+        if (state == 'prepared') {
+          await expectLater(
+            api.commitLogoutRecovery(query),
+            throwsFormatException,
+          );
+        } else {
+          expect(
+            (await api.commitLogoutRecovery(query)).state,
+            LogoutRecoveryState.completed,
+          );
+        }
+        expect(api.isSignedIn, isTrue);
+        expect(api.sessionRevision, revision);
+        expect(api.pendingLogoutCompletion, isNull);
+      }
+    },
+  );
+  test(
     'oversized disabled and malformed receipt responses have no fallback',
     () async {
       for (final response in [

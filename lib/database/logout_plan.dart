@@ -193,6 +193,21 @@ class LogoutPlanStore {
   /// a later explicit logout can prepare a new plan for remaining work.
   Future<void> consumeAborted(LogoutPlan plan) => _remove(plan, false);
 
+  /// Recovery callers must have durably applied the exact terminal full
+  /// receipts under their writer/session fence. This consumes metadata only.
+  Future<void> consumeRecovered(LogoutPlan plan, {required void Function() checkCurrent}) {
+    final write = _tail.then((_) async {
+      checkCurrent();
+      await _matching(plan);
+      checkCurrent();
+      await box.delete(key);
+      await box.flush();
+      checkCurrent();
+    });
+    _tail = write.catchError((_) {});
+    return write;
+  }
+
   Future<void> _remove(LogoutPlan plan, bool completed) {
     final write = _tail.then((_) async {
       final raw = await _matching(plan);
@@ -230,6 +245,23 @@ class LogoutPlanStore {
     if (!hasPending) return null;
     final plan = await LogoutPlan.restore(box.get(key), userId: userId, sessionHash: sessionHash);
     if (box.get('__cache_owner__') != userId) throw StateError('Logout cache owner changed');
+    return plan;
+  }
+
+  /// An explicit same-owner logout may inspect an old binding after manual
+  /// reauthentication. This never adopts/rebinds the plan to the fresh session.
+  Future<LogoutPlan> loadForRecovery({required String userId,
+      required String currentSessionHash}) async {
+    await _tail;
+    if (box.get('__cache_owner__') != userId) throw StateError('Logout cache owner changed');
+    final raw = box.get(key);
+    if (raw is! Map || raw['sessionHash'] is! String ||
+        raw['sessionHash'] == currentSessionHash) {
+      throw const FormatException('No previous logout session to recover');
+    }
+    final plan = await LogoutPlan.restore(raw, userId: userId,
+        sessionHash: raw['sessionHash'] as String);
+    await _matching(plan);
     return plan;
   }
 
