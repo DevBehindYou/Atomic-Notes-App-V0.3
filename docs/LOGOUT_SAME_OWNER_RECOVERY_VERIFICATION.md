@@ -75,6 +75,12 @@ mock acknowledgements also use the Server's millisecond ISO contract at initial
 receipt creation; recovery returns those exact retained timestamps. The
 production receipt decoder remains strict. Neither repair
 artifact nor local parser checks substitute for complete CI acceptance.
+The machine checker parses reporter stdout separately from discarded private
+stderr. It requires a successful exit, one successful terminal event, all 24
+unique visible/non-skipped test completions, and a successful hidden completion
+for the exact known loader. The reporter supplies `hidden` on `testDone`, not
+`testStart`. Unknown tests, malformed stdout, duplicates and missing events
+still fail closed; repair counters are separate from the six acceptance proofs.
 
 Google authentication, Android keystore/secure storage, native device/TOTP UI,
 real Drive, two physical phones and signed 2.03.5-to-2.03.9 upgrade preservation
