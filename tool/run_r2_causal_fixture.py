@@ -255,7 +255,8 @@ def run_fixture(root, run=subprocess.run, temporary_factory=tempfile.TemporaryDi
             fixture.split('void main() {', 1)[1].encode()).hexdigest()
         historical = read_source(root, BASELINE, 'test/notes_repository_lifecycle_test.dart')
         prefix = historical.split('void main() {', 1)[0]
-        before_fixture = prefix + 'void main() {' + fixture.split('void main() {', 1)[1]
+        before_fixture = ("import 'package:flutter/foundation.dart' show debugPrint;\n" + prefix
+                          + 'void main() {' + fixture.split('void main() {', 1)[1])
         temporary = temporary_factory(prefix='atomic-r2-causal-')
         owned = Path(temporary.name).resolve()
         prepare_package(root, owned / 'before', BASELINE, before_fixture, config, config_path)

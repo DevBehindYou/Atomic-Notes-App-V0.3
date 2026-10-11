@@ -5,6 +5,7 @@ import 'package:atomic_notes/database/note.dart';
 import 'package:atomic_notes/database/notes_repository.dart';
 import 'package:atomic_notes/database/sync_status.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive_ce.dart';
 
@@ -46,7 +47,7 @@ void main() {
     expect(directory.existsSync(), isFalse);
     if (caseCode != null) {
       // Fixed markers only. The runner discards all other test messages.
-      print('atomic_r2_cleanup:$caseCode');
+      debugPrint('atomic_r2_cleanup:$caseCode');
     }
   });
 
@@ -77,7 +78,7 @@ void main() {
       await Future<void>.delayed(Duration.zero);
       await Future<void>.delayed(Duration.zero);
       final wasEarly = completedEarly;
-      print(
+      debugPrint(
         'atomic_r2_observation:busy_logout:'
         '${wasEarly && result == true ? 'early_success' : 'waited'}',
       );
@@ -87,7 +88,7 @@ void main() {
         await repository.stop();
         await repository.clearLocal();
       }
-      print(
+      debugPrint(
         'atomic_r2_observation:busy_logout:'
         '${box.containsKey(later.id) ? 'preserved' : 'erased'}',
       );
@@ -136,7 +137,7 @@ void main() {
         api.pushes.expand((rows) => rows).any((row) => row['id'] == later.id),
         isFalse,
       );
-      print('atomic_r2_observation:snapshot_control:paused_snapshot');
+      debugPrint('atomic_r2_observation:snapshot_control:paused_snapshot');
     } finally {
       api.beforePush = null;
       if (!release.isCompleted) release.complete();
@@ -151,6 +152,6 @@ void main() {
     await repository.stop();
     await repository.clearLocal();
     expect(box.isEmpty, isTrue);
-    print('atomic_r2_observation:clean_control:clean_clear');
+    debugPrint('atomic_r2_observation:clean_control:clean_clear');
   });
 }
