@@ -23,7 +23,7 @@ class _RecoveryApi extends LogoutTestApi {
   void reauthenticate() {
     binding = 'b' * 64;
     sessionRevision++;
-    completion = null;
+    this.completion = null;
   }
 
   @override
