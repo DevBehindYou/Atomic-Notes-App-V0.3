@@ -67,6 +67,14 @@ Required CI includes strict analysis, all tests, disposable wire acceptance and
 the non-production debug APK. Merge and exact merged-main CI must both succeed
 before copying this source into the optimized mirror.
 
+Repair-only analyzer diagnostics retain the exact public source revision and
+allowlisted source locations/error codes, with no messages or raw logs. They
+identified an inherited test-helper field named `completion` that resolved to
+the imported Flutter matcher; the helper now uses `this.completion`. Recovery
+mock acknowledgements also copy Dart timestamps into the Server's millisecond
+ISO contract. The production receipt decoder remains strict. Neither repair
+artifact nor local parser checks substitute for complete CI acceptance.
+
 Google authentication, Android keystore/secure storage, native device/TOTP UI,
 real Drive, two physical phones and signed 2.03.5-to-2.03.9 upgrade preservation
 are not exercised by these synthetic proofs. Missing/pending receipt ambiguity,
