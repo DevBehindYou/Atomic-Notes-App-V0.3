@@ -70,7 +70,7 @@ void main() {
         expect(
             find.text('A cloud note could not be read safely. Try syncing again.'),
             findsOneWidget);
-        expect(find.text('All notes synced.'), findsNothing);
+        expect(find.text('No local changes waiting.'), findsNothing);
         expect(source.syncCalls, 0);
         await tester.pump(const Duration(seconds: 4));
       });
@@ -89,7 +89,7 @@ void main() {
       await tester.pump();
       expect(find.text('Checking for cloud changes…'), findsOneWidget);
       expect(find.text('Previous failure'), findsNothing);
-      expect(find.text('All notes synced.'), findsNothing);
+      expect(find.text('No local changes waiting.'), findsNothing);
       await tester.pump(const Duration(seconds: 4));
     });
     testWidgets('R19 automatic sync reaches the mascot without a button press', (tester) async {
@@ -110,7 +110,7 @@ void main() {
       await _open(tester, source);
       await tester.tap(find.byType(Image));
       await tester.pump();
-      expect(find.text('All synced. Next sync in 40 min.'), findsOneWidget);
+      expect(find.text('No local changes waiting. Next sync in 40 min.'), findsOneWidget);
       await tester.tap(find.byType(Image));
       await tester.pump();
 
@@ -119,7 +119,7 @@ void main() {
       await tester.pump();
       await tester.tap(find.byType(Image));
       await tester.pump();
-      expect(find.text('All notes synced.'), findsOneWidget);
+      expect(find.text('No local changes waiting.'), findsOneWidget);
       expect(find.textContaining('Next sync in'), findsNothing);
       await tester.pump(const Duration(seconds: 4));
     });
@@ -138,11 +138,11 @@ void main() {
       await _open(tester, _source());
       await tester.tap(find.byType(Image));
       await tester.pump();
-      expect(find.text('All notes synced.'), findsOneWidget);
+      expect(find.text('No local changes waiting.'), findsOneWidget);
       expect(find.byType(SnackBar), findsNothing);
 
       await tester.pump(const Duration(seconds: 4));
-      expect(find.text('All notes synced.'), findsNothing);
+      expect(find.text('No local changes waiting.'), findsNothing);
     });
 
     testWidgets('a second tap closes the bubble', (tester) async {
@@ -151,7 +151,7 @@ void main() {
       await tester.pump();
       await tester.tap(find.byType(Image));
       await tester.pump();
-      expect(find.text('All notes synced.'), findsNothing);
+      expect(find.text('No local changes waiting.'), findsNothing);
     });
 
     testWidgets('the bubble names the wait when automatic sync is closed', (tester) async {
@@ -160,7 +160,7 @@ void main() {
       await _open(tester, source);
       await tester.tap(find.byType(Image));
       await tester.pump();
-      expect(find.text('All synced. Next sync in 40 min.'), findsOneWidget);
+      expect(find.text('No local changes waiting. Next sync in 40 min.'), findsOneWidget);
     });
 
     testWidgets('the bubble counts changes that are waiting', (tester) async {

@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 
 CASES = {
     'idle local notes do not claim cloud equality': 'idle_local',
@@ -99,23 +100,42 @@ def classify(stdout, returncode, loader_name):
     return report
 
 
-def main():
-    root = Path(__file__).resolve().parent.parent
+def run_fixture(root, run=subprocess.run, temporary_factory=tempfile.TemporaryDirectory):
     report = initial_report()
+    report['phase'] = 'tests'
+    temporary = None
     try:
-        if os.environ.get('CI') != 'true':
-            raise ValueError('guard')
-        report['phase'] = 'tests'
-        result = subprocess.run(
-            ['flutter', 'test', '--no-pub', '--machine', 'test/mascot_live_status_test.dart'],
-            cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            timeout=180, check=False, encoding='utf-8', errors='replace')
-        report = classify(result.stdout, result.returncode,
+        temporary = temporary_factory(prefix='atomic-mascot-proof-')
+        directory = Path(temporary.name)
+        private_report = directory / 'report.jsonl'
+        result = run(
+            ['flutter', 'test', '--no-pub', '--reporter', 'silent',
+             '--file-reporter', 'json:' + str(private_report), 'test/mascot_live_status_test.dart'],
+            cwd=root, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            timeout=180, check=False)
+        if not private_report.is_file() or private_report.stat().st_size > 4 * 1024 * 1024:
+            raise ValueError('private_report_invalid')
+        report = classify(private_report.read_text(encoding='utf-8'), result.returncode,
                           'loading ' + str(root / 'test/mascot_live_status_test.dart'))
     except subprocess.TimeoutExpired:
         report['phase'] = 'timeout'
     except Exception:
-        report['phase'] = 'runner_failure' if report['phase'] != 'guard' else 'guard'
+        report['phase'] = 'runner_failure'
+    finally:
+        if temporary is not None:
+            try:
+                temporary.cleanup()
+                if Path(temporary.name).exists():
+                    raise ValueError('private_report_cleanup_failed')
+            except Exception:
+                report['phase'] = 'cleanup_failure'
+                report['outcome'] = 'fail'
+    return report
+
+
+def main():
+    root = Path(__file__).resolve().parent.parent
+    report = run_fixture(root) if os.environ.get('CI') == 'true' else initial_report()
     (root / 'ci-mascot-status-proof.json').write_text(json.dumps(report) + '\n', encoding='utf-8')
     print(json.dumps(report))
     return 0 if report['outcome'] == 'pass' else 1

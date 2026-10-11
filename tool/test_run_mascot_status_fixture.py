@@ -1,7 +1,11 @@
 import json
+from pathlib import Path
+import subprocess
+import tempfile
+from types import SimpleNamespace
 import unittest
 
-from run_mascot_status_fixture import CASES, classify
+from run_mascot_status_fixture import CASES, classify, run_fixture
 
 
 class MascotProofParserTests(unittest.TestCase):
@@ -93,6 +97,57 @@ class MascotProofParserTests(unittest.TestCase):
         for suffix in ['not json', '[]', 'null', 'true']:
             with self.subTest(suffix=suffix):
                 self.assertEqual(classify(stream + '\n' + suffix, 0, 'loading fixture')['outcome'], 'fail')
+
+    def test_private_report_is_required_and_strict(self):
+        for variant in ['valid', 'missing', 'malformed', 'oversized', 'failed_process', 'timeout']:
+            with self.subTest(variant=variant):
+                owned = []
+
+                def run(command, **kwargs):
+                    self.assertEqual(kwargs['stdout'], subprocess.DEVNULL)
+                    self.assertEqual(kwargs['stderr'], subprocess.DEVNULL)
+                    report_path = Path(command[command.index('--file-reporter') + 1].removeprefix('json:'))
+                    owned.append(report_path.parent)
+                    if variant == 'timeout':
+                        raise subprocess.TimeoutExpired('fixture', 180)
+                    if variant != 'missing':
+                        events = self.events()
+                        events[0]['test']['name'] = 'loading ' + str(Path('fixture') / 'test/mascot_live_status_test.dart')
+                        text = '\n'.join(json.dumps(event) for event in events)
+                        if variant == 'malformed':
+                            text += '\nnot json'
+                        elif variant == 'oversized':
+                            text = 'x' * (4 * 1024 * 1024 + 1)
+                        report_path.write_text(text, encoding='utf-8')
+                    return SimpleNamespace(returncode=1 if variant == 'failed_process' else 0)
+
+                report = run_fixture(Path('fixture'), run=run)
+                self.assertEqual(report['outcome'], 'pass' if variant == 'valid' else 'fail')
+                self.assertTrue(owned)
+                self.assertFalse(owned[0].exists())
+
+    def test_private_report_cleanup_failure_never_passes(self):
+        temporary = tempfile.TemporaryDirectory(prefix='atomic-mascot-parser-test-')
+        real_cleanup = temporary.cleanup
+
+        def broken_cleanup():
+            raise OSError('synthetic_cleanup_failure')
+
+        temporary.cleanup = broken_cleanup
+        try:
+            def run(command, **kwargs):
+                report_path = Path(command[command.index('--file-reporter') + 1].removeprefix('json:'))
+                events = self.events()
+                events[0]['test']['name'] = 'loading ' + str(Path('fixture') / 'test/mascot_live_status_test.dart')
+                report_path.write_text('\n'.join(json.dumps(event) for event in events), encoding='utf-8')
+                return SimpleNamespace(returncode=0)
+
+            report = run_fixture(Path('fixture'), run=run, temporary_factory=lambda **kwargs: temporary)
+            self.assertEqual(report['phase'], 'cleanup_failure')
+            self.assertEqual(report['outcome'], 'fail')
+            self.assertEqual(set(report['cases'].values()), {'pass'})
+        finally:
+            real_cleanup()
 
 
 if __name__ == '__main__':
