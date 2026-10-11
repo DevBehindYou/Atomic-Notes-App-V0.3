@@ -179,6 +179,21 @@ jobs:
           if-no-files-found: warn
           retention-days: 1
 
+      - name: Verify controlled live mascot status
+        run: |
+          python3 -m unittest discover -s tool -p 'test_run_mascot_status_fixture.py'
+          python3 tool/run_mascot_status_fixture.py
+
+      - name: Upload sanitized mascot status outcomes
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: sanitized-mascot-status-proof
+          path: ci-mascot-status-proof.json
+          if-no-files-found: warn
+          retention-days: 1
+
       - name: Run existing tests
         run: flutter test --no-pub --reporter expanded 2>&1 | tee ci-logs/test.log
 

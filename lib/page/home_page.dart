@@ -271,7 +271,7 @@ class _Mascot extends StatefulWidget {
     }
     if (error != null) return error;
     if (next == null || !next.isAfter(now)) {
-      if (pending == 0) return 'All notes synced.';
+      if (pending == 0) return 'No local changes waiting.';
       return pending == 1
           ? '1 change waiting. It syncs by itself when you are online.'
           : '$waiting waiting. They sync by themselves when you are online.';
@@ -279,7 +279,7 @@ class _Mascot extends StatefulWidget {
     final minutes = (next.difference(now).inSeconds / 60).ceil();
     final when = minutes <= 1 ? 'under a minute' : '$minutes min';
     return pending == 0
-        ? 'All synced. Next sync in $when.'
+        ? 'No local changes waiting. Next sync in $when.'
         : '$waiting waiting. Next sync in $when.';
   }
 
@@ -291,7 +291,6 @@ class _MascotState extends State<_Mascot> {
   final OverlayPortalController _bubble = OverlayPortalController();
   final LayerLink _anchor = LayerLink();
   Timer? _autoHide;
-  String _message = '';
 
   void _onTap() {
     _autoHide?.cancel();
@@ -299,10 +298,6 @@ class _MascotState extends State<_Mascot> {
       _bubble.hide();
       return;
     }
-    final state = context.read<NotesBloc>().state;
-    setState(() => _message =
-        _Mascot.syncMessage(state.nextAutoSyncAt, state.pending,
-            syncing: state.syncing, error: state.syncError));
     _bubble.show();
     _autoHide = Timer(const Duration(seconds: 3), () {
       if (mounted && _bubble.isShowing) _bubble.hide();
@@ -331,7 +326,15 @@ class _MascotState extends State<_Mascot> {
             offset: const Offset(0, 4),
             child: Align(
               alignment: Alignment.topRight,
-              child: _ChatBubble(text: _message),
+              child: BlocSelector<NotesBloc, NotesState, String>(
+                selector: (state) => _Mascot.syncMessage(
+                  state.nextAutoSyncAt,
+                  state.pending,
+                  syncing: state.syncing,
+                  error: state.syncError,
+                ),
+                builder: (context, message) => _ChatBubble(text: message),
+              ),
             ),
           ),
         ),
