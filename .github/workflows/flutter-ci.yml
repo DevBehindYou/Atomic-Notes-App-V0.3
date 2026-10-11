@@ -209,6 +209,22 @@ jobs:
           if-no-files-found: warn
           retention-days: 1
 
+      - name: Verify historical and current R2 logout preservation
+        run: |
+          git fetch --no-tags --depth=1 origin 2cdc0516935b0ae9b8d7770efcf0d66ae1b8b55a
+          python3 tool/test_run_r2_causal_fixture.py
+          python3 tool/run_r2_causal_fixture.py
+
+      - name: Upload sanitized R2 causal outcomes
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: sanitized-r2-causal-proof
+          path: ci-r2-causal-proof.json
+          if-no-files-found: warn
+          retention-days: 1
+
       - name: Run existing tests
         run: flutter test --no-pub --reporter expanded 2>&1 | tee ci-logs/test.log
 
