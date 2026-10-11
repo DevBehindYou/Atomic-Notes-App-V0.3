@@ -45,7 +45,8 @@ class DevBehindYouMascot extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final still =
-        MediaQuery.disableAnimationsOf(context) || !TickerMode.of(context);
+        MediaQuery.disableAnimationsOf(context) ||
+        !TickerMode.valuesOf(context).enabled;
     final fallback = secondary
         ? AtomicBrandAssets.dotgridStatic
         : AtomicBrandAssets.workerStatic;
