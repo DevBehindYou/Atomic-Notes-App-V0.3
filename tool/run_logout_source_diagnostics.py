@@ -9,7 +9,8 @@ from urllib.parse import unquote, urljoin, urlparse
 FILES = {'lib/api/atomic_notes_api.dart', 'lib/database/logout_plan.dart',
          'lib/database/notes_logout.dart', 'lib/database/notes_repository.dart',
          'test/logout_recovery_receipts_test.dart', 'test/logout_same_owner_recovery_test.dart',
-         'test/logout_same_owner_wire_integration_test.dart'}
+         'test/logout_same_owner_wire_integration_test.dart',
+         'test/logout_orchestration_test.dart'}
 CODES = {'argument_type_not_assignable', 'invalid_override', 'undefined_method',
          'undefined_getter', 'ambiguous_import', 'unnecessary_non_null_assertion',
          'unused_import', 'prefer_const_constructors', 'dead_code',
@@ -70,6 +71,30 @@ def installed_analyzer_codes(root):
     codes = set(re.findall(r"\bname:\s*'([a-z][a-z0-9_]{0,79})'", source.read_text(encoding='utf-8')))
     if not 500 <= len(codes) <= 2000:
         raise ValueError('analyzer code inventory')
+    # These are the locked rule packages named by analysis_options.yaml and
+    # its known includes. Read only their bounded, static rule names.
+    for name, version, filenames in (
+            ('flutter_lints', '3.0.2', ('flutter.yaml',)),
+            ('lints', '3.0.0', ('recommended.yaml', 'core.yaml'))):
+        selected = [item for item in packages if item['name'] == name]
+        if len(selected) != 1:
+            raise ValueError('lint inventory')
+        lint_uri = urlparse(urljoin(config.as_uri(), selected[0]['rootUri']))
+        if lint_uri.scheme != 'file' or lint_uri.netloc or lint_uri.query or lint_uri.fragment:
+            raise ValueError('lint origin')
+        lint_package = Path(unquote(lint_uri.path))
+        if lint_package.name != name + '-' + version:
+            raise ValueError('lint revision')
+        for filename in filenames:
+            rules_file = lint_package / 'lib' / filename
+            if rules_file.stat().st_size > 100_000:
+                raise ValueError('lint source bound')
+            text = rules_file.read_text(encoding='utf-8')
+            names = re.findall(r'^\s+-\s+([a-z][a-z0-9_]{0,79})\s*(?:#.*)?$', text, re.MULTILINE)
+            names += re.findall(r'^\s{4,}([a-z][a-z0-9_]{0,79}):\s*true\s*(?:#.*)?$', text, re.MULTILINE)
+            if not 1 <= len(names) <= 500:
+                raise ValueError('lint rule inventory')
+            codes.update(names)
     return CODES | codes
 
 
