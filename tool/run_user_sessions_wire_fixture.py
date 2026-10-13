@@ -24,6 +24,9 @@ def main():
                 'setup', 'inventory_and_current_refusal', 'foreign_handle_noop',
                 'revoke_other_and_idempotent_retry', 'real401_retains_hive_and_same_owner_restore', 'complete'}:
                 proof['outcome'] = 'failed_' + result['phase']
+                line = result.get('failureLine')
+                if type(line) is int and 1 <= line <= 1000:
+                    proof['failureLine'] = line
         Path('ci-user-sessions-server-wire-proof.json').write_text(json.dumps(proof))
 
 if __name__ == '__main__':

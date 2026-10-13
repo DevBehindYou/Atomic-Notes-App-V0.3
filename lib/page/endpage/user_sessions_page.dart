@@ -90,14 +90,18 @@ class _UserSessionsPageState extends State<UserSessionsPage> {
 
   String _message(Object error) {
     if (error is ApiException) {
-      if (error.statusCode == 404)
+      if (error.statusCode == 404) {
         return 'Update the Atomic Notes Server to manage sign-ins. Your notes remain on this device.';
-      if (error.code == 'session_logout_active')
+      }
+      if (error.code == 'session_logout_active') {
         return 'This sign-in has an unfinished safe logout. Finish it on that device, then refresh.';
-      if (error.code == 'current_session_requires_safe_logout')
+      }
+      if (error.code == 'current_session_requires_safe_logout') {
         return 'Use Logout in Settings for this sign-in. Atomic will protect unsynced notes.';
-      if (error.statusCode == 409)
+      }
+      if (error.statusCode == 409) {
         return 'The Server could not safely manage these sign-ins. Refresh or try again later.';
+      }
     }
     return 'Could not load or update sign-ins. Check your connection and retry.';
   }
@@ -136,8 +140,9 @@ class _UserSessionsPageState extends State<UserSessionsPage> {
     }
     setState(() => _confirming = false);
     if (confirmed != true ||
-        !_rows.any((row) => row.handle == session.handle && !row.isCurrent))
+        !_rows.any((row) => row.handle == session.handle && !row.isCurrent)) {
       return;
+    }
     await _revoke(session.handle);
   }
 
@@ -148,8 +153,9 @@ class _UserSessionsPageState extends State<UserSessionsPage> {
     }
     if (_busy ||
         (_pendingHandle != null && _pendingHandle != handle) ||
-        !_rows.any((row) => row.handle == handle && !row.isCurrent))
+        !_rows.any((row) => row.handle == handle && !row.isCurrent)) {
       return;
+    }
     setState(() {
       _writing = true;
       _pendingHandle = handle;

@@ -126,8 +126,9 @@ void main() {
         // leave a page callback or failed response parked beyond cleanup.
         await tester.pumpWidget(const SizedBox());
         for (final reply in ownedReplies) {
-          if (!reply.isCompleted)
+          if (!reply.isCompleted) {
             reply.complete(response({'sessions': [], 'limit': 5}));
+          }
         }
         await tester.pump();
         await api.init();
@@ -256,8 +257,9 @@ void main() {
       var posts = 0, ended = false;
       handler = (request) async {
         if (request.method == 'POST') {
-          if (++posts == 1)
+          if (++posts == 1) {
             throw http.ClientException('public synthetic reply lost');
+          }
           ended = true;
           return response({'ok': true});
         }
