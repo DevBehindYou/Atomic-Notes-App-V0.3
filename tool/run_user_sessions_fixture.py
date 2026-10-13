@@ -111,6 +111,27 @@ def run_fixture(root, run=subprocess.run, temporary_factory=tempfile.TemporaryDi
         report = classify(private_report.read_text(encoding='utf-8'), result.returncode,
                           'loading ' + str(root / 'test/user_sessions_test.dart'))
     except subprocess.TimeoutExpired:
+        # Partial fixed case/stage outcomes are useful even if one fake-async
+        # test stalls. Private messages and streams are still discarded.
+        if private_report.is_file() and private_report.stat().st_size <= 4 * 1024 * 1024:
+            raw = private_report.read_text(encoding='utf-8')
+            report = classify(raw, 1, 'loading ' + str(root / 'test/user_sessions_test.dart'))
+            stages = {}
+            for line in raw.splitlines():
+                try:
+                    event = json.loads(line)
+                except (ValueError, TypeError):
+                    continue
+                if not isinstance(event, dict) or event.get('type') != 'print':
+                    continue
+                message = event.get('message')
+                if not isinstance(message, str):
+                    continue
+                parts = message.strip().split(':')
+                if (len(parts) == 3 and parts[0] == 'atomic_sessions_stage'
+                        and parts[1] in CASES.values() and parts[2] in {'init', 'body'}):
+                    stages[parts[1]] = parts[2]
+            report['timeoutStages'] = stages
         report['phase'] = 'timeout'
     except Exception:
         report['phase'] = 'runner_failure'

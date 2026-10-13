@@ -120,6 +120,9 @@ void main() {
         storage: storage,
         baseUrl: Uri.parse('https://fixture.invalid/api'),
       );
+      // Fixed stage codes expose a stalled fixture without retaining payloads.
+      // ignore: avoid_print
+      print('atomic_sessions_stage:$code:init');
       await api.init();
       addTearDown(() async {
         // Unmount first, then drain every response owned by this case. Never
@@ -141,6 +144,8 @@ void main() {
         // ignore: avoid_print
         print('atomic_sessions_cleanup:$code');
       });
+      // ignore: avoid_print
+      print('atomic_sessions_stage:$code:body');
       await body(tester);
     });
   }
