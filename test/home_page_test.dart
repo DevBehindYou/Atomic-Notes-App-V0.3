@@ -15,21 +15,33 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'support/fake_notes_source.dart';
 
-FakeNotesSource _source({int limit = 30, bool empty = false}) => FakeNotesSource(
+FakeNotesSource _source({int limit = 30, bool empty = false}) =>
+    FakeNotesSource(
       limit: limit,
       notes: empty
           ? []
           : [
-              syncedNote('a',
-                  title: 'Groceries',
-                  kind: NoteKind.todo,
-                  items: [TodoItem(text: 'milk'), TodoItem(text: 'bread')],
-                  createdAt: DateTime.utc(2026, 9, 3)),
-              syncedNote('b',
-                  title: 'Ideas',
-                  body: 'Build a rocket',
-                  createdAt: DateTime.utc(2026, 9, 2)),
-              syncedNote('c', title: 'Trip', createdAt: DateTime.utc(2026, 9, 1)),
+              syncedNote(
+                'a',
+                title: 'Groceries',
+                kind: NoteKind.todo,
+                items: [
+                  TodoItem(text: 'milk'),
+                  TodoItem(text: 'bread'),
+                ],
+                createdAt: DateTime.utc(2026, 9, 3),
+              ),
+              syncedNote(
+                'b',
+                title: 'Ideas',
+                body: 'Build a rocket',
+                createdAt: DateTime.utc(2026, 9, 2),
+              ),
+              syncedNote(
+                'c',
+                title: 'Trip',
+                createdAt: DateTime.utc(2026, 9, 1),
+              ),
             ],
     );
 
@@ -46,9 +58,11 @@ Future<NotesBloc> _open(WidgetTester tester, FakeNotesSource source) async {
     isOnline: () async => true,
   );
   addTearDown(bloc.close);
-  await tester.pumpWidget(MaterialApp(
-    home: BlocProvider<NotesBloc>.value(value: bloc, child: const HomePage()),
-  ));
+  await tester.pumpWidget(
+    MaterialApp(
+      home: BlocProvider<NotesBloc>.value(value: bloc, child: const HomePage()),
+    ),
+  );
   await tester.pump();
   return bloc;
 }
@@ -56,27 +70,34 @@ Future<NotesBloc> _open(WidgetTester tester, FakeNotesSource source) async {
 void main() {
   group('what the screen shows', () {
     for (final pending in [false, true]) {
-      testWidgets('R19 mascot reports automatic failure (pending=$pending)',
-          (tester) async {
+      testWidgets('R19 mascot reports automatic failure (pending=$pending)', (
+        tester,
+      ) async {
         final source = _source();
         if (pending) source.byId('c')!.touch();
         await _open(tester, source);
-        source.changeBehindTheScenes(() => source.lastError =
-            'A cloud note could not be read safely. Try syncing again.');
+        source.changeBehindTheScenes(
+          () => source.lastError =
+              'A cloud note could not be read safely. Try syncing again.',
+        );
         await tester.pump();
         await tester.pump();
         await tester.tap(find.byType(Image));
         await tester.pump();
         expect(
-            find.text('A cloud note could not be read safely. Try syncing again.'),
-            findsOneWidget);
+          find.text(
+            'A cloud note could not be read safely. Try syncing again.',
+          ),
+          findsOneWidget,
+        );
         expect(find.text('No local changes waiting.'), findsNothing);
         expect(source.syncCalls, 0);
         await tester.pump(const Duration(seconds: 4));
       });
     }
-    testWidgets('R19 receive-only retry replaces its previous error',
-        (tester) async {
+    testWidgets('R19 receive-only retry replaces its previous error', (
+      tester,
+    ) async {
       final source = _source()..lastError = 'Previous failure';
       await _open(tester, source);
       source.changeBehindTheScenes(() {
@@ -92,58 +113,71 @@ void main() {
       expect(find.text('No local changes waiting.'), findsNothing);
       await tester.pump(const Duration(seconds: 4));
     });
-    testWidgets('R19 automatic sync reaches the mascot without a button press', (tester) async {
-      final source = _source();
-      source.byId('c')!.touch();
-      await _open(tester, source);
-      source.changeBehindTheScenes(() => source.isSyncing = true);
-      await tester.pump();
-      await tester.pump();
-      await tester.tap(find.byType(Image));
-      await tester.pump();
-      expect(find.text('Syncing 1 change now.'), findsOneWidget);
-      await tester.pump(const Duration(seconds: 4));
-    });
-    testWidgets('the mascot drops a future wait when the source clears its cooldown', (tester) async {
-      final source = _source()
-        ..nextAutoSyncAt = DateTime.now().add(const Duration(minutes: 40));
-      await _open(tester, source);
-      await tester.tap(find.byType(Image));
-      await tester.pump();
-      expect(find.text('No local changes waiting. Next sync in 40 min.'), findsOneWidget);
-      await tester.tap(find.byType(Image));
-      await tester.pump();
+    testWidgets(
+      'R19 automatic sync reaches the mascot without a button press',
+      (tester) async {
+        final source = _source();
+        source.byId('c')!.touch();
+        await _open(tester, source);
+        source.changeBehindTheScenes(() => source.isSyncing = true);
+        await tester.pump();
+        await tester.pump();
+        await tester.tap(find.byType(Image));
+        await tester.pump();
+        expect(find.text('Syncing 1 change now.'), findsOneWidget);
+        await tester.pump(const Duration(seconds: 4));
+      },
+    );
+    testWidgets(
+      'the mascot drops a future wait when the source clears its cooldown',
+      (tester) async {
+        final source = _source()
+          ..nextAutoSyncAt = DateTime.now().add(const Duration(minutes: 40));
+        await _open(tester, source);
+        await tester.tap(find.byType(Image));
+        await tester.pump();
+        expect(
+          find.text('No local changes waiting. Next sync in 40 min.'),
+          findsOneWidget,
+        );
+        await tester.tap(find.byType(Image));
+        await tester.pump();
 
-      source.changeBehindTheScenes(() => source.nextAutoSyncAt = null);
-      await tester.pump();
-      await tester.pump();
-      await tester.tap(find.byType(Image));
-      await tester.pump();
-      expect(find.text('No local changes waiting.'), findsOneWidget);
-      expect(find.textContaining('Next sync in'), findsNothing);
-      await tester.pump(const Duration(seconds: 4));
-    });
+        source.changeBehindTheScenes(() => source.nextAutoSyncAt = null);
+        await tester.pump();
+        await tester.pump();
+        await tester.tap(find.byType(Image));
+        await tester.pump();
+        expect(find.text('No local changes waiting.'), findsOneWidget);
+        expect(find.textContaining('Next sync in'), findsNothing);
+        await tester.pump(const Duration(seconds: 4));
+      },
+    );
 
-    testWidgets('a card for each note and the usage in the header', (tester) async {
+    testWidgets('a card for each note and the usage in the header', (
+      tester,
+    ) async {
       await _open(tester, _source());
       expect(find.byType(NotesBulder), findsNWidgets(3));
       expect(find.text('3 / 30'), findsOneWidget);
       // Card titles are set in capitals by the design system.
       expect(find.text('GROCERIES'), findsOneWidget);
-      // The date/time moved into the editor; the card no longer carries it.
-      expect(find.textContaining('2026-09'), findsNothing);
+      expect(find.text('0 / 2 DONE'), findsOneWidget);
     });
 
-    testWidgets('tapping the mascot opens a chat bubble that closes by itself', (tester) async {
-      await _open(tester, _source());
-      await tester.tap(find.byType(Image));
-      await tester.pump();
-      expect(find.text('No local changes waiting.'), findsOneWidget);
-      expect(find.byType(SnackBar), findsNothing);
+    testWidgets(
+      'tapping the mascot opens a chat bubble that closes by itself',
+      (tester) async {
+        await _open(tester, _source());
+        await tester.tap(find.byType(Image));
+        await tester.pump();
+        expect(find.text('No local changes waiting.'), findsOneWidget);
+        expect(find.byType(SnackBar), findsNothing);
 
-      await tester.pump(const Duration(seconds: 4));
-      expect(find.text('No local changes waiting.'), findsNothing);
-    });
+        await tester.pump(const Duration(seconds: 4));
+        expect(find.text('No local changes waiting.'), findsNothing);
+      },
+    );
 
     testWidgets('a second tap closes the bubble', (tester) async {
       await _open(tester, _source());
@@ -154,13 +188,18 @@ void main() {
       expect(find.text('No local changes waiting.'), findsNothing);
     });
 
-    testWidgets('the bubble names the wait when automatic sync is closed', (tester) async {
+    testWidgets('the bubble names the wait when automatic sync is closed', (
+      tester,
+    ) async {
       final source = _source()
         ..nextAutoSyncAt = DateTime.now().add(const Duration(minutes: 40));
       await _open(tester, source);
       await tester.tap(find.byType(Image));
       await tester.pump();
-      expect(find.text('No local changes waiting. Next sync in 40 min.'), findsOneWidget);
+      expect(
+        find.text('No local changes waiting. Next sync in 40 min.'),
+        findsOneWidget,
+      );
     });
 
     testWidgets('the bubble counts changes that are waiting', (tester) async {
@@ -173,11 +212,16 @@ void main() {
       await tester.tap(find.byType(Image));
       await tester.pump();
       // Nothing is running: the change waits (offline, or for the few seconds before auto-sync).
-      expect(find.text('1 change waiting. It syncs by itself when you are online.'), findsOneWidget);
+      expect(
+        find.text('1 change waiting. It syncs by itself when you are online.'),
+        findsOneWidget,
+      );
       expect(find.text('Syncing 1 change now.'), findsNothing);
     });
 
-    testWidgets('on a short screen the header scrolls away with the notes', (tester) async {
+    testWidgets('on a short screen the header scrolls away with the notes', (
+      tester,
+    ) async {
       // A phone on its side: 800 x 360 logical pixels.
       tester.view.physicalSize = const Size(2400, 1080);
       tester.view.devicePixelRatio = 3;
@@ -189,9 +233,14 @@ void main() {
         isOnline: () async => true,
       );
       addTearDown(bloc.close);
-      await tester.pumpWidget(MaterialApp(
-        home: BlocProvider<NotesBloc>.value(value: bloc, child: const HomePage()),
-      ));
+      await tester.pumpWidget(
+        MaterialApp(
+          home: BlocProvider<NotesBloc>.value(
+            value: bloc,
+            child: const HomePage(),
+          ),
+        ),
+      );
       await tester.pump();
       expect(find.byType(NestedScrollView), findsOneWidget);
       expect(find.text('NOTES').hitTestable(), findsWidgets);
@@ -207,7 +256,9 @@ void main() {
       expect(find.byType(NestedScrollView), findsNothing);
     });
 
-    testWidgets('while a sync runs the bubble says it is syncing', (tester) async {
+    testWidgets('while a sync runs the bubble says it is syncing', (
+      tester,
+    ) async {
       final source = _source()..syncGate = Completer<void>();
       final bloc = await _open(tester, source);
       source.byId('c')!.touch();
@@ -233,7 +284,9 @@ void main() {
       expect(find.text('3 / 30 · 1 UNSYNCED'), findsOneWidget);
     });
 
-    testWidgets('at the limit the header and the add menu say so', (tester) async {
+    testWidgets('at the limit the header and the add menu say so', (
+      tester,
+    ) async {
       await _open(tester, _source(limit: 3));
       expect(find.text('3 / 3'), findsOneWidget);
       expect(find.text('3 NOTE LIMIT REACHED'), findsOneWidget);
@@ -267,7 +320,9 @@ void main() {
     });
 
     testWidgets('a filter with no match says so', (tester) async {
-      final source = FakeNotesSource(notes: [syncedNote('x', title: 'Only text')]);
+      final source = FakeNotesSource(
+        notes: [syncedNote('x', title: 'Only text')],
+      );
       await _open(tester, source);
       await tester.tap(find.text('TO-DOS'));
       await tester.pump();
@@ -291,28 +346,33 @@ void main() {
       await tester.pump();
       expect(find.byType(NotesBulder), findsNWidgets(3));
       expect(find.byIcon(Icons.close), findsNothing);
-      expect(tester.widget<TextField>(find.byType(TextField)).controller!.text, isEmpty);
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        isEmpty,
+      );
     });
   });
 
   group('selecting', () {
-    testWidgets('a long press starts selecting: the count, the actions, no chips, no add menu',
-        (tester) async {
-      await _open(tester, _source());
-      expect(find.text('NEW NOTE'), findsOneWidget);
-      expect(find.byType(TextField), findsOneWidget);
+    testWidgets(
+      'a long press starts selecting: the count, the actions, no chips, no add menu',
+      (tester) async {
+        await _open(tester, _source());
+        expect(find.text('NEW NOTE'), findsOneWidget);
+        expect(find.byType(TextField), findsOneWidget);
 
-      await tester.longPress(find.byType(NotesBulder).first);
-      // The add menu slides out with the Scaffold's own animation.
-      await tester.pumpAndSettle();
+        await tester.longPress(find.byType(NotesBulder).first);
+        // The add menu slides out with the Scaffold's own animation.
+        await tester.pumpAndSettle();
 
-      expect(find.text('1 SELECTED'), findsOneWidget);
-      expect(find.text('ALL'), findsOneWidget);
-      expect(find.text('CANCEL'), findsOneWidget);
-      expect(find.text('DELETE'), findsOneWidget);
-      expect(find.byType(TextField), findsNothing);
-      expect(find.text('NEW NOTE'), findsNothing);
-    });
+        expect(find.text('1 SELECTED'), findsOneWidget);
+        expect(find.text('ALL'), findsOneWidget);
+        expect(find.text('CANCEL'), findsOneWidget);
+        expect(find.text('DELETE'), findsOneWidget);
+        expect(find.byType(TextField), findsNothing);
+        expect(find.text('NEW NOTE'), findsNothing);
+      },
+    );
 
     testWidgets('cancel ends it', (tester) async {
       await _open(tester, _source());
@@ -328,7 +388,9 @@ void main() {
       expect(find.text('3 / 30'), findsOneWidget);
     });
 
-    testWidgets('delete moves the selection to the bin and says so', (tester) async {
+    testWidgets('delete moves the selection to the bin and says so', (
+      tester,
+    ) async {
       final source = _source();
       await _open(tester, source);
       await tester.longPress(find.byType(NotesBulder).first);
@@ -348,6 +410,133 @@ void main() {
   });
 
   group('the cards', () {
+    testWidgets('empty editor save cannot mutate the repository note', (
+      tester,
+    ) async {
+      final source = _source();
+      await _open(tester, source);
+      final before = source.byId('b')!.toMap();
+      await tester.tap(find.text('IDEAS'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const ValueKey('note-title')), '');
+      await tester.enterText(find.byKey(const ValueKey('note-body')), '');
+      await tester.tap(find.text('Done'));
+      await tester.pumpAndSettle();
+      expect(source.saveCalls, 0);
+      expect(source.byId('b')!.toMap(), before);
+      expect(find.text('IDEAS'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 2));
+    });
+
+    testWidgets(
+      'accepted editor save reaches the repository as a replacement',
+      (tester) async {
+        final source = _source();
+        await _open(tester, source);
+        final original = source.byId('b')!;
+        await tester.tap(find.text('IDEAS'));
+        await tester.pumpAndSettle();
+        await tester.enterText(
+          find.byKey(const ValueKey('note-body')),
+          'New draft',
+        );
+        expect(original.body, 'Build a rocket');
+        await tester.tap(find.text('Done'));
+        await tester.pumpAndSettle();
+        expect(source.saveCalls, 1);
+        expect(source.byId('b')!.body, 'New draft');
+        expect(source.byId('b')!.dirty, isTrue);
+        expect(original.body, 'Build a rocket');
+      },
+    );
+
+    testWidgets('first pinned card spans the grid without duplicating notes', (
+      tester,
+    ) async {
+      final source = _source();
+      source.byId('b')!.pinned = true;
+      await _open(tester, source);
+      final featured = find.byWidgetPredicate(
+        (widget) => widget is NotesBulder && widget.featured,
+      );
+      expect(featured, findsOneWidget);
+      expect(tester.widget<NotesBulder>(featured).note.id, 'b');
+      expect(find.byType(NotesBulder), findsNWidgets(3));
+      expect(
+        tester.getSize(featured).width,
+        greaterThan(
+          tester.getSize(find.byKey(const ValueKey('a'))).width * 1.8,
+        ),
+      );
+      await tester.longPress(featured);
+      await tester.pump();
+      expect(find.text('1 SELECTED'), findsOneWidget);
+    });
+
+    testWidgets('search and mascot share a row above the filters', (
+      tester,
+    ) async {
+      await _open(tester, _source());
+      final search = tester.getRect(find.byType(TextField));
+      final mascot = tester.getRect(find.byType(Image));
+      final filter = tester.getRect(find.byType(DataChip).first);
+      expect((search.center.dy - mascot.center.dy).abs(), lessThan(1));
+      expect(search.right, lessThan(mascot.left));
+      expect(filter.top, greaterThanOrEqualTo(mascot.bottom));
+      expect(find.text('CHECKLIST'), findsNothing);
+      expect(find.text('NEW NOTE'), findsOneWidget);
+    });
+
+    testWidgets('one creation button still respects capacity', (tester) async {
+      await _open(tester, _source(limit: 3));
+      await tester.tap(find.text('NEW NOTE'));
+      await tester.pump();
+      expect(find.textContaining("You've reached 3 notes"), findsOneWidget);
+      await tester.pump(const Duration(seconds: 4));
+    });
+
+    testWidgets('narrow large-text layout keeps search and cards usable', (
+      tester,
+    ) async {
+      final source = _source();
+      final bloc = await _open(tester, source);
+      tester.view.physicalSize = const Size(960, 2100);
+      await tester.pumpWidget(
+        MaterialApp(
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: const TextScaler.linear(2)),
+            child: child!,
+          ),
+          home: BlocProvider<NotesBloc>.value(
+            value: bloc,
+            child: const HomePage(),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+      final search = tester.getRect(find.byType(TextField));
+      final mascot = tester.getRect(find.byType(Image));
+      expect(search.right, lessThan(mascot.left));
+      expect(
+        tester.getSize(find.byType(NotesBulder).first).width,
+        greaterThan(270),
+      );
+    });
+
+    testWidgets('card date and checklist progress reflect local note data', (
+      tester,
+    ) async {
+      final source = _source();
+      source.byId('a')!.updatedAt = DateTime(2020, 9, 3, 7, 10);
+      source.byId('a')!.items.first.done = true;
+      await _open(tester, source);
+      expect(find.text('2020-09-03'), findsOneWidget);
+      expect(find.text('1 / 2 DONE'), findsOneWidget);
+    });
+
     testWidgets('ticking a checklist row saves the note', (tester) async {
       final source = _source();
       await _open(tester, source);
@@ -363,32 +552,34 @@ void main() {
   });
 
   group('how much it rebuilds', () {
-    testWidgets('a store that only says "syncing" rebuilds no card; a changed note rebuilds the cards',
-        (tester) async {
-      final source = _source();
-      await _open(tester, source);
+    testWidgets(
+      'a store that only says "syncing" rebuilds no card; a changed note rebuilds the cards',
+      (tester) async {
+        final source = _source();
+        await _open(tester, source);
 
-      var cardRebuilds = 0;
-      debugOnRebuildDirtyWidget = (element, builtOnce) {
-        if (element.widget is NotesBulder) cardRebuilds++;
-      };
-      addTearDown(() => debugOnRebuildDirtyWidget = null);
+        var cardRebuilds = 0;
+        debugOnRebuildDirtyWidget = (element, builtOnce) {
+          if (element.widget is NotesBulder) cardRebuilds++;
+        };
+        addTearDown(() => debugOnRebuildDirtyWidget = null);
 
-      // What a real sync sends at its start and at its end, with nothing on screen changed.
-      source.poke();
-      await tester.pump();
-      source.poke();
-      await tester.pump();
-      await tester.pump();
-      expect(cardRebuilds, 0);
+        // What a real sync sends at its start and at its end, with nothing on screen changed.
+        source.poke();
+        await tester.pump();
+        source.poke();
+        await tester.pump();
+        await tester.pump();
+        expect(cardRebuilds, 0);
 
-      // An edit changes what a card shows, so the cards are rebuilt.
-      source.byId('c')!.title = 'Trip to the sea';
-      await source.save(source.byId('c')!);
-      await tester.pump();
-      await tester.pump();
-      expect(cardRebuilds, greaterThan(0));
-    });
+        // An edit changes what a card shows, so the cards are rebuilt.
+        source.byId('c')!.title = 'Trip to the sea';
+        await source.save(source.byId('c')!);
+        await tester.pump();
+        await tester.pump();
+        expect(cardRebuilds, greaterThan(0));
+      },
+    );
 
     /// Counts how often each named part of the screen is rebuilt while [act] runs.
     ///
@@ -419,11 +610,15 @@ void main() {
       return counts;
     }
 
-    testWidgets('typing in the search box rebuilds the list and nothing else', (tester) async {
+    testWidgets('typing in the search box rebuilds the list and nothing else', (
+      tester,
+    ) async {
       await _open(tester, _source());
 
       final counts = await rebuilds(
-          tester, () => tester.enterText(find.byType(TextField), 'rocket'));
+        tester,
+        () => tester.enterText(find.byType(TextField), 'rocket'),
+      );
 
       expect(counts['cards'], greaterThan(0));
       expect(counts['heading'], isNull);
@@ -431,28 +626,38 @@ void main() {
       expect(counts['newNote'], isNull);
     });
 
-    testWidgets('ticking a checklist row rebuilds the list and the count, not the chips or the add menu',
-        (tester) async {
-      await _open(tester, _source());
+    testWidgets(
+      'ticking a checklist row rebuilds the list and the count, not the chips or the add menu',
+      (tester) async {
+        await _open(tester, _source());
 
-      final counts = await rebuilds(tester, () => tester.tap(find.text('milk')));
+        final counts = await rebuilds(
+          tester,
+          () => tester.tap(find.text('milk')),
+        );
 
-      expect(counts['cards'], greaterThan(0));
-      expect(counts['heading'], greaterThan(0)); // "1 UNSYNCED" appears
-      expect(counts['chips'], isNull);
-      expect(counts['newNote'], isNull);
-    });
+        expect(counts['cards'], greaterThan(0));
+        expect(counts['heading'], greaterThan(0)); // "1 UNSYNCED" appears
+        expect(counts['chips'], isNull);
+        expect(counts['newNote'], isNull);
+      },
+    );
 
-    testWidgets('changing the filter rebuilds the chips and the list, not the count or the add menu',
-        (tester) async {
-      await _open(tester, _source());
+    testWidgets(
+      'changing the filter rebuilds the chips and the list, not the count or the add menu',
+      (tester) async {
+        await _open(tester, _source());
 
-      final counts = await rebuilds(tester, () => tester.tap(find.widgetWithText(DataChip, 'NOTES')));
+        final counts = await rebuilds(
+          tester,
+          () => tester.tap(find.widgetWithText(DataChip, 'NOTES')),
+        );
 
-      expect(counts['chips'], greaterThan(0));
-      expect(counts['cards'], greaterThan(0));
-      expect(counts['heading'], isNull);
-      expect(counts['newNote'], isNull);
-    });
+        expect(counts['chips'], greaterThan(0));
+        expect(counts['cards'], greaterThan(0));
+        expect(counts['heading'], isNull);
+        expect(counts['newNote'], isNull);
+      },
+    );
   });
 }
