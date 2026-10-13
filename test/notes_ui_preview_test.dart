@@ -6,6 +6,7 @@ import 'package:atomic_notes/database/note.dart';
 import 'package:atomic_notes/page/home_page.dart';
 import 'package:atomic_notes/page/notes_editor_page.dart';
 import 'package:atomic_notes/state/notes/notes_bloc.dart';
+import 'package:atomic_notes/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -17,6 +18,9 @@ import 'support/fake_notes_source.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUpAll(() async {
+    await (FontLoader(
+      'MaterialIcons',
+    )..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'))).load();
     for (final family in ['BebasNeue', 'HankenGrotesk', 'JetBrainsMono']) {
       await (FontLoader(
         family,
@@ -78,6 +82,7 @@ void main() {
       addTearDown(bloc.close);
       await tester.pumpWidget(
         MaterialApp(
+          theme: AppTheme.light,
           builder: (context, child) => MediaQuery(
             data: MediaQuery.of(context).copyWith(disableAnimations: true),
             child: RepaintBoundary(key: key, child: child!),
@@ -91,6 +96,14 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      if (scene == 'home') {
+        final image = tester.widget<Image>(find.byType(Image));
+        await tester.runAsync(
+          () => precacheImage(image.image, key.currentContext!),
+        );
+        await tester.pumpAndSettle();
+        expect(tester.widget<RawImage>(find.byType(RawImage)).image, isNotNull);
+      }
       expect(tester.takeException(), isNull);
       if (Platform.environment['ATOMIC_UI_CAPTURE'] == 'true') {
         await tester.runAsync(() async {

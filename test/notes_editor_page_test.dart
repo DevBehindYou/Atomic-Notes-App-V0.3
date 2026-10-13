@@ -50,6 +50,7 @@ void main() {
     await tester.enterText(field('note-title'), 'Morning');
     await tester.enterText(field('note-body'), 'Three things to protect');
     await tester.tap(find.byTooltip('Pin note'));
+    await tester.pump();
     expect(note.title, isEmpty);
     expect(note.pinned, isFalse);
     expect(find.text('5 WORDS'), findsOneWidget);
