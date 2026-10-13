@@ -192,7 +192,9 @@ void main() {
     await openEditor(tester, note);
     await tester.enterText(field('note-body'), 'A draft');
     // Deliver both commands before a new frame, as two queued back actions.
-    final back = tester.widget<IconButton>(find.byTooltip('Back to notes'));
+    final back = tester.widget<IconButton>(
+      find.widgetWithIcon(IconButton, Icons.arrow_back),
+    );
     back.onPressed!();
     back.onPressed!();
     await tester.pumpAndSettle();
