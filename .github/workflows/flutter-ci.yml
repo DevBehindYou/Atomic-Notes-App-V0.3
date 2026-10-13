@@ -150,6 +150,30 @@ jobs:
       - name: Analyze (errors, warnings, and infos are fatal)
         run: flutter analyze --no-pub --fatal-warnings --fatal-infos 2>&1 | tee ci-logs/analyze.log
 
+      - name: Verify notes home and editor behavior
+        env:
+          ATOMIC_REPAIR_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          ATOMIC_UI_CAPTURE: 'true'
+        run: python3 tool/run_notes_ui_fixture.py
+
+      - name: Upload bounded notes UI outcomes
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: sanitized-notes-ui-proof
+          path: ci-notes-ui-proof.json
+          if-no-files-found: warn
+          retention-days: 1
+
+      - name: Upload synthetic notes UI previews
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: synthetic-notes-ui-previews
+          path: ci-notes-ui-previews/*.png
+          if-no-files-found: warn
+          retention-days: 1
+
       - name: Record redacted changed-source diagnostics for repair
         if: always()
         env:

@@ -15,6 +15,9 @@ FILES |= {'lib/utility/component/atomic_brand.dart', 'lib/page/home_page.dart',
           'lib/page/logout_screen.dart', 'lib/page/splash_screen.dart',
           'lib/theme/editorial.dart', 'lib/utility/component/logo_container.dart',
           'test/atomic_brand_test.dart', 'test/r2_logout_causal_test.dart'}
+FILES |= {'lib/page/notes_editor_page.dart', 'lib/utility/component/notes_builder.dart',
+          'test/home_page_test.dart', 'test/notes_editor_page_test.dart',
+          'test/notes_ui_preview_test.dart'}
 CODES = {'argument_type_not_assignable', 'invalid_override', 'undefined_method',
          'undefined_getter', 'ambiguous_import', 'unnecessary_non_null_assertion',
          'unused_import', 'prefer_const_constructors', 'dead_code',
