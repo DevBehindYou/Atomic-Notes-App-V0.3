@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -27,6 +28,7 @@ def classify(stdout, returncode, loader_name):
     report = initial_report()
     report['phase'] = 'complete'
     ids, seen_cases, completed, loader_ids, completed_loaders = {}, set(), set(), set(), set()
+    diagnostics = {}
     done_count, successful_done, invalid = 0, False, False
     for line in stdout.splitlines():
         try:
@@ -77,6 +79,17 @@ def classify(stdout, returncode, loader_name):
             completed.add(case)
             report['cases'][case] = ('pass' if event.get('result') == 'success'
                                      and event.get('skipped') is False else 'fail')
+        elif kind == 'error':
+            test_id = event.get('testID')
+            if type(test_id) is int and test_id in ids:
+                detail = diagnostics.setdefault(ids[test_id], {'overflow': False})
+                error, stack = event.get('error'), event.get('stackTrace')
+                if isinstance(error, str) and 'RenderFlex overflowed' in error:
+                    detail['overflow'] = True
+                if isinstance(stack, str):
+                    match = re.search(r'user_sessions_test\.dart:([1-9][0-9]{0,2})(?![0-9])', stack)
+                    if match is not None:
+                        detail['sourceLine'] = int(match.group(1))
         elif kind == 'print':
             message = event.get('message')
             if isinstance(message, str) and message.strip().startswith('atomic_sessions_cleanup:'):
@@ -96,6 +109,8 @@ def classify(stdout, returncode, loader_name):
             and set(report['cases'].values()) == {'pass'}
             and set(report['cleanup'].values()) == {'pass'}):
         report['outcome'] = 'pass'
+    if diagnostics:
+        report['failureDiagnostics'] = diagnostics
     return report
 
 
