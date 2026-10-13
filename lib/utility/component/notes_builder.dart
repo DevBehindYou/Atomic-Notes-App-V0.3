@@ -13,6 +13,7 @@ class NotesBulder extends StatelessWidget {
   final Note note;
   final bool selected;
   final bool selectionMode;
+  final bool featured;
   final VoidCallback onTap;
   final VoidCallback onLongPress;
 
@@ -26,6 +27,7 @@ class NotesBulder extends StatelessWidget {
     required this.onTap,
     required this.onLongPress,
     required this.onToggleItem,
+    this.featured = false,
     super.key,
   });
 
@@ -45,25 +47,51 @@ class NotesBulder extends StatelessWidget {
             color: AppColors.surfaceLowest,
             borderRadius: AppRadius.std,
             border: Border.all(
-              color: selected ? AppColors.signal : AppColors.outlineVariant,
+              color: selected
+                  ? AppColors.signal
+                  : featured
+                  ? AppColors.ink
+                  : AppColors.outlineVariant,
               width: selected ? AppStroke.offset : AppStroke.rule,
             ),
+            boxShadow: featured
+                ? const [
+                    BoxShadow(color: AppColors.signal, offset: Offset(4, 4)),
+                  ]
+                : null,
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Just the title and the note: date, time and checklist progress
-              // live in the editor. The tick shows only while selecting.
+              Row(
+                children: [
+                  Expanded(
+                    child: MonoLabel(_dateLabel(note.updatedAt), small: true),
+                  ),
+                  if (note.pinned)
+                    const Icon(
+                      Icons.push_pin,
+                      size: 16,
+                      color: AppColors.signal,
+                      semanticLabel: 'Pinned',
+                    ),
+                ],
+              ),
+              const SizedBox(height: AppSpace.sm),
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Expanded(
                     child: EditorialHeading(
                       untitled ? 'Untitled' : note.title,
-                      style: AppType.headlineSm.copyWith(
-                        color: untitled ? AppColors.outline : AppColors.ink,
-                      ),
+                      style:
+                          (featured ? AppType.headlineMd : AppType.headlineSm)
+                              .copyWith(
+                                color: untitled
+                                    ? AppColors.outline
+                                    : AppColors.ink,
+                              ),
                       maxLines: 2,
                     ),
                   ),
@@ -79,9 +107,17 @@ class NotesBulder extends StatelessWidget {
                 const SizedBox(height: AppSpace.xs + 2),
                 Text(
                   note.body,
-                  maxLines: 4,
+                  maxLines: featured ? 3 : 4,
                   overflow: TextOverflow.ellipsis,
-                  style: AppType.bodySm,
+                  style: AppType.bodyMd,
+                ),
+              ],
+              if (note.kind == NoteKind.todo && note.items.isNotEmpty) ...[
+                const SizedBox(height: AppSpace.sm),
+                MonoLabel(
+                  '${note.doneCount} / ${note.items.length} DONE',
+                  small: true,
+                  color: AppColors.signal,
                 ),
               ],
             ],
@@ -89,6 +125,19 @@ class NotesBulder extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  static String _dateLabel(DateTime value) {
+    final date = value.toLocal();
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final yesterday = DateTime(now.year, now.month, now.day - 1);
+    final day = DateTime(date.year, date.month, date.day);
+    String pad(int n) => n.toString().padLeft(2, '0');
+    if (day == today) return 'TODAY ${pad(date.hour)}:${pad(date.minute)}';
+    if (day == yesterday) return 'YESTERDAY';
+    final stamp = '${pad(date.month)}-${pad(date.day)}';
+    return date.year == now.year ? stamp : '${date.year}-$stamp';
   }
 
   Widget _checklist() {
@@ -160,9 +209,7 @@ class _Tick extends StatelessWidget {
           width: AppStroke.rule,
         ),
       ),
-      child: on
-          ? Icon(Icons.check, size: s - 4, color: Colors.white)
-          : null,
+      child: on ? Icon(Icons.check, size: s - 4, color: Colors.white) : null,
     );
   }
 }
