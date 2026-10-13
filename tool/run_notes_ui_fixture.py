@@ -8,7 +8,8 @@ import sys
 import tempfile
 
 FILES = {'home': 'test/home_page_test.dart', 'editor': 'test/notes_editor_page_test.dart',
-         'previews': 'test/notes_ui_preview_test.dart'}
+         'previews': 'test/notes_ui_preview_test.dart',
+         'cloud': 'test/cloud_button_test.dart'}
 
 
 def classify(raw, code, source):

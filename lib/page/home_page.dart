@@ -9,7 +9,7 @@ import 'package:atomic_notes/utility/component/atomic_brand.dart';
 import 'package:atomic_notes/utility/component/my_snackbar.dart';
 import 'package:atomic_notes/utility/component/note_skeliton.dart';
 import 'package:atomic_notes/utility/component/notes_builder.dart';
-import 'package:flutter/foundation.dart' show setEquals;
+import 'package:flutter/foundation.dart' show ValueListenable, setEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
@@ -19,13 +19,32 @@ import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 /// so a tick on one card does not rebuild the header and typing in the search box does not
 /// rebuild the add menu.
 class HomePage extends StatefulWidget {
-  const HomePage({super.key});
+  const HomePage({super.key, this.now});
+
+  /// Local clock used for the welcome line; injectable for date/resume tests.
+  final DateTime Function()? now;
 
   @override
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage>
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
+  late final AnimationController _expansion = AnimationController(
+    vsync: this,
+    value: 1,
+    duration: const Duration(milliseconds: 280),
+  );
+  late final ValueNotifier<DateTime> _greetingTime = ValueNotifier(
+    _readClock(),
+  );
+  late final Widget _welcome;
+  Timer? _hideAfterWelcome;
+  bool _visible = false;
+  bool _foreground = true;
+  bool _reduceMotion = false;
+
+  DateTime _readClock() => (widget.now?.call() ?? DateTime.now()).toLocal();
   final ScrollController _controller = ScrollController();
 
   /// Live text search over the current account's notes (title, body, checklist
@@ -43,6 +62,10 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
+    final lifecycle = WidgetsBinding.instance.lifecycleState;
+    _foreground = lifecycle == null || lifecycle == AppLifecycleState.resumed;
+    WidgetsBinding.instance.addObserver(this);
+    _welcome = _WelcomeSection(time: _greetingTime, expansion: _expansion);
     // A screen opened afresh starts with the newest filter, an empty search and nothing selected.
     context.read<NotesBloc>().add(const NotesViewReset());
     // Built once: the parts below listen to the bloc themselves, so the tree does not have to be
@@ -50,13 +73,15 @@ class _HomePageState extends State<HomePage> {
     _body = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _Header(searchController: _searchCtrl),
+        _Header(searchController: _searchCtrl, welcome: _welcome),
         Expanded(child: _NotesGrid(controller: _controller)),
       ],
     );
     _scrollingBody = NestedScrollView(
       headerSliverBuilder: (context, _) => [
-        SliverToBoxAdapter(child: _Header(searchController: _searchCtrl)),
+        SliverToBoxAdapter(
+          child: _Header(searchController: _searchCtrl, welcome: _welcome),
+        ),
       ],
       // No controller of its own: the grid scrolls through the NestedScrollView's.
       body: const _NotesGrid(),
@@ -64,7 +89,61 @@ class _HomePageState extends State<HomePage> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final media = MediaQuery.of(context);
+    _reduceMotion = media.disableAnimations || media.accessibleNavigation;
+    final visible = TickerMode.of(context);
+    if (visible != _visible) {
+      _visible = visible;
+      if (visible && _foreground) {
+        _restartWelcome();
+      } else {
+        _pauseWelcome();
+      }
+    } else if (_reduceMotion && _expansion.isAnimating) {
+      _expansion.stop();
+      _expansion.value = 0;
+    }
+  }
+
+  void _pauseWelcome() {
+    _hideAfterWelcome?.cancel();
+    _hideAfterWelcome = null;
+    _expansion.stop();
+  }
+
+  void _restartWelcome() {
+    _pauseWelcome();
+    _greetingTime.value = _readClock();
+    _expansion.value = 1;
+    _hideAfterWelcome = Timer(const Duration(seconds: 4), () {
+      _hideAfterWelcome = null;
+      if (!mounted || !_visible || !_foreground) return;
+      if (_reduceMotion) {
+        _expansion.value = 0;
+      } else {
+        _expansion.reverse();
+      }
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _foreground = state == AppLifecycleState.resumed;
+    if (_foreground && _visible) {
+      _restartWelcome();
+    } else {
+      _pauseWelcome();
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _pauseWelcome();
+    _expansion.dispose();
+    _greetingTime.dispose();
     _controller.dispose();
     _searchCtrl.dispose();
     super.dispose();
@@ -106,9 +185,10 @@ class _HomePageState extends State<HomePage> {
 // ---- header ---------------------------------------------------------------
 
 class _Header extends StatelessWidget {
-  const _Header({required this.searchController});
+  const _Header({required this.searchController, required this.welcome});
 
   final TextEditingController searchController;
+  final Widget welcome;
 
   @override
   Widget build(BuildContext context) {
@@ -122,9 +202,7 @@ class _Header extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const _TitleRow(),
-          const SizedBox(height: AppSpace.sm),
-          const HairRule(color: AppColors.ink),
+          _TitleRow(welcome: welcome),
           _FilterAndSearch(searchController: searchController),
         ],
       ),
@@ -133,7 +211,9 @@ class _Header extends StatelessWidget {
 }
 
 class _TitleRow extends StatelessWidget {
-  const _TitleRow();
+  const _TitleRow({required this.welcome});
+
+  final Widget welcome;
 
   @override
   Widget build(BuildContext context) {
@@ -145,70 +225,181 @@ class _TitleRow extends StatelessWidget {
           previous.pending != current.pending,
       builder: (context, state) {
         final bloc = context.read<NotesBloc>();
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
+        if (!state.selecting) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              welcome,
+              const HairRule(color: AppColors.ink),
+              const SizedBox(height: AppSpace.sm),
+              Wrap(
+                alignment: WrapAlignment.spaceBetween,
+                spacing: AppSpace.md,
+                runSpacing: AppSpace.xs,
+                children: [
+                  MonoLabel('${state.count} ON DEVICE'),
+                  // Local usage and pending changes do not prove cloud totals.
+                  MonoLabel(
+                    '${state.usageLabel}'
+                    '${state.pending > 0 ? " · ${state.pending} UNSYNCED" : ""}',
+                    key: const ValueKey('notes-usage'),
+                    color: state.isAtLimit
+                        ? AppColors.error
+                        : (state.remaining <= 5 ? AppColors.signal : null),
+                  ),
+                ],
+              ),
+            ],
+          );
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Expanded(
-              child: EditorialHeading(
-                state.selecting ? '${state.selected.length} selected' : 'Notes',
-                style: AppType.headlineLg,
-                maxLines: 1,
-              ),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Expanded(
+                  child: EditorialHeading(
+                    '${state.selected.length} selected',
+                    style: AppType.headlineLg,
+                    maxLines: 1,
+                  ),
+                ),
+                GestureDetector(
+                  onTap: () => bloc.add(const NoteSelectionAllToggled()),
+                  behavior: HitTestBehavior.opaque,
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: AppSpace.sm),
+                    child: MonoLabel('ALL'),
+                  ),
+                ),
+                GestureDetector(
+                  onTap: () => bloc.add(const NoteSelectionCleared()),
+                  behavior: HitTestBehavior.opaque,
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: AppSpace.sm),
+                    child: MonoLabel('CANCEL'),
+                  ),
+                ),
+                GestureDetector(
+                  onTap: () => bloc.add(const NotesDeleteSelected()),
+                  behavior: HitTestBehavior.opaque,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpace.sm + 2,
+                      vertical: 6,
+                    ),
+                    decoration: const BoxDecoration(
+                      color: AppColors.error,
+                      borderRadius: AppRadius.std,
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.delete_outline,
+                          size: 14,
+                          color: Colors.white,
+                        ),
+                        SizedBox(width: 4),
+                        MonoLabel('DELETE', color: Colors.white),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
             ),
-            if (state.selecting) ...[
-              GestureDetector(
-                onTap: () => bloc.add(const NoteSelectionAllToggled()),
-                behavior: HitTestBehavior.opaque,
-                child: const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: AppSpace.sm),
-                  child: MonoLabel('ALL'),
-                ),
-              ),
-              GestureDetector(
-                onTap: () => bloc.add(const NoteSelectionCleared()),
-                behavior: HitTestBehavior.opaque,
-                child: const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: AppSpace.sm),
-                  child: MonoLabel('CANCEL'),
-                ),
-              ),
-              GestureDetector(
-                onTap: () => bloc.add(const NotesDeleteSelected()),
-                behavior: HitTestBehavior.opaque,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: AppSpace.sm + 2,
-                    vertical: 6,
-                  ),
-                  decoration: const BoxDecoration(
-                    color: AppColors.error,
-                    borderRadius: AppRadius.std,
-                  ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.delete_outline, size: 14, color: Colors.white),
-                      SizedBox(width: 4),
-                      MonoLabel('DELETE', color: Colors.white),
-                    ],
-                  ),
-                ),
-              ),
-            ] else
-              // Usage is shown always, not just when it's a problem, so
-              // running out is never a surprise.
-              MonoLabel(
-                '${state.usageLabel}'
-                '${state.pending > 0 ? " · ${state.pending} UNSYNCED" : ""}',
-                color: state.isAtLimit
-                    ? AppColors.error
-                    : (state.remaining <= 5 ? AppColors.signal : null),
-              ),
+            const SizedBox(height: AppSpace.sm),
+            const HairRule(color: AppColors.ink),
           ],
         );
       },
     );
   }
+}
+
+/// The animation is owned by HomePage, so switching selection or responsive
+/// layouts cannot accidentally restart the welcome or leave a timer behind.
+class _WelcomeSection extends StatelessWidget {
+  const _WelcomeSection({required this.time, required this.expansion});
+  final ValueListenable<DateTime> time;
+  final Animation<double> expansion;
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: expansion,
+    builder: (_, child) {
+      final amount = Curves.easeOutCubic.transform(expansion.value);
+      return ExcludeSemantics(
+        excluding: amount == 0,
+        child: ClipRect(
+          key: const ValueKey('notes-welcome-section'),
+          child: Align(
+            alignment: Alignment.topLeft,
+            heightFactor: amount,
+            child: Opacity(
+              opacity: amount,
+              child: Transform.translate(
+                offset: Offset(0, -AppSpace.md * (1 - amount)),
+                child: child,
+              ),
+            ),
+          ),
+        ),
+      );
+    },
+    child: ValueListenableBuilder<DateTime>(
+      valueListenable: time,
+      builder: (_, now, __) {
+        final greeting = now.hour < 12
+            ? 'Good morning'
+            : (now.hour < 17 ? 'Good afternoon' : 'Good evening');
+        final date =
+            '${now.year.toString().padLeft(4, '0')}-'
+            '${now.month.toString().padLeft(2, '0')}-'
+            '${now.day.toString().padLeft(2, '0')}';
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            MonoLabel(
+              '$greeting · $date',
+              key: const ValueKey('notes-local-greeting'),
+              color: AppColors.signal,
+            ),
+            const SizedBox(height: AppSpace.sm),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                // Keep the complete welcome readable on narrow windows with
+                // large text. Use an existing smaller display token; do not
+                // clamp the user's scaler or truncate the greeting/counts.
+                final narrowLargeText =
+                    constraints.maxWidth < 360 &&
+                    MediaQuery.textScalerOf(
+                          context,
+                        ).scale(AppType.headlineLg.fontSize!) >
+                        AppType.displayLg.fontSize!;
+                return Text.rich(
+                  key: const ValueKey('notes-welcome-heading'),
+                  const TextSpan(
+                    children: [
+                      TextSpan(text: 'CLEAR HEAD. '),
+                      TextSpan(
+                        text: 'WRITE IT DOWN.',
+                        style: TextStyle(color: AppColors.signal),
+                      ),
+                    ],
+                  ),
+                  style: narrowLargeText ? AppType.cta : AppType.headlineLg,
+                  semanticsLabel: 'Clear head. Write it down.',
+                );
+              },
+            ),
+            const SizedBox(height: AppSpace.md),
+          ],
+        );
+      },
+    ),
+  );
 }
 
 /// The filter chips and the search box, hidden while notes are being selected.

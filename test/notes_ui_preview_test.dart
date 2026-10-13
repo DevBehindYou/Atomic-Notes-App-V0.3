@@ -7,6 +7,8 @@ import 'package:atomic_notes/page/home_page.dart';
 import 'package:atomic_notes/page/notes_editor_page.dart';
 import 'package:atomic_notes/state/notes/notes_bloc.dart';
 import 'package:atomic_notes/theme/app_theme.dart';
+import 'package:atomic_notes/theme/app_tokens.dart';
+import 'package:atomic_notes/utility/component/cloud_button.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -28,7 +30,13 @@ void main() {
     }
   });
 
-  for (final scene in ['home', 'text', 'checklist']) {
+  for (final scene in [
+    'home',
+    'text',
+    'checklist',
+    'home-collapsed',
+    'cloud-busy',
+  ]) {
     testWidgets('preview_$scene', (tester) async {
       tester.view.devicePixelRatio = 1;
       tester.view.physicalSize = const Size(390, 844);
@@ -79,7 +87,16 @@ void main() {
         isSyncEnabled: () => true,
         isOnline: () async => true,
       );
-      addTearDown(bloc.close);
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await bloc.close();
+        source.dispose();
+      });
+      final homeScene = scene.startsWith('home') || scene == 'cloud-busy';
+      Widget notesHome() => BlocProvider<NotesBloc>.value(
+        value: bloc,
+        child: HomePage(now: () => DateTime(2026, 10, 14, 20)),
+      );
       await tester.pumpWidget(
         MaterialApp(
           theme: AppTheme.light,
@@ -87,22 +104,55 @@ void main() {
             data: MediaQuery.of(context).copyWith(disableAnimations: true),
             child: RepaintBoundary(key: key, child: child!),
           ),
-          home: scene == 'home'
-              ? BlocProvider<NotesBloc>.value(
-                  value: bloc,
-                  child: const HomePage(),
-                )
+          home: homeScene
+              ? (scene == 'cloud-busy'
+                    ? Scaffold(
+                        backgroundColor: AppColors.paper,
+                        appBar: AppBar(
+                          backgroundColor: AppColors.paper,
+                          title: const Text('Atomic Notes'),
+                          actions: [
+                            CloudButton(
+                              ico: 'assets/sync.svg',
+                              action: () {},
+                              onLongPress: () {},
+                              clr: 0,
+                              isLoading: true,
+                            ),
+                            const SizedBox(width: AppSpace.md),
+                          ],
+                        ),
+                        body: notesHome(),
+                      )
+                    : notesHome())
               : NotesCreaterPage(note: scene == 'text' ? featured : checklist),
         ),
       );
       await tester.pumpAndSettle();
-      if (scene == 'home') {
+      if (homeScene) {
         final image = tester.widget<Image>(find.byType(Image));
         await tester.runAsync(
           () => precacheImage(image.image, key.currentContext!),
         );
         await tester.pumpAndSettle();
         expect(tester.widget<RawImage>(find.byType(RawImage)).image, isNotNull);
+      }
+      if (scene == 'home-collapsed') {
+        await tester.pump(const Duration(seconds: 4));
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(
+          tester
+              .getSize(find.byKey(const ValueKey('notes-welcome-section')))
+              .height,
+          0,
+        );
+      }
+      if (scene == 'cloud-busy') {
+        expect(find.byKey(const ValueKey('cloud-sync-ring')), findsOneWidget);
+        expect(
+          tester.getSize(find.byKey(const ValueKey('cloud-button-surface'))),
+          const Size(48, 44),
+        );
       }
       expect(tester.takeException(), isNull);
       if (Platform.environment['ATOMIC_UI_CAPTURE'] == 'true') {
