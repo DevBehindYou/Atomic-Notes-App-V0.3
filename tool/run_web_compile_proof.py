@@ -142,7 +142,9 @@ def main():
                 'sha256': hashlib.sha256(output.read_bytes()).hexdigest(),
             })
         bootstrap = (output_root / 'flutter_bootstrap.js').read_text(encoding='utf-8')
-        if 'serviceWorkerSettings:' in bootstrap or 'serviceWorkerVersion:' in bootstrap:
+        # Embedded Flutter loader code names service-worker options even when
+        # no caller configures them. Check our final invocation instead.
+        if not bootstrap.strip().endswith('_flutter.loader.load();'):
             raise ValueError('worker registration configuration')
         report['phase'] = 'browser-tests'
         code, stream = run_private([

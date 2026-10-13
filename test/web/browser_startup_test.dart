@@ -14,7 +14,7 @@ void main() {
     await app.main();
     await tester.pumpAndSettle();
     expect(find.byType(BrowserPreviewGate), findsOneWidget);
-    expect(find.text('WebApp in development'), findsOneWidget);
+    expect(find.text('WEBAPP IN DEVELOPMENT'), findsOneWidget);
     expect(tester.takeException(), isNull);
     for (final box in ['authBox', 'syncBox', 'notesBox']) {
       expect(Hive.isBoxOpen(box), isFalse);
