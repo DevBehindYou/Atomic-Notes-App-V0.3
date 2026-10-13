@@ -410,6 +410,46 @@ void main() {
   });
 
   group('the cards', () {
+    testWidgets('empty editor save cannot mutate the repository note', (
+      tester,
+    ) async {
+      final source = _source();
+      await _open(tester, source);
+      final before = source.byId('b')!.toMap();
+      await tester.tap(find.text('IDEAS'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const ValueKey('note-title')), '');
+      await tester.enterText(find.byKey(const ValueKey('note-body')), '');
+      await tester.tap(find.text('Done'));
+      await tester.pumpAndSettle();
+      expect(source.saveCalls, 0);
+      expect(source.byId('b')!.toMap(), before);
+      expect(find.text('IDEAS'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 2));
+    });
+
+    testWidgets(
+      'accepted editor save reaches the repository as a replacement',
+      (tester) async {
+        final source = _source();
+        await _open(tester, source);
+        final original = source.byId('b')!;
+        await tester.tap(find.text('IDEAS'));
+        await tester.pumpAndSettle();
+        await tester.enterText(
+          find.byKey(const ValueKey('note-body')),
+          'New draft',
+        );
+        expect(original.body, 'Build a rocket');
+        await tester.tap(find.text('Done'));
+        await tester.pumpAndSettle();
+        expect(source.saveCalls, 1);
+        expect(source.byId('b')!.body, 'New draft');
+        expect(source.byId('b')!.dirty, isTrue);
+        expect(original.body, 'Build a rocket');
+      },
+    );
+
     testWidgets('first pinned card spans the grid without duplicating notes', (
       tester,
     ) async {

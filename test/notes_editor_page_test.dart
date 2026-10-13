@@ -186,4 +186,18 @@ void main() {
     expect(find.text('Save your changes?'), findsNothing);
     expect(find.byType(NotesCreaterPage), findsNothing);
   });
+
+  testWidgets('editor_repeated_back_opens_one_prompt', (tester) async {
+    final note = Note.create();
+    await openEditor(tester, note);
+    await tester.enterText(field('note-body'), 'A draft');
+    await tester.tap(find.byTooltip('Back to notes'));
+    await tester.tap(find.byTooltip('Back to notes'));
+    await tester.pumpAndSettle();
+    expect(find.byType(AlertDialog), findsOneWidget);
+    await tester.tap(find.text('Discard'));
+    await tester.pumpAndSettle();
+    expect(find.byType(NotesCreaterPage), findsNothing);
+    expect(note.isEmpty, isTrue);
+  });
 }

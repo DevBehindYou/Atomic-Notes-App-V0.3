@@ -24,6 +24,7 @@ class _NotesCreaterPageState extends State<NotesCreaterPage> {
   final List<FocusNode> _focus = [];
   bool _allowPop = false;
   bool _closing = false;
+  bool _confirmingClose = false;
 
   bool get _isTodo => _draft.kind == NoteKind.todo;
 
@@ -91,11 +92,12 @@ class _NotesCreaterPageState extends State<NotesCreaterPage> {
   }
 
   Future<void> _requestClose() async {
-    if (_closing) return;
+    if (_closing || _confirmingClose) return;
     if (!_changed) {
       _finish(false);
       return;
     }
+    _confirmingClose = true;
     final action = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
@@ -117,6 +119,7 @@ class _NotesCreaterPageState extends State<NotesCreaterPage> {
         ],
       ),
     );
+    _confirmingClose = false;
     if (!mounted) return;
     if (action == 'save') _finish(true);
     if (action == 'discard') _finish(false);

@@ -521,21 +521,23 @@ int _responsiveColumnCount(BuildContext context) {
 
 Future<void> _openEditor(BuildContext context, Note note) async {
   final bloc = context.read<NotesBloc>();
+  // visible() returns repository objects. Do not let an editor result mutate
+  // one before the caller's acceptance and repository persistence checks.
+  final draft = note.copy();
   final saved = await showDialog<bool>(
     context: context,
     barrierDismissible: false,
-    builder: (_) => NotesCreaterPage(note: note),
+    builder: (_) => NotesCreaterPage(note: draft),
   );
-  if (saved != true) return; // An abandoned new note was never stored.
-  if (note.isEmpty) {
-    if (!context.mounted) return;
+  if (saved != true || !context.mounted || bloc.isClosed) return;
+  if (draft.isEmpty) {
     const MySnackBar(
       text: "Empty note discarded",
       sec: 1200,
     ).showMySnackBar(context);
     return;
   }
-  bloc.add(NoteSaved(note));
+  bloc.add(NoteSaved(draft));
 }
 
 void _newNote(BuildContext context, NoteKind kind) {

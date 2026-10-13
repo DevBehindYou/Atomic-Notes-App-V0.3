@@ -93,7 +93,12 @@ class FakeNotesSource extends ChangeNotifier implements NotesSource {
   Future<void> save(Note note) async {
     saveCalls++;
     note.touch();
-    if (byId(note.id) == null) all.add(note);
+    final index = all.indexWhere((existing) => existing.id == note.id);
+    if (index < 0) {
+      all.add(note);
+    } else {
+      all[index] = note;
+    }
     notifyListeners();
   }
 
@@ -160,7 +165,10 @@ class FakeNotesSource extends ChangeNotifier implements NotesSource {
 
   @override
   Future<WipeOutcome> wipeRemote() async => wipeRemoteWorks
-      ? const WipeOutcome(true, 'Cloud notes wiped. The notes on this device are untouched.')
+      ? const WipeOutcome(
+          true,
+          'Cloud notes wiped. The notes on this device are untouched.',
+        )
       : const WipeOutcome(false, 'Could not wipe the cloud.');
 
   @override
