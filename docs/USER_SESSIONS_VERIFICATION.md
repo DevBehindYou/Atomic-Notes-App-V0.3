@@ -86,8 +86,9 @@ and cleanup codes. Existing nine proofs plus both new proofs are required.
 Native Google login, keystore, physical device
 navigation, signed release and production deployment remain separate boundaries.
 
-Failure diagnosis emits only the fixed case code, whether a RenderFlex overflow
-was reported, and a bounded line number from the public widget test source.
+Failure diagnosis emits only the fixed case/stage code, a fixed failure category,
+whether a RenderFlex overflow was reported, and a bounded line number from the
+public widget test source when its frame is present.
 Timeout diagnosis emits allowlisted fixture stages. Error strings, stack traces,
 widget content, requests and credential values remain private and are discarded.
 These fields explain a failed proof; they never turn a failed or incomplete case

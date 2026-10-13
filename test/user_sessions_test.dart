@@ -199,12 +199,16 @@ void main() {
     'inventory_render',
     (tester) async {
       await show(tester, width: 375, scale: 2);
+      stage('render_current');
       expect(find.text('THIS SIGN-IN'), findsOneWidget);
+      stage('render_deadline');
       expect(
         find.textContaining('Older sign-ins can have earlier deadlines'),
         findsOneWidget,
       );
+      stage('render_current_action');
       expect(find.byKey(const ValueKey('end-$currentHandle')), findsNothing);
+      stage('render_safe_logout');
       expect(find.textContaining('Use Logout in Settings'), findsOneWidget);
       stage('inventory_visible');
       await tester.ensureVisible(
@@ -213,7 +217,9 @@ void main() {
       stage('inventory_pump');
       await tester.pump();
       stage('inventory_done');
+      stage('render_hint');
       expect(find.textContaining('Client hint (unverified)'), findsWidgets);
+      stage('render_no_exception');
       expect(tester.takeException(), isNull);
     },
   );

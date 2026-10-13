@@ -14,7 +14,9 @@ STAGES = {'init', 'body', 'body_done', 'show_mount', 'show_pump_first',
           'show_pump_second', 'show_done', 'tap_visible', 'tap_ready',
           'tap_pump', 'tap_done', 'inventory_visible', 'inventory_pump',
           'inventory_done', 'cleanup_unmount', 'cleanup_replies',
-          'cleanup_pump', 'cleanup_close'}
+          'cleanup_pump', 'cleanup_close', 'render_current', 'render_deadline',
+          'render_current_action', 'render_safe_logout', 'render_hint',
+          'render_no_exception'}
 
 
 def initial_report():
@@ -24,11 +26,19 @@ def initial_report():
             'cleanup': {code: 'not_run' for code in CASES.values()}}
 
 
+def source_line(text):
+    if not isinstance(text, str):
+        return None
+    match = re.search(r'user_sessions_test\.dart(?::|\s+)([1-9][0-9]{0,2})(?![0-9])', text)
+    return int(match.group(1)) if match is not None else None
+
+
 def classify(stdout, returncode, loader_name):
     report = initial_report()
     report['phase'] = 'complete'
     ids, seen_cases, completed, loader_ids, completed_loaders = {}, set(), set(), set(), set()
     diagnostics = {}
+    body_stages = {}
     done_count, successful_done, invalid = 0, False, False
     for line in stdout.splitlines():
         try:
@@ -83,15 +93,33 @@ def classify(stdout, returncode, loader_name):
             test_id = event.get('testID')
             if type(test_id) is int and test_id in ids:
                 detail = diagnostics.setdefault(ids[test_id], {'overflow': False})
+                if ids[test_id] in body_stages:
+                    detail['stage'] = body_stages[ids[test_id]]
                 error, stack = event.get('error'), event.get('stackTrace')
+                if isinstance(error, str):
+                    detail['category'] = ('missing_element' if 'Bad state: No element' in error
+                                          else 'expectation' if 'Expected:' in error
+                                          else 'image' if 'IMAGE RESOURCE SERVICE' in error
+                                          else 'layout' if 'Render' in error
+                                          else 'other')
                 if isinstance(error, str) and 'RenderFlex overflowed' in error:
                     detail['overflow'] = True
-                if isinstance(stack, str):
-                    match = re.search(r'user_sessions_test\.dart:([1-9][0-9]{0,2})(?![0-9])', stack)
-                    if match is not None:
-                        detail['sourceLine'] = int(match.group(1))
+                line_number = source_line(stack)
+                if line_number is not None:
+                    detail['sourceLine'] = line_number
         elif kind == 'print':
             message = event.get('message')
+            if isinstance(message, str):
+                parts = message.strip().split(':')
+                test_id = event.get('testID')
+                line_number = source_line(message)
+                if type(test_id) is int and test_id in ids and line_number is not None:
+                    diagnostics.setdefault(ids[test_id], {'overflow': False})['sourceLine'] = line_number
+                if (len(parts) == 3 and parts[0] == 'atomic_sessions_stage'
+                        and parts[1] in CASES.values() and parts[2] in STAGES
+                        and not parts[2].startswith('cleanup_')
+                        and type(test_id) is int and ids.get(test_id) == parts[1]):
+                    body_stages[parts[1]] = parts[2]
             if isinstance(message, str) and message.strip().startswith('atomic_sessions_cleanup:'):
                 code = message.strip().removeprefix('atomic_sessions_cleanup:')
                 test_id = event.get('testID')
