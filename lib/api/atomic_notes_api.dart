@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:atomic_notes/api/logout_protocol.dart';
 import 'package:atomic_notes/api/logout_recovery.dart';
+import 'package:atomic_notes/api/user_sessions.dart';
 
 import 'package:atomic_notes/authentication/auth_services/cred.dart';
 import 'package:atomic_notes/security/secure_options.dart';
@@ -114,6 +115,20 @@ class ApiClient {
   String? get currentUserId => _cachedUserId;
   String? get currentUserEmail => _cachedUserEmail;
   bool get isSignedIn => _cachedToken != null;
+
+  Future<UserSessionInventory> userSessions() async => UserSessionInventory.parse(
+    await _request('GET', '/auth/sessions', maxResponseBytes: 16384));
+
+  Future<void> revokeUserSession(String handle) async {
+    if (!UserSession.handlePattern.hasMatch(handle)) {
+      throw const FormatException('Invalid session handle');
+    }
+    final reply = await _request('POST', '/auth/sessions/revoke',
+      body: {'session_handle': handle}, maxResponseBytes: 16384);
+    if (reply is! Map || reply.length != 1 || reply['ok'] != true) {
+      throw const FormatException('Invalid session revoke response');
+    }
+  }
   String? get pendingLogoutCompletion => _logoutCompletionAttempt;
 
   Future<bool> logoutSyncAvailable() async {

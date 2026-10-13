@@ -18,6 +18,7 @@ import 'package:atomic_notes/page/endpage/cloud_notes_page.dart';
 import 'package:atomic_notes/page/endpage/danger_zone_page.dart';
 import 'package:atomic_notes/page/endpage/encryption_page.dart';
 import 'package:atomic_notes/page/endpage/energy_page.dart';
+import 'package:atomic_notes/page/endpage/user_sessions_page.dart';
 import 'package:atomic_notes/page/endpage/recycle_bin_page.dart';
 import 'package:atomic_notes/page/endpage/vault_unlock_page.dart';
 import 'package:atomic_notes/page/endpage/edit_profile_page.dart';
@@ -200,6 +201,7 @@ class _MyAppState extends State<MyApp> {
           '/biompage': (context) => const BiomPage(),
           '/encryptionpage': (context) => const EncryptionPage(),
           '/energypage': (context) => const EnergyPage(),
+          '/usersessions': (context) => const UserSessionsPage(),
           '/notifications': (context) => const NotificationsPage(),
           '/vaultunlock': (context) => VaultUnlockPage(
                 // `arguments: true` means the splash sent the user here at
