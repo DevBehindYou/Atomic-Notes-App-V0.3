@@ -114,7 +114,11 @@ class _Header extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(
-          AppSpace.md, AppSpace.md, AppSpace.md, 0),
+        AppSpace.md,
+        AppSpace.md,
+        AppSpace.md,
+        0,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -173,7 +177,9 @@ class _TitleRow extends StatelessWidget {
                 behavior: HitTestBehavior.opaque,
                 child: Container(
                   padding: const EdgeInsets.symmetric(
-                      horizontal: AppSpace.sm + 2, vertical: 6),
+                    horizontal: AppSpace.sm + 2,
+                    vertical: 6,
+                  ),
                   decoration: const BoxDecoration(
                     color: AppColors.error,
                     borderRadius: AppRadius.std,
@@ -227,26 +233,24 @@ class _FilterAndSearch extends StatelessWidget {
           // regardless of the device's text-size setting.
           child: MediaQuery(
             data: MediaQuery.of(context).copyWith(
-              textScaler:
-                  MediaQuery.textScalerOf(context).clamp(maxScaleFactor: 1.15),
+              textScaler: MediaQuery.textScalerOf(
+                context,
+              ).clamp(maxScaleFactor: 1.15),
             ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Expanded(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      // Filter / sort row.
-                      const SizedBox(height: 28, child: _FilterChips()),
-                      const SizedBox(height: AppSpace.sm),
-                      _SearchField(controller: searchController),
-                    ],
-                  ),
+                Row(
+                  key: const ValueKey('notes-search-mascot-row'),
+                  children: [
+                    Expanded(child: _SearchField(controller: searchController)),
+                    const SizedBox(width: AppSpace.sm),
+                    const _Mascot(),
+                  ],
                 ),
-                const SizedBox(width: AppSpace.sm),
-                const _Mascot(),
+                const SizedBox(height: AppSpace.sm),
+                const SizedBox(height: 28, child: _FilterChips()),
               ],
             ),
           ),
@@ -263,12 +267,18 @@ class _Mascot extends StatefulWidget {
 
   /// What DevBehindYou says: whether changes wait, and when automatic sync opens.
   /// "Syncing now" only while a sync is running: offline, changes just wait.
-  static String syncMessage(DateTime? next, int pending,
-      {bool syncing = false, String? error}) {
+  static String syncMessage(
+    DateTime? next,
+    int pending, {
+    bool syncing = false,
+    String? error,
+  }) {
     final now = DateTime.now();
     final waiting = pending == 1 ? '1 change' : '$pending changes';
     if (syncing) {
-      return pending > 0 ? 'Syncing $waiting now.' : 'Checking for cloud changes…';
+      return pending > 0
+          ? 'Syncing $waiting now.'
+          : 'Checking for cloud changes…';
     }
     if (error != null) return error;
     if (next == null || !next.isAfter(now)) {
@@ -388,10 +398,17 @@ class _ChatBubble extends StatelessWidget {
               bottomRight: Radius.circular(14),
             ),
             boxShadow: [
-              BoxShadow(color: Color(0x33000000), blurRadius: 10, offset: Offset(0, 3)),
+              BoxShadow(
+                color: Color(0x33000000),
+                blurRadius: 10,
+                offset: Offset(0, 3),
+              ),
             ],
           ),
-          child: Text(text, style: AppType.bodySm.copyWith(color: AppColors.paper)),
+          child: Text(
+            text,
+            style: AppType.bodySm.copyWith(color: AppColors.paper),
+          ),
         ),
       ),
     );
@@ -422,7 +439,7 @@ class _FilterChips extends StatelessWidget {
   }
 }
 
-/// Live search field under the filter chips.
+/// Live search field beside the mascot, above the existing filter chips.
 class _SearchField extends StatelessWidget {
   const _SearchField({required this.controller});
 
@@ -430,7 +447,10 @@ class _SearchField extends StatelessWidget {
 
   static const _border = OutlineInputBorder(
     borderRadius: AppRadius.std,
-    borderSide: BorderSide(color: AppColors.outlineVariant, width: AppStroke.rule),
+    borderSide: BorderSide(
+      color: AppColors.outlineVariant,
+      width: AppStroke.rule,
+    ),
   );
 
   static const _focusedBorder = OutlineInputBorder(
@@ -451,12 +471,13 @@ class _SearchField extends StatelessWidget {
         filled: true,
         fillColor: AppColors.surfaceLowest,
         hintText: 'Search notes',
-        prefixIcon:
-            const Icon(Icons.search, size: 18, color: AppColors.slateData),
-        prefixIconConstraints:
-            const BoxConstraints(minWidth: 40, minHeight: 0),
-        suffixIconConstraints:
-            const BoxConstraints(minWidth: 40, minHeight: 0),
+        prefixIcon: const Icon(
+          Icons.search,
+          size: 18,
+          color: AppColors.slateData,
+        ),
+        prefixIconConstraints: const BoxConstraints(minWidth: 40, minHeight: 0),
+        suffixIconConstraints: const BoxConstraints(minWidth: 40, minHeight: 0),
         suffixIcon: BlocSelector<NotesBloc, NotesState, bool>(
           selector: (state) => state.query.isNotEmpty,
           builder: (context, hasQuery) => hasQuery
@@ -466,13 +487,18 @@ class _SearchField extends StatelessWidget {
                     context.read<NotesBloc>().add(const NotesQueryChanged(''));
                   },
                   behavior: HitTestBehavior.opaque,
-                  child: const Icon(Icons.close,
-                      size: 16, color: AppColors.slateData),
+                  child: const Icon(
+                    Icons.close,
+                    size: 16,
+                    color: AppColors.slateData,
+                  ),
                 )
               : const SizedBox.shrink(),
         ),
-        contentPadding:
-            const EdgeInsets.symmetric(vertical: 10, horizontal: AppSpace.sm),
+        contentPadding: const EdgeInsets.symmetric(
+          vertical: 10,
+          horizontal: AppSpace.sm,
+        ),
         border: _border,
         enabledBorder: _border,
         focusedBorder: _focusedBorder,
@@ -485,6 +511,8 @@ class _SearchField extends StatelessWidget {
 
 int _responsiveColumnCount(BuildContext context) {
   final width = MediaQuery.sizeOf(context).width;
+  // Keep preview text usable with large accessibility text or narrow windows.
+  if (width < 340 || MediaQuery.textScalerOf(context).scale(15) > 24) return 1;
   if (width >= 1100) return 5;
   if (width >= 800) return 4;
   if (width >= 550) return 3;
@@ -493,19 +521,23 @@ int _responsiveColumnCount(BuildContext context) {
 
 Future<void> _openEditor(BuildContext context, Note note) async {
   final bloc = context.read<NotesBloc>();
+  // visible() returns repository objects. Do not let an editor result mutate
+  // one before the caller's acceptance and repository persistence checks.
+  final draft = note.copy();
   final saved = await showDialog<bool>(
     context: context,
     barrierDismissible: false,
-    builder: (_) => NotesCreaterPage(note: note),
+    builder: (_) => NotesCreaterPage(note: draft),
   );
-  if (saved != true) return; // An abandoned new note was never stored.
-  if (note.isEmpty) {
-    if (!context.mounted) return;
-    const MySnackBar(text: "Empty note discarded", sec: 1200)
-        .showMySnackBar(context);
+  if (saved != true || !context.mounted || bloc.isClosed) return;
+  if (draft.isEmpty) {
+    const MySnackBar(
+      text: "Empty note discarded",
+      sec: 1200,
+    ).showMySnackBar(context);
     return;
   }
-  bloc.add(NoteSaved(note));
+  bloc.add(NoteSaved(draft));
 }
 
 void _newNote(BuildContext context, NoteKind kind) {
@@ -540,32 +572,55 @@ class _NotesGrid extends StatelessWidget {
         final notes = state.notes;
         if (notes.isEmpty) return _EmptyState(narrowed: state.narrowed);
         final bloc = context.read<NotesBloc>();
+        final featured = notes.first.pinned ? notes.first : null;
+        final remaining = featured == null ? notes : notes.skip(1).toList();
+        Widget card(Note note, {bool featured = false}) => NotesBulder(
+          key: ValueKey(note.id),
+          note: note,
+          featured: featured,
+          selected: state.selected.contains(note.id),
+          selectionMode: state.selecting,
+          onTap: () => state.selecting
+              ? bloc.add(NoteSelectionToggled(note.id))
+              : _openEditor(context, note),
+          onLongPress: () => bloc.add(NoteSelectionToggled(note.id)),
+          onToggleItem: (i) => bloc.add(NoteItemToggled(note, i)),
+        );
         return Scrollbar(
           radius: AppRadius.smRadius,
           thickness: 4,
           controller: controller,
-          child: MasonryGridView.count(
-            padding: const EdgeInsets.fromLTRB(
-                AppSpace.md, AppSpace.sm, AppSpace.md, 110),
-            crossAxisCount: _responsiveColumnCount(context),
-            mainAxisSpacing: AppSpace.sm,
-            crossAxisSpacing: AppSpace.sm,
+          child: CustomScrollView(
             controller: controller,
-            itemCount: notes.length,
-            itemBuilder: (context, index) {
-              final note = notes[index];
-              return NotesBulder(
-                key: ValueKey(note.id),
-                note: note,
-                selected: state.selected.contains(note.id),
-                selectionMode: state.selecting,
-                onTap: () => state.selecting
-                    ? bloc.add(NoteSelectionToggled(note.id))
-                    : _openEditor(context, note),
-                onLongPress: () => bloc.add(NoteSelectionToggled(note.id)),
-                onToggleItem: (i) => bloc.add(NoteItemToggled(note, i)),
-              );
-            },
+            slivers: [
+              if (featured != null)
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(
+                    AppSpace.md,
+                    AppSpace.sm,
+                    AppSpace.md,
+                    AppSpace.xs,
+                  ),
+                  sliver: SliverToBoxAdapter(
+                    child: card(featured, featured: true),
+                  ),
+                ),
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpace.md,
+                  AppSpace.sm,
+                  AppSpace.md,
+                  110,
+                ),
+                sliver: SliverMasonryGrid.count(
+                  crossAxisCount: _responsiveColumnCount(context),
+                  mainAxisSpacing: AppSpace.sm,
+                  crossAxisSpacing: AppSpace.sm,
+                  childCount: remaining.length,
+                  itemBuilder: (context, index) => card(remaining[index]),
+                ),
+              ),
+            ],
           ),
         );
       },
@@ -597,8 +652,8 @@ class _EmptyState extends StatelessWidget {
             Text(
               narrowed
                   ? 'No notes match this filter. Try another one.'
-                  : 'Tap New note to start writing, or Checklist for '
-                      'something you can tick off.',
+                  : 'Tap New note to start writing. You can switch to a '
+                        'checklist in the editor.',
               style: AppType.bodyMd.copyWith(color: AppColors.slateData),
             ),
           ],
@@ -610,7 +665,7 @@ class _EmptyState extends StatelessWidget {
 
 // ---- add menu -----------------------------------------------------------------
 
-/// Two-way add: a plain note or a checklist. Both dim at the cap.
+/// One creation action; checklist mode remains available in the editor.
 class _AddMenu extends StatelessWidget {
   const _AddMenu();
 
@@ -628,38 +683,22 @@ class _AddMenu extends StatelessWidget {
             Container(
               margin: const EdgeInsets.only(bottom: AppSpace.sm),
               padding: const EdgeInsets.symmetric(
-                  horizontal: AppSpace.sm + 2, vertical: 6),
+                horizontal: AppSpace.sm + 2,
+                vertical: 6,
+              ),
               decoration: BoxDecoration(
                 color: AppColors.errorContainer,
                 borderRadius: AppRadius.std,
-                border: Border.all(color: AppColors.error, width: AppStroke.rule),
+                border: Border.all(
+                  color: AppColors.error,
+                  width: AppStroke.rule,
+                ),
               ),
-              child: MonoLabel('${state.limit} NOTE LIMIT REACHED',
-                  color: AppColors.onErrorContainer),
-            ),
-          GestureDetector(
-            onTap: () => _newNote(context, NoteKind.todo),
-            behavior: HitTestBehavior.opaque,
-            child: Container(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: AppSpace.md, vertical: AppSpace.sm + 2),
-              decoration: BoxDecoration(
-                color: AppColors.paper,
-                borderRadius: AppRadius.std,
-                border:
-                    Border.all(color: AppColors.ink, width: AppStroke.hairline),
-              ),
-              child: const Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.checklist_rounded, size: 16, color: AppColors.ink),
-                  SizedBox(width: AppSpace.sm),
-                  MonoLabel('CHECKLIST', color: AppColors.ink),
-                ],
+              child: MonoLabel(
+                '${state.limit} NOTE LIMIT REACHED',
+                color: AppColors.onErrorContainer,
               ),
             ),
-          ),
-          const SizedBox(height: AppSpace.sm),
           GestureDetector(
             onTap: () => _newNote(context, NoteKind.text),
             behavior: HitTestBehavior.opaque,
@@ -668,7 +707,7 @@ class _AddMenu extends StatelessWidget {
                 borderRadius: AppRadius.std,
                 boxShadow: [
                   BoxShadow(
-                    color: AppColors.ink,
+                    color: AppColors.signal,
                     offset: Offset(AppStroke.offset, AppStroke.offset),
                     blurRadius: 0,
                   ),
@@ -676,12 +715,16 @@ class _AddMenu extends StatelessWidget {
               ),
               child: Container(
                 padding: const EdgeInsets.symmetric(
-                    horizontal: AppSpace.md + 2, vertical: AppSpace.md - 2),
+                  horizontal: AppSpace.md + 2,
+                  vertical: AppSpace.md - 2,
+                ),
                 decoration: BoxDecoration(
                   color: AppColors.ink,
                   borderRadius: AppRadius.std,
                   border: Border.all(
-                      color: AppColors.ink, width: AppStroke.hairline),
+                    color: AppColors.ink,
+                    width: AppStroke.hairline,
+                  ),
                 ),
                 child: const Row(
                   mainAxisSize: MainAxisSize.min,

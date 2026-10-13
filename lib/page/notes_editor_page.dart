@@ -1,269 +1,416 @@
 import 'package:atomic_notes/database/note.dart';
 import 'package:atomic_notes/theme/app_tokens.dart';
 import 'package:atomic_notes/theme/editorial.dart';
-import 'package:atomic_notes/utility/component/my_floating_button.dart';
 import 'package:atomic_notes/utility/component/my_snackbar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-/// Note editor. Edits the passed [Note] in place and pops `true` when the
-/// user saves, `false`/null when they cancel — the caller decides whether to
-/// persist, so an abandoned new note never reaches storage.
-///
-/// Handles both kinds: a body field for text notes, a checklist editor for
-/// to-dos, switchable from the header.
+/// An isolated draft. Only Done copies editable fields back to the caller,
+/// which persists the note through its existing Bloc/repository save path.
 class NotesCreaterPage extends StatefulWidget {
-  final Note note;
-
   const NotesCreaterPage({required this.note, super.key});
+  final Note note;
 
   @override
   State<NotesCreaterPage> createState() => _NotesCreaterPageState();
 }
 
 class _NotesCreaterPageState extends State<NotesCreaterPage> {
-  final ScrollController _controller = ScrollController();
+  late final Note _draft;
   late final TextEditingController _title;
   late final TextEditingController _body;
+  final _scroll = ScrollController();
+  final List<TextEditingController> _items = [];
+  final List<FocusNode> _focus = [];
+  bool _allowPop = false;
+  bool _closing = false;
+  bool _confirmingClose = false;
 
-  /// One controller per checklist row, kept in step with note.items.
-  final List<TextEditingController> _itemControllers = [];
-  final List<FocusNode> _itemFocus = [];
-
-  Note get note => widget.note;
+  bool get _isTodo => _draft.kind == NoteKind.todo;
 
   @override
   void initState() {
     super.initState();
-    _title = TextEditingController(text: note.title);
-    _body = TextEditingController(text: note.body);
-    for (final i in note.items) {
-      _addControllerFor(i.text);
+    _draft = Note.fromMap(widget.note.toMap());
+    _title = TextEditingController(text: _draft.title);
+    _body = TextEditingController(text: _draft.body);
+    for (final item in _draft.items) {
+      _items.add(TextEditingController(text: item.text));
+      _focus.add(FocusNode());
     }
-    if (note.kind == NoteKind.todo && note.items.isEmpty) {
-      _addRow();
-    }
-  }
-
-  void _addControllerFor(String text) {
-    _itemControllers.add(TextEditingController(text: text));
-    _itemFocus.add(FocusNode());
   }
 
   @override
   void dispose() {
-    _controller.dispose();
     _title.dispose();
     _body.dispose();
-    for (final c in _itemControllers) {
-      c.dispose();
+    _scroll.dispose();
+    for (final controller in _items) {
+      controller.dispose();
     }
-    for (final f in _itemFocus) {
-      f.dispose();
+    for (final node in _focus) {
+      node.dispose();
     }
     super.dispose();
   }
 
-  // ---- editing ----------------------------------------------------------
+  // Snapshot without mutating the list backing the live text fields. Copying
+  // a checklist with blank rows must not misalign its controllers.
+  Note _snapshot() {
+    final result = Note.fromMap(_draft.toMap());
+    result.title = _title.text;
+    result.body = _isTodo ? '' : _body.text;
+    result.items = _isTodo
+        ? [
+            for (var i = 0; i < _items.length; i++)
+              if (_items[i].text.trim().isNotEmpty)
+                TodoItem(text: _items[i].text, done: _draft.items[i].done),
+          ]
+        : [];
+    return result;
+  }
 
-  void _addRow({int? after}) {
-    setState(() {
-      final at = after == null ? note.items.length : after + 1;
-      note.items.insert(at, TodoItem(text: ''));
-      _itemControllers.insert(at, TextEditingController());
-      _itemFocus.insert(at, FocusNode());
-    });
-    // Focus the row we just created.
+  bool get _changed => _snapshot().contentSig != widget.note.contentSig;
+
+  void _finish(bool save) {
+    if (_closing) return;
+    _closing = true;
+    if (save) {
+      final edited = _snapshot();
+      // Leave sync versions, dirty state and timestamps to the repository.
+      widget.note
+        ..title = edited.title
+        ..body = edited.body
+        ..kind = edited.kind
+        ..items = edited.items
+        ..pinned = edited.pinned;
+    }
+    setState(() => _allowPop = true);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final at = after == null ? note.items.length - 1 : after + 1;
-      if (at < _itemFocus.length) _itemFocus[at].requestFocus();
+      if (mounted) Navigator.of(context).pop(save);
     });
   }
 
-  void _removeRow(int i) {
-    setState(() {
-      note.items.removeAt(i);
-      _itemControllers.removeAt(i).dispose();
-      _itemFocus.removeAt(i).dispose();
-    });
+  Future<void> _requestClose() async {
+    if (_closing || _confirmingClose) return;
+    if (!_changed) {
+      _finish(false);
+      return;
+    }
+    _confirmingClose = true;
+    final action = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Save your changes?'),
+        content: const Text('Choose Save to keep this draft, or keep editing.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, 'keep'),
+            child: const Text('Keep editing'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, 'discard'),
+            child: const Text('Discard'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, 'save'),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    _confirmingClose = false;
+    if (!mounted) return;
+    if (action == 'save') _finish(true);
+    if (action == 'discard') _finish(false);
   }
 
   void _switchKind() {
+    FocusScope.of(context).unfocus();
     setState(() {
-      if (note.kind == NoteKind.text) {
-        note.kind = NoteKind.todo;
-        // Carry the body over as checklist rows rather than losing it.
-        final lines = _body.text
-            .split('\n')
-            .map((l) => l.trim())
-            .where((l) => l.isNotEmpty)
-            .toList();
-        note.items = lines.map((l) => TodoItem(text: l)).toList();
-        _itemControllers
-          ..forEach((c) => c.dispose())
-          ..clear();
-        _itemFocus
-          ..forEach((f) => f.dispose())
-          ..clear();
-        for (final l in lines) {
-          _addControllerFor(l);
-        }
-        if (note.items.isEmpty) _addRow();
+      if (_isTodo) {
+        // Always use the live fields, never an earlier copy of the text body.
+        _body.text = _items.map((item) => item.text).join('\n');
+        _draft.kind = NoteKind.text;
       } else {
-        note.kind = NoteKind.text;
-        // And back the other way.
-        final joined = note.items
-            .map((i) => i.text.trim())
-            .where((t) => t.isNotEmpty)
-            .join('\n');
-        if (_body.text.trim().isEmpty) _body.text = joined;
+        final lines = _body.text.split('\n');
+        final prior = [
+          for (var i = 0; i < _items.length; i++)
+            TodoItem(text: _items[i].text, done: _draft.items[i].done),
+        ];
+        for (final controller in _items) {
+          controller.dispose();
+        }
+        for (final node in _focus) {
+          node.dispose();
+        }
+        _items.clear();
+        _focus.clear();
+        _draft.items = [
+          for (var i = 0; i < lines.length; i++)
+            TodoItem(
+              text: lines[i],
+              done:
+                  i < prior.length &&
+                  prior[i].text == lines[i] &&
+                  prior[i].done,
+            ),
+        ];
+        for (final item in _draft.items) {
+          _items.add(TextEditingController(text: item.text));
+          _focus.add(FocusNode());
+        }
+        _draft.kind = NoteKind.todo;
       }
     });
   }
 
-  void _commit() {
-    note.title = _title.text;
-    if (note.kind == NoteKind.text) {
-      note.body = _body.text;
-      note.items = [];
-    } else {
-      for (int i = 0; i < note.items.length; i++) {
-        note.items[i].text = _itemControllers[i].text;
-      }
-      note.items.removeWhere((i) => i.text.trim().isEmpty);
-      note.body = '';
+  void _addItem({int? after}) {
+    final node = FocusNode();
+    setState(() {
+      final index = after == null ? _items.length : after + 1;
+      _draft.items.insert(index, TodoItem(text: ''));
+      _items.insert(index, TextEditingController());
+      _focus.insert(index, node);
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _focus.contains(node)) node.requestFocus();
+    });
+  }
+
+  void _removeItem(int index) {
+    setState(() {
+      _draft.items.removeAt(index);
+      _items.removeAt(index).dispose();
+      _focus.removeAt(index).dispose();
+    });
+  }
+
+  Future<void> _copy() async {
+    final snapshot = _snapshot();
+    final body = _isTodo
+        ? snapshot.items
+              .map((item) => '${item.done ? "[x]" : "[ ]"} ${item.text}')
+              .join('\n')
+        : snapshot.body;
+    try {
+      await Clipboard.setData(
+        ClipboardData(
+          text: snapshot.title.trim().isEmpty
+              ? body
+              : '${snapshot.title}\n\n$body',
+        ),
+      );
+      if (!mounted) return;
+      const MySnackBar(
+        text: 'Copied to clipboard',
+        sec: 1200,
+      ).showMySnackBar(context);
+    } on PlatformException {
+      if (!mounted) return;
+      const MySnackBar(
+        text: 'Could not copy. Your draft is still here.',
+        sec: 2000,
+      ).showMySnackBar(context);
     }
   }
 
-  void _save() {
-    _commit();
-    Navigator.of(context).pop(true);
-  }
-
-  void _copy() {
-    _commit();
-    final text = note.kind == NoteKind.todo
-        ? note.items.map((i) => '${i.done ? "[x]" : "[ ]"} ${i.text}').join('\n')
-        : note.body;
-    Clipboard.setData(ClipboardData(
-        text: note.title.trim().isEmpty ? text : '${note.title}\n\n$text'));
-    const MySnackBar(text: "Copied to clipboard", sec: 1200)
-        .showMySnackBar(context);
-  }
-
-  // ---- build ------------------------------------------------------------
-
   @override
   Widget build(BuildContext context) {
-    final screenWidth = MediaQuery.sizeOf(context).width;
-    final maxContentWidth = screenWidth > 600 ? 520.0 : double.infinity;
-    final isTodo = note.kind == NoteKind.todo;
-
-    return Scaffold(
-      backgroundColor: AppColors.paper,
-      body: SafeArea(
-        child: Center(
-          child: ConstrainedBox(
-            constraints: BoxConstraints(maxWidth: maxContentWidth),
-            child: Container(
-              margin: const EdgeInsets.all(AppSpace.md),
-              padding: const EdgeInsets.all(AppSpace.md + 2),
-              decoration: BoxDecoration(
-                color: AppColors.surfaceLowest,
-                borderRadius: AppRadius.std,
-                border:
-                    Border.all(color: AppColors.ink, width: AppStroke.hairline),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Row(
+    return PopScope<bool>(
+      canPop: _allowPop,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _requestClose();
+      },
+      child: Scaffold(
+        backgroundColor: AppColors.paper,
+        body: SafeArea(
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 760),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final compact = constraints.maxHeight < 400;
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      Expanded(
-                        child: MonoLabel(
-                            'CREATED ${_stamp(note.createdAt)}'),
-                      ),
-                      // Kind switch, doubling as the current-kind indicator.
-                      GestureDetector(
-                        onTap: _switchKind,
-                        behavior: HitTestBehavior.opaque,
+                      Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: AppSpace.md,
+                          vertical: AppSpace.sm,
+                        ),
                         child: Row(
-                          mainAxisSize: MainAxisSize.min,
                           children: [
-                            Icon(
-                              isTodo
-                                  ? Icons.checklist_rounded
-                                  : Icons.notes_rounded,
-                              size: 14,
-                              color: AppColors.signal,
+                            IconButton.filled(
+                              onPressed: _requestClose,
+                              tooltip: 'Back to notes',
+                              style: IconButton.styleFrom(
+                                backgroundColor: AppColors.ink,
+                                foregroundColor: AppColors.paper,
+                              ),
+                              icon: const Icon(Icons.arrow_back),
                             ),
-                            const SizedBox(width: 4),
-                            MonoLabel(isTodo ? 'CHECKLIST' : 'NOTE',
-                                color: AppColors.signal),
+                            const SizedBox(width: AppSpace.sm),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  if (!compact) const MonoLabel('NOTES'),
+                                  const EditorialHeading(
+                                    'Edit note',
+                                    style: AppType.headlineMd,
+                                    maxLines: 1,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            IconButton(
+                              onPressed: () => setState(
+                                () => _draft.pinned = !_draft.pinned,
+                              ),
+                              tooltip: _draft.pinned
+                                  ? 'Unpin note'
+                                  : 'Pin note',
+                              isSelected: _draft.pinned,
+                              color: AppColors.signal,
+                              icon: const Icon(Icons.push_pin_outlined),
+                              selectedIcon: const Icon(Icons.push_pin),
+                            ),
+                            IconButton(
+                              onPressed: _copy,
+                              tooltip: 'Copy note',
+                              icon: const Icon(Icons.copy_outlined),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const HairRule(color: AppColors.ink),
+                      Expanded(
+                        child: Scrollbar(
+                          controller: _scroll,
+                          child: ListView(
+                            controller: _scroll,
+                            padding: const EdgeInsets.all(
+                              AppSpace.screenMargin,
+                            ),
+                            children: [
+                              Wrap(
+                                spacing: AppSpace.md,
+                                runSpacing: AppSpace.xs,
+                                children: [
+                                  MonoLabel(
+                                    'EDITED ${_stamp(widget.note.updatedAt)}',
+                                    small: true,
+                                  ),
+                                  const MonoLabel(
+                                    'SAVE WITH DONE',
+                                    small: true,
+                                    color: AppColors.signal,
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: AppSpace.md),
+                              TextField(
+                                key: const ValueKey('note-title'),
+                                controller: _title,
+                                textCapitalization:
+                                    TextCapitalization.sentences,
+                                maxLines: null,
+                                style: AppType.displayLg,
+                                cursorColor: AppColors.signal,
+                                decoration: _decoration('Title'),
+                                onChanged: (_) => setState(() {}),
+                              ),
+                              const SizedBox(height: AppSpace.md),
+                              if (_isTodo) ...[
+                                for (var i = 0; i < _items.length; i++)
+                                  _itemRow(i),
+                                Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: TextButton.icon(
+                                    onPressed: _addItem,
+                                    icon: const Icon(Icons.add),
+                                    label: const Text('Add item'),
+                                  ),
+                                ),
+                              ] else
+                                TextField(
+                                  key: const ValueKey('note-body'),
+                                  controller: _body,
+                                  keyboardType: TextInputType.multiline,
+                                  textCapitalization:
+                                      TextCapitalization.sentences,
+                                  maxLines: null,
+                                  minLines: 5,
+                                  style: AppType.bodyLg,
+                                  cursorColor: AppColors.signal,
+                                  decoration: _decoration('Start writing…'),
+                                  onChanged: (_) => setState(() {}),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      if (!compact)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: AppSpace.screenMargin,
+                            vertical: AppSpace.sm,
+                          ),
+                          child: _statistics(),
+                        ),
+                      const HairRule(color: AppColors.ink),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: AppSpace.md,
+                          vertical: AppSpace.sm,
+                        ),
+                        child: Row(
+                          children: [
+                            IconButton.filled(
+                              onPressed: _switchKind,
+                              tooltip: _isTodo
+                                  ? 'Switch to text'
+                                  : 'Switch to checklist',
+                              style: IconButton.styleFrom(
+                                backgroundColor: AppColors.ink,
+                                foregroundColor: AppColors.paper,
+                              ),
+                              icon: Icon(
+                                _isTodo ? Icons.notes : Icons.checklist,
+                              ),
+                            ),
+                            const Spacer(),
+                            DecoratedBox(
+                              decoration: const BoxDecoration(
+                                borderRadius: AppRadius.std,
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: AppColors.ink,
+                                    offset: Offset(3, 3),
+                                  ),
+                                ],
+                              ),
+                              child: FilledButton.icon(
+                                onPressed: () => _finish(true),
+                                style: FilledButton.styleFrom(
+                                  backgroundColor: AppColors.signal,
+                                  foregroundColor: AppColors.paper,
+                                  minimumSize: const Size(100, 48),
+                                  shape: const RoundedRectangleBorder(
+                                    borderRadius: AppRadius.std,
+                                  ),
+                                ),
+                                icon: const Icon(Icons.check),
+                                label: const Text('Done'),
+                              ),
+                            ),
                           ],
                         ),
                       ),
                     ],
-                  ),
-                  const SizedBox(height: AppSpace.sm),
-                  const HairRule(color: AppColors.ink),
-                  const SizedBox(height: AppSpace.sm),
-
-                  TextField(
-                    controller: _title,
-                    textCapitalization: TextCapitalization.sentences,
-                    decoration: InputDecoration(
-                      border: InputBorder.none,
-                      enabledBorder: InputBorder.none,
-                      focusedBorder: InputBorder.none,
-                      isDense: true,
-                      contentPadding: const EdgeInsets.symmetric(vertical: 6),
-                      hintText: "Title",
-                      hintStyle: AppType.headlineMd
-                          .copyWith(color: AppColors.outlineVariant),
-                    ),
-                    cursorColor: AppColors.signal,
-                    style: AppType.headlineMd,
-                  ),
-                  const SizedBox(height: AppSpace.xs),
-                  const HairRule(),
-                  const SizedBox(height: AppSpace.sm),
-
-                  Expanded(
-                    child: isTodo ? _checklistEditor() : _bodyEditor(),
-                  ),
-
-                  const SizedBox(height: AppSpace.sm),
-                  const HairRule(color: AppColors.ink),
-                  const SizedBox(height: AppSpace.md),
-
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      MyFloatingButton(
-                        ico: "assets/copy_home.svg",
-                        action: _copy,
-                        colorValue: 0xff9f5ef7,
-                      ),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.end,
-                        children: [
-                          MyFloatingButton(
-                            ico: "assets/cross_circle.svg",
-                            action: () => Navigator.of(context).pop(false),
-                            colorValue: 0xffa60000,
-                          ),
-                          const SizedBox(width: AppSpace.sm + 2),
-                          MyFloatingButton(
-                            ico: "assets/save.svg",
-                            action: _save,
-                            colorValue: 0xff855ef7,
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ],
+                  );
+                },
               ),
             ),
           ),
@@ -272,135 +419,79 @@ class _NotesCreaterPageState extends State<NotesCreaterPage> {
     );
   }
 
-  Widget _bodyEditor() {
-    return Scrollbar(
-      controller: _controller,
-      child: TextField(
-        controller: _body,
-        scrollController: _controller,
-        keyboardType: TextInputType.multiline,
-        maxLines: null,
-        autofocus: true,
-        textCapitalization: TextCapitalization.sentences,
-        decoration: InputDecoration(
-          border: InputBorder.none,
-          enabledBorder: InputBorder.none,
-          focusedBorder: InputBorder.none,
-          isDense: true,
-          contentPadding: EdgeInsets.zero,
-          hintText: "Start writing…",
-          hintStyle: AppType.bodyLg.copyWith(color: AppColors.outline),
+  Widget _itemRow(int index) {
+    return Row(
+      key: ObjectKey(_items[index]),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Checkbox(
+          value: _draft.items[index].done,
+          activeColor: AppColors.signal,
+          semanticLabel: 'Complete item ${index + 1}',
+          onChanged: (value) =>
+              setState(() => _draft.items[index].done = value!),
         ),
-        cursorColor: AppColors.signal,
-        style: AppType.bodyLg,
-      ),
-    );
-  }
-
-  Widget _checklistEditor() {
-    return Scrollbar(
-      controller: _controller,
-      child: ListView.builder(
-        controller: _controller,
-        padding: EdgeInsets.zero,
-        itemCount: note.items.length + 1,
-        itemBuilder: (context, i) {
-          // Trailing "add item" row.
-          if (i == note.items.length) {
-            return GestureDetector(
-              onTap: () => _addRow(),
-              behavior: HitTestBehavior.opaque,
-              child: const Padding(
-                padding: EdgeInsets.symmetric(vertical: AppSpace.sm),
-                child: Row(
-                  children: [
-                    Icon(Icons.add, size: 16, color: AppColors.slateData),
-                    SizedBox(width: AppSpace.sm),
-                    MonoLabel('ADD ITEM'),
-                  ],
-                ),
-              ),
-            );
-          }
-
-          final item = note.items[i];
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 2),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                GestureDetector(
-                  onTap: () => setState(() => item.done = !item.done),
-                  behavior: HitTestBehavior.opaque,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 2),
-                    child: Container(
-                      height: 18,
-                      width: 18,
-                      decoration: BoxDecoration(
-                        color:
-                            item.done ? AppColors.signal : Colors.transparent,
-                        border: Border.all(
-                          color:
-                              item.done ? AppColors.signal : AppColors.outline,
-                          width: AppStroke.rule,
-                        ),
-                      ),
-                      child: item.done
-                          ? const Icon(Icons.check,
-                              size: 14, color: Colors.white)
-                          : null,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: AppSpace.sm),
-                Expanded(
-                  child: TextField(
-                    controller: _itemControllers[i],
-                    focusNode: _itemFocus[i],
-                    textCapitalization: TextCapitalization.sentences,
-                    textInputAction: TextInputAction.next,
-                    // Enter starts the next item, like every checklist app.
-                    onSubmitted: (_) => _addRow(after: i),
-                    decoration: InputDecoration(
-                      border: InputBorder.none,
-                      enabledBorder: InputBorder.none,
-                      focusedBorder: InputBorder.none,
-                      isDense: true,
-                      contentPadding: const EdgeInsets.symmetric(vertical: 8),
-                      hintText: 'List item',
-                      hintStyle:
-                          AppType.bodyMd.copyWith(color: AppColors.outline),
-                    ),
-                    cursorColor: AppColors.signal,
-                    style: AppType.bodyMd.copyWith(
-                      decoration:
-                          item.done ? TextDecoration.lineThrough : null,
-                      color:
-                          item.done ? AppColors.outline : AppColors.onSurface,
-                    ),
-                  ),
-                ),
-                GestureDetector(
-                  onTap: () => _removeRow(i),
-                  behavior: HitTestBehavior.opaque,
-                  child: const Padding(
-                    padding: EdgeInsets.all(6),
-                    child: Icon(Icons.close,
-                        size: 14, color: AppColors.outline),
-                  ),
-                ),
-              ],
+        Expanded(
+          child: TextField(
+            key: ValueKey('note-item-$index'),
+            controller: _items[index],
+            focusNode: _focus[index],
+            textCapitalization: TextCapitalization.sentences,
+            textInputAction: TextInputAction.next,
+            maxLines: null,
+            onSubmitted: (_) => _addItem(after: index),
+            onChanged: (_) => setState(() {}),
+            style: AppType.bodyMd.copyWith(
+              decoration: _draft.items[index].done
+                  ? TextDecoration.lineThrough
+                  : null,
             ),
-          );
-        },
-      ),
+            decoration: _decoration('List item'),
+          ),
+        ),
+        IconButton(
+          onPressed: () => _removeItem(index),
+          tooltip: 'Remove item ${index + 1}',
+          icon: const Icon(Icons.close, size: 18),
+        ),
+      ],
     );
   }
 
-  static String _stamp(DateTime d) {
-    final l = d.toLocal();
-    String p(int v) => v.toString().padLeft(2, '0');
-    return '${l.year}-${p(l.month)}-${p(l.day)} ${p(l.hour)}:${p(l.minute)}';
+  Widget _statistics() {
+    final snapshot = _snapshot();
+    final text = [
+      snapshot.title,
+      snapshot.body,
+      ...snapshot.items.map((item) => item.text),
+    ].join(' ').trim();
+    final words = text.isEmpty ? 0 : text.split(RegExp(r'\s+')).length;
+    return Wrap(
+      spacing: AppSpace.lg,
+      runSpacing: AppSpace.xs,
+      children: [
+        MonoLabel('$words WORDS', small: true),
+        if (_isTodo)
+          MonoLabel(
+            '${snapshot.doneCount} / ${snapshot.items.length} DONE',
+            small: true,
+            color: AppColors.signal,
+          ),
+      ],
+    );
+  }
+
+  static InputDecoration _decoration(String hint) => InputDecoration(
+    border: InputBorder.none,
+    enabledBorder: InputBorder.none,
+    focusedBorder: InputBorder.none,
+    hintText: hint,
+    contentPadding: const EdgeInsets.symmetric(vertical: AppSpace.sm),
+  );
+
+  static String _stamp(DateTime value) {
+    final local = value.toLocal();
+    String pad(int number) => number.toString().padLeft(2, '0');
+    return '${local.year}-${pad(local.month)}-${pad(local.day)} ${pad(local.hour)}:${pad(local.minute)}';
   }
 }
