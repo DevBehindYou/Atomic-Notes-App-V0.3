@@ -46,8 +46,9 @@ def classify(raw, code, source):
         elif kind in ('error', 'print'):
             # Only emit bounded numbers against these public source files.
             text = str(event.get('stackTrace', '')) + str(event.get('error', '')) + str(event.get('message', ''))
-            for match in re.finditer(re.escape(source) + r':([1-9][0-9]{0,4})(?::[0-9]+)?', text):
-                lines.add(int(match[1]))
+            if kind == 'error':
+                for match in re.finditer(re.escape(source) + r':([1-9][0-9]{0,4})(?::[0-9]+)?', text):
+                    lines.add(int(match[1]))
             if 'RenderFlex overflowed' in text:
                 result['overflow'] = True
         elif kind == 'done':

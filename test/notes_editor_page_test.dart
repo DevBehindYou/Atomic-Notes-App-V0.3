@@ -191,8 +191,10 @@ void main() {
     final note = Note.create();
     await openEditor(tester, note);
     await tester.enterText(field('note-body'), 'A draft');
-    await tester.tap(find.byTooltip('Back to notes'));
-    await tester.tap(find.byTooltip('Back to notes'));
+    // Deliver both commands before a new frame, as two queued back actions.
+    final back = tester.widget<IconButton>(find.byTooltip('Back to notes'));
+    back.onPressed!();
+    back.onPressed!();
     await tester.pumpAndSettle();
     expect(find.byType(AlertDialog), findsOneWidget);
     await tester.tap(find.text('Discard'));
