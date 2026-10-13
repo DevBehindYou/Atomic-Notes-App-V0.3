@@ -93,7 +93,7 @@ class _HomePageState extends State<HomePage>
     super.didChangeDependencies();
     final media = MediaQuery.of(context);
     _reduceMotion = media.disableAnimations || media.accessibleNavigation;
-    final visible = TickerMode.of(context);
+    final visible = TickerMode.valuesOf(context).enabled;
     if (visible != _visible) {
       _visible = visible;
       if (visible && _foreground) {

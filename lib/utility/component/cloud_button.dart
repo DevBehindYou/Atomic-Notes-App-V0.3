@@ -108,7 +108,7 @@ class _SyncActivityRingState extends State<_SyncActivityRing>
     final reduceMotion =
         (media?.disableAnimations ?? false) ||
         (media?.accessibleNavigation ?? false);
-    if (_foreground && TickerMode.of(context) && !reduceMotion) {
+    if (_foreground && TickerMode.valuesOf(context).enabled && !reduceMotion) {
       if (!_rotation.isAnimating) _rotation.repeat();
     } else {
       _rotation.stop();
