@@ -192,7 +192,7 @@ void main() {
           retired.complete();
         });
         await expectLater(
-          b.energyState(),
+          b.userSessions(),
           throwsA(
             isA<ApiException>().having(
               (error) => error.statusCode,
