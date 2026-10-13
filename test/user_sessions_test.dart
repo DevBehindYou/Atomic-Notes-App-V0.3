@@ -36,14 +36,53 @@ http.Response response(Object body, {int status = 200}) => http.Response(
   headers: {'content-type': 'application/json'},
 );
 
+// These widgets exercise the real ApiClient's ownership/revision behavior, not
+// platform-channel scheduling or an Android keystore. Each case owns its store.
+class _Store implements FlutterSecureStorage {
+  final values = <String, String>{
+    'atomic_api_session_token': 'public-original-session',
+    'atomic_api_user_id': 'user-a',
+    'atomic_api_user_email': 'public@example.test',
+  };
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) {
+    final key = invocation.namedArguments[#key] as String?;
+    switch (invocation.memberName) {
+      case #read:
+        return Future<String?>.value(values[key]);
+      case #write:
+        final value = invocation.namedArguments[#value] as String?;
+        if (value == null) {
+          values.remove(key);
+        } else {
+          values[key!] = value;
+        }
+        return Future<void>.value();
+      case #delete:
+        values.remove(key);
+        return Future<void>.value();
+      default:
+        throw StateError('Unexpected synthetic store operation');
+    }
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-  const storage = FlutterSecureStorage();
+  late _Store storage;
+  late String caseCode;
   late ApiClient api;
   late MockClient transport;
   late List<http.Request> requests;
   late List<Completer<http.Response>> ownedReplies;
   late Future<http.Response> Function(http.Request) handler;
+
+  void stage(String value) {
+    // Fixed markers only; no errors, widget text, credentials or payloads.
+    // ignore: avoid_print
+    print('atomic_sessions_stage:$caseCode:$value');
+  }
 
   Future<void> newerSession({String owner = 'user-a'}) async {
     await storage.write(
@@ -61,6 +100,7 @@ void main() {
   }) async {
     tester.view.physicalSize = Size(width, 1600);
     tester.view.devicePixelRatio = 1;
+    stage('show_mount');
     await tester.pumpWidget(
       MaterialApp(
         home: MediaQuery(
@@ -73,14 +113,21 @@ void main() {
         ),
       ),
     );
+    stage('show_pump_first');
     await tester.pump();
+    stage('show_pump_second');
     await tester.pump();
+    stage('show_done');
   }
 
   Future<void> tap(WidgetTester tester, String key) async {
+    stage('tap_visible');
     await tester.ensureVisible(find.byKey(ValueKey(key)));
+    stage('tap_ready');
     await tester.tap(find.byKey(ValueKey(key)));
+    stage('tap_pump');
     await tester.pump();
+    stage('tap_done');
   }
 
   Future<void> confirm(WidgetTester tester) async {
@@ -103,11 +150,8 @@ void main() {
     Future<void> Function(WidgetTester) body,
   ) {
     testWidgets(name, (tester) async {
-      FlutterSecureStorage.setMockInitialValues({
-        'atomic_api_session_token': 'public-original-session',
-        'atomic_api_user_id': 'user-a',
-        'atomic_api_user_email': 'public@example.test',
-      });
+      caseCode = code;
+      storage = _Store();
       requests = [];
       ownedReplies = [];
       handler = (_) async => response(inventory());
@@ -120,22 +164,22 @@ void main() {
         storage: storage,
         baseUrl: Uri.parse('https://fixture.invalid/api'),
       );
-      // Fixed stage codes expose a stalled fixture without retaining payloads.
-      // ignore: avoid_print
-      print('atomic_sessions_stage:$code:init');
+      stage('init');
       await api.init();
       addTearDown(() async {
         // Unmount first, then drain every response owned by this case. Never
         // leave a page callback or failed response parked beyond cleanup.
+        stage('cleanup_unmount');
         await tester.pumpWidget(const SizedBox());
+        stage('cleanup_replies');
         for (final reply in ownedReplies) {
           if (!reply.isCompleted) {
             reply.complete(response({'sessions': [], 'limit': 5}));
           }
         }
+        stage('cleanup_pump');
         await tester.pump();
-        await api.init();
-        await tester.pump();
+        stage('cleanup_close');
         transport.close();
         tester.view.resetPhysicalSize();
         tester.view.resetDevicePixelRatio();
@@ -144,9 +188,9 @@ void main() {
         // ignore: avoid_print
         print('atomic_sessions_cleanup:$code');
       });
-      // ignore: avoid_print
-      print('atomic_sessions_stage:$code:body');
+      stage('body');
       await body(tester);
+      stage('body_done');
     });
   }
 
@@ -162,10 +206,13 @@ void main() {
       );
       expect(find.byKey(const ValueKey('end-$currentHandle')), findsNothing);
       expect(find.textContaining('Use Logout in Settings'), findsOneWidget);
+      stage('inventory_visible');
       await tester.ensureVisible(
         find.byKey(const ValueKey('session-$otherHandle')),
       );
+      stage('inventory_pump');
       await tester.pump();
+      stage('inventory_done');
       expect(find.textContaining('Client hint (unverified)'), findsWidgets);
       expect(tester.takeException(), isNull);
     },

@@ -9,6 +9,12 @@ import tempfile
 
 CASES = {'session inventory shows stored dates current guidance and unverified hints': 'inventory_render', 'session load error can retry without changing authentication': 'load_retry', 'empty session inventory remains refreshable': 'empty_refresh', 'cancelled session confirmation sends no revoke': 'cancel_confirm', 'confirmed other session revoke refreshes once and keeps current login': 'revoke_confirm', 'protected session revoke displays refusal without bypassing safe logout': 'protected_revoke', 'ambiguous revoke retries the identical handle and serializes writes': 'ambiguous_retry', 'late inventory is hidden after another account login': 'foreign_read', 'late inventory is hidden after same-owner reauthentication': 'same_owner_read', 'unmounted session page ignores its late inventory': 'unmount_read', 'late revoke cannot mutate a newer account screen or credentials': 'foreign_revoke', 'session change while confirmation is open prevents revoke': 'late_confirmation', 'session DTO rejects malformed identities dates bounds and current flags': 'invalid_dto'}
 
+STAGES = {'init', 'body', 'body_done', 'show_mount', 'show_pump_first',
+          'show_pump_second', 'show_done', 'tap_visible', 'tap_ready',
+          'tap_pump', 'tap_done', 'inventory_visible', 'inventory_pump',
+          'inventory_done', 'cleanup_unmount', 'cleanup_replies',
+          'cleanup_pump', 'cleanup_close'}
+
 
 def initial_report():
     return {'version': 1, 'scope': 'controlled App sign-in inventory and ownership',
@@ -129,7 +135,7 @@ def run_fixture(root, run=subprocess.run, temporary_factory=tempfile.TemporaryDi
                     continue
                 parts = message.strip().split(':')
                 if (len(parts) == 3 and parts[0] == 'atomic_sessions_stage'
-                        and parts[1] in CASES.values() and parts[2] in {'init', 'body'}):
+                        and parts[1] in CASES.values() and parts[2] in STAGES):
                     stages[parts[1]] = parts[2]
             report['timeoutStages'] = stages
         report['phase'] = 'timeout'
