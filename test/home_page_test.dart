@@ -15,6 +15,12 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'support/fake_notes_source.dart';
 
+void _stage(String value) {
+  // Fixed public fixture markers only; the CI runner never exports test text.
+  // ignore: avoid_print
+  print('atomic_ui_stage:welcome_collapse:$value');
+}
+
 FakeNotesSource _source({int limit = 30, bool empty = false}) =>
     FakeNotesSource(
       limit: limit,
@@ -45,7 +51,11 @@ FakeNotesSource _source({int limit = 30, bool empty = false}) =>
             ],
     );
 
-Future<NotesBloc> _open(WidgetTester tester, FakeNotesSource source) async {
+Future<NotesBloc> _open(
+  WidgetTester tester,
+  FakeNotesSource source, {
+  DateTime Function()? now,
+}) async {
   // Tall, so everything is on view and nothing has to be scrolled to.
   tester.view.physicalSize = const Size(1290, 2700);
   tester.view.devicePixelRatio = 3;
@@ -57,10 +67,17 @@ Future<NotesBloc> _open(WidgetTester tester, FakeNotesSource source) async {
     isSyncEnabled: () => true,
     isOnline: () async => true,
   );
-  addTearDown(bloc.close);
+  addTearDown(() async {
+    await tester.pumpWidget(const SizedBox.shrink());
+    await bloc.close();
+    source.dispose();
+  });
   await tester.pumpWidget(
     MaterialApp(
-      home: BlocProvider<NotesBloc>.value(value: bloc, child: const HomePage()),
+      home: BlocProvider<NotesBloc>.value(
+        value: bloc,
+        child: HomePage(now: now),
+      ),
     ),
   );
   await tester.pump();
@@ -68,6 +85,276 @@ Future<NotesBloc> _open(WidgetTester tester, FakeNotesSource source) async {
 }
 
 void main() {
+  group('welcome', () {
+    for (final entry in [
+      (DateTime(2026, 10, 14, 8), 'GOOD MORNING'),
+      (DateTime(2026, 10, 14, 13), 'GOOD AFTERNOON'),
+      (DateTime(2026, 10, 14, 20), 'GOOD EVENING'),
+    ]) {
+      testWidgets('uses local greeting ${entry.$2} and current date', (
+        tester,
+      ) async {
+        await _open(tester, _source(), now: () => entry.$1);
+        expect(find.text('${entry.$2} · 2026-10-14'), findsOneWidget);
+        final heading = tester.widget<Text>(
+          find.byKey(const ValueKey('notes-welcome-heading')),
+        );
+        expect(heading.textSpan!.toPlainText(), 'CLEAR HEAD. WRITE IT DOWN.');
+        expect(
+          (heading.textSpan! as TextSpan).children!.last.style!.color,
+          AppColors.signal,
+        );
+        expect(find.text('3 ON DEVICE'), findsOneWidget);
+        expect(find.textContaining('IN CLOUD'), findsNothing);
+      });
+    }
+
+    testWidgets('four-second welcome collapses without removing controls', (
+      tester,
+    ) async {
+      // testWidgets owns its enabled semantics handle and disposes it before
+      // end-of-test verification; addTearDown would dispose an extra one late.
+      await _open(tester, _source(), now: () => DateTime(2026, 10, 14, 20));
+      _stage('mounted');
+      final welcome = find.byKey(const ValueKey('notes-welcome-section'));
+      final search = find.byType(TextField);
+      final originalHeight = tester.getSize(welcome).height;
+      final originalSearchTop = tester.getTopLeft(search).dy;
+      await tester.pump(const Duration(milliseconds: 3999));
+      expect(tester.getSize(welcome).height, originalHeight);
+      await tester.pump(const Duration(milliseconds: 1));
+      await tester.pump(const Duration(milliseconds: 140));
+      _stage('mid_animation');
+      expect(tester.getSize(welcome).height, greaterThan(0));
+      expect(tester.getSize(welcome).height, lessThan(originalHeight));
+      final opacity = tester.widget<Opacity>(
+        find.descendant(of: welcome, matching: find.byType(Opacity)).first,
+      );
+      expect(opacity.opacity, allOf(greaterThan(0.0), lessThan(1.0)));
+      await tester.pump(const Duration(milliseconds: 160));
+      _stage('collapsed');
+      expect(tester.getSize(welcome).height, 0);
+      expect(
+        tester.getTopLeft(search).dy,
+        closeTo(originalSearchTop - originalHeight, 0.01),
+      );
+      expect(find.text('3 / 30').hitTestable(), findsOneWidget);
+      _stage('controls');
+      expect(find.text('NEW NOTE').hitTestable(), findsOneWidget);
+      expect(find.byType(Image).hitTestable(), findsOneWidget);
+      expect(find.byType(DataChip).hitTestable(), findsWidgets);
+      _stage('semantics');
+      expect(
+        find.semantics.byLabel('Clear head. Write it down.'),
+        findsNothing,
+      );
+      _stage('clean');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('background pause and resume reset date and welcome interval', (
+      tester,
+    ) async {
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      var localTime = DateTime(2026, 10, 14, 20);
+      await _open(tester, _source(), now: () => localTime);
+      final welcome = find.byKey(const ValueKey('notes-welcome-section'));
+      await tester.pump(const Duration(seconds: 3));
+      for (final state in [
+        AppLifecycleState.inactive,
+        AppLifecycleState.hidden,
+        AppLifecycleState.paused,
+      ]) {
+        tester.binding.handleAppLifecycleStateChanged(state);
+      }
+      await tester.pump(const Duration(seconds: 10));
+      expect(tester.getSize(welcome).height, greaterThan(0));
+      localTime = DateTime(2026, 10, 15, 8);
+      for (final state in [
+        AppLifecycleState.hidden,
+        AppLifecycleState.inactive,
+        AppLifecycleState.resumed,
+      ]) {
+        tester.binding.handleAppLifecycleStateChanged(state);
+      }
+      await tester.pump();
+      expect(find.text('GOOD MORNING · 2026-10-15'), findsOneWidget);
+      await tester.pump(const Duration(milliseconds: 3999));
+      expect(tester.getSize(welcome).height, greaterThan(0));
+      await tester.pump(const Duration(milliseconds: 1));
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(tester.getSize(welcome).height, 0);
+    });
+
+    testWidgets('muted home starts its four-second interval when shown', (
+      tester,
+    ) async {
+      final source = _source();
+      final bloc = await _open(tester, source);
+      final visible = ValueNotifier<bool>(false);
+      addTearDown(visible.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ValueListenableBuilder<bool>(
+            valueListenable: visible,
+            builder: (_, enabled, __) => TickerMode(
+              enabled: enabled,
+              child: BlocProvider<NotesBloc>.value(
+                value: bloc,
+                child: const HomePage(),
+              ),
+            ),
+          ),
+        ),
+      );
+      final welcome = find.byKey(const ValueKey('notes-welcome-section'));
+      await tester.pump(const Duration(seconds: 10));
+      expect(tester.getSize(welcome).height, greaterThan(0));
+      visible.value = true;
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 3999));
+      expect(tester.getSize(welcome).height, greaterThan(0));
+      await tester.pump(const Duration(milliseconds: 1));
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(tester.getSize(welcome).height, 0);
+    });
+
+    testWidgets('reduced motion collapses immediately after four seconds', (
+      tester,
+    ) async {
+      final bloc = await _open(tester, _source());
+      await tester.pumpWidget(
+        MaterialApp(
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(disableAnimations: true),
+            child: child!,
+          ),
+          home: BlocProvider<NotesBloc>.value(
+            value: bloc,
+            child: const HomePage(),
+          ),
+        ),
+      );
+      final welcome = find.byKey(const ValueKey('notes-welcome-section'));
+      await tester.pump(const Duration(milliseconds: 3999));
+      expect(tester.getSize(welcome).height, greaterThan(0));
+      await tester.pump(const Duration(milliseconds: 1));
+      expect(tester.getSize(welcome).height, 0);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('disposing during welcome cancels timer and ticker', (
+      tester,
+    ) async {
+      await _open(tester, _source());
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(seconds: 5));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+      '320px and 2x text keep 123 pending notes and controls visible',
+      (tester) async {
+        final source = FakeNotesSource(
+          limit: 200,
+          notes: List.generate(
+            123,
+            (i) =>
+                syncedNote('pending-$i', title: 'N$i', body: 'Pending')
+                  ..touch(),
+          ),
+        );
+        final bloc = await _open(tester, source);
+        tester.view.physicalSize = const Size(960, 2100);
+        await tester.pumpWidget(
+          MaterialApp(
+            builder: (context, child) => MediaQuery(
+              data: MediaQuery.of(
+                context,
+              ).copyWith(textScaler: const TextScaler.linear(2)),
+              child: child!,
+            ),
+            home: BlocProvider<NotesBloc>.value(
+              value: bloc,
+              child: HomePage(now: () => DateTime(2026, 10, 14, 20)),
+            ),
+          ),
+        );
+        await tester.pump();
+        final welcome = find.byKey(const ValueKey('notes-welcome-section'));
+        final usage = find.text('123 / 200 · 123 UNSYNCED');
+        final usageText = tester.widget<Text>(usage);
+        expect(usageText.maxLines, isNull);
+        expect(MediaQuery.textScalerOf(tester.element(usage)).scale(11), 22);
+        final initialHeight = tester.getSize(welcome).height;
+        expect(initialHeight, greaterThan(0));
+        expect(
+          tester
+              .widget<Opacity>(
+                find
+                    .descendant(of: welcome, matching: find.byType(Opacity))
+                    .first,
+              )
+              .opacity,
+          1,
+        );
+        void expectUsable() {
+          expect(tester.takeException(), isNull);
+          expect(find.text('123 ON DEVICE').hitTestable(), findsOneWidget);
+          expect(usage.hitTestable(), findsOneWidget);
+          final bounds = tester.getRect(usage);
+          expect(bounds.left, greaterThanOrEqualTo(0));
+          expect(bounds.right, lessThanOrEqualTo(320));
+          expect(find.byType(TextField).hitTestable(), findsOneWidget);
+          expect(find.byType(Image).hitTestable(), findsOneWidget);
+          final card = tester.getRect(find.byType(NotesBulder).first);
+          expect(
+            card.intersect(const Rect.fromLTWH(0, 0, 320, 700)).height,
+            greaterThan(0),
+          );
+          expect(find.text('NEW NOTE').hitTestable(), findsOneWidget);
+          expect(bloc.state.pending, 123);
+        }
+
+        expectUsable();
+        expect(find.byType(NestedScrollView), findsOneWidget);
+        await tester.drag(find.byType(NestedScrollView), const Offset(0, -500));
+        await tester.pump();
+        expect(find.byType(NotesBulder).first.hitTestable(), findsOneWidget);
+        await tester.pump(const Duration(seconds: 4));
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.drag(find.byType(NestedScrollView), const Offset(0, 500));
+        await tester.pumpAndSettle();
+        expect(tester.getSize(welcome).height, 0);
+        expectUsable();
+        expect(find.byType(NotesBulder).first.hitTestable(), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'selection and responsive layout do not restart a collapsed welcome',
+      (tester) async {
+        await _open(tester, _source());
+        await tester.pump(const Duration(seconds: 4));
+        await tester.pump(const Duration(milliseconds: 300));
+        final welcome = find.byKey(const ValueKey('notes-welcome-section'));
+        expect(tester.getSize(welcome).height, 0);
+        await tester.longPress(find.byType(NotesBulder).first);
+        await tester.pumpAndSettle();
+        expect(find.text('1 SELECTED'), findsOneWidget);
+        expect(welcome, findsNothing);
+        await tester.tap(find.text('CANCEL'));
+        await tester.pumpAndSettle();
+        expect(tester.getSize(welcome).height, 0);
+        tester.view.physicalSize = const Size(2400, 1080);
+        await tester.pump();
+        expect(find.byType(NestedScrollView), findsOneWidget);
+        expect(tester.getSize(welcome).height, 0);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  });
+
   group('what the screen shows', () {
     for (final pending in [false, true]) {
       testWidgets('R19 mascot reports automatic failure (pending=$pending)', (
@@ -232,7 +519,10 @@ void main() {
         isSyncEnabled: () => true,
         isOnline: () async => true,
       );
-      addTearDown(bloc.close);
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await bloc.close();
+      });
       await tester.pumpWidget(
         MaterialApp(
           home: BlocProvider<NotesBloc>.value(
@@ -243,11 +533,17 @@ void main() {
       );
       await tester.pump();
       expect(find.byType(NestedScrollView), findsOneWidget);
-      expect(find.text('NOTES').hitTestable(), findsWidgets);
+      expect(
+        find.byKey(const ValueKey('notes-welcome-heading')).hitTestable(),
+        findsOneWidget,
+      );
       await tester.drag(find.byType(NestedScrollView), const Offset(0, -300));
       await tester.pumpAndSettle();
       // The title has scrolled off; the cards now have the screen.
-      expect(find.text('NOTES').hitTestable(), findsNothing);
+      expect(
+        find.byKey(const ValueKey('notes-welcome-heading')).hitTestable(),
+        findsNothing,
+      );
       expect(find.byType(NotesBulder).hitTestable(), findsWidgets);
     });
 
@@ -586,8 +882,7 @@ void main() {
     /// `_TitleRow`, `_FilterChips`, `_NotesGrid` and `_AddMenu` are built once in
     /// [_HomePageState.initState] and never touched again; the Bloc widgets rebuild
     /// *inside* them, so their own elements never go through `rebuild()`. Instead this
-    /// watches what each part actually draws: the cards, the "Notes" / "N selected"
-    /// heading, the filter chips and the "NEW NOTE" label.
+    /// watches the cards, live usage label, filter chips and "NEW NOTE" label.
     Future<Map<String, int>> rebuilds(
       WidgetTester tester,
       Future<void> Function() act,
@@ -597,8 +892,9 @@ void main() {
       debugOnRebuildDirtyWidget = (element, builtOnce) {
         final widget = element.widget;
         if (widget is NotesBulder) mark('cards');
-        if (widget is EditorialHeading && widget.style == AppType.headlineLg) {
-          mark('heading');
+        if (widget is MonoLabel &&
+            widget.key == const ValueKey('notes-usage')) {
+          mark('usage');
         }
         if (widget is DataChip) mark('chips');
         if (widget is MonoLabel && widget.text == 'NEW NOTE') mark('newNote');
@@ -621,7 +917,7 @@ void main() {
       );
 
       expect(counts['cards'], greaterThan(0));
-      expect(counts['heading'], isNull);
+      expect(counts['usage'], isNull);
       expect(counts['chips'], isNull);
       expect(counts['newNote'], isNull);
     });
@@ -637,7 +933,7 @@ void main() {
         );
 
         expect(counts['cards'], greaterThan(0));
-        expect(counts['heading'], greaterThan(0)); // "1 UNSYNCED" appears
+        expect(counts['usage'], greaterThan(0)); // "1 UNSYNCED" appears
         expect(counts['chips'], isNull);
         expect(counts['newNote'], isNull);
       },
@@ -655,7 +951,7 @@ void main() {
 
         expect(counts['chips'], greaterThan(0));
         expect(counts['cards'], greaterThan(0));
-        expect(counts['heading'], isNull);
+        expect(counts['usage'], isNull);
         expect(counts['newNote'], isNull);
       },
     );
