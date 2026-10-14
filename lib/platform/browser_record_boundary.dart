@@ -6,6 +6,7 @@ import 'dart:convert';
 import 'dart:js_interop';
 
 part 'browser_owner_fence.dart';
+part 'browser_record_preimages.dart';
 
 enum BrowserRecordFailure {
   invalidBatch,
@@ -25,6 +26,8 @@ enum BrowserRecordFailure {
   contextMismatch,
   bootstrapRefused,
   transitionRefused,
+  invalidPreimages,
+  preimageMismatch,
   reservedKey,
 }
 
@@ -77,6 +80,7 @@ extension type _Transaction(JSObject _) implements JSObject {
 }
 
 extension type _Store(JSObject _) implements JSObject {
+  external _Request count(JSString key);
   external _Request put(JSString value, JSString key);
   external _Request add(JSString value, JSString key);
   @JS('delete')
