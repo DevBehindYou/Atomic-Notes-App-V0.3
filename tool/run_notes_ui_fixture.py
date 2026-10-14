@@ -16,7 +16,7 @@ def classify(raw, code, source):
     result = {'outcome': 'fail', 'passed': 0, 'failed': 0, 'skipped': 0,
               'failureLines': [], 'overflow': False}
     done, valid, started, ended = 0, True, set(), set()
-    lines = set()
+    lines, failures, reported_lines = set(), set(), {}
     for line in raw.splitlines():
         try:
             event = json.loads(line)
@@ -42,19 +42,27 @@ def classify(raw, code, source):
                 result['skipped'] += 1
             elif event.get('result') != 'success':
                 result['failed'] += 1
+                failures.add(test_id)
             elif event.get('hidden') is False:
                 result['passed'] += 1
         elif kind in ('error', 'print'):
             # Only emit bounded numbers against these public source files.
             text = str(event.get('stackTrace', '')) + str(event.get('error', '')) + str(event.get('message', ''))
-            if kind == 'error':
-                for match in re.finditer(re.escape(source) + r':([1-9][0-9]{0,4})(?::[0-9]+)?', text):
-                    lines.add(int(match[1]))
+            # Flutter may publish the public test frame in a print event using
+            # whitespace instead of a colon. Retain numbers only, and only for
+            # events belonging to a test that actually failed.
+            found = {int(match[1]) for match in re.finditer(
+                re.escape(source) + r'(?::|\s+)([1-9][0-9]{0,4})(?::[0-9]+)?', text)}
+            test_id = event.get('testID')
+            if type(test_id) is int:
+                reported_lines.setdefault(test_id, set()).update(found)
             if 'RenderFlex overflowed' in text:
                 result['overflow'] = True
         elif kind == 'done':
             done += 1
             valid = valid and event.get('success') is True
+    for test_id in failures:
+        lines.update(reported_lines.get(test_id, set()))
     result['failureLines'] = sorted(lines)[:30]
     if (code == 0 and valid and done == 1 and started == ended
             and result['passed'] > 0 and result['failed'] == 0
