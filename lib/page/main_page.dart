@@ -1,6 +1,5 @@
 // ignore_for_file: use_build_context_synchronously, use_super_parameters
 
-
 import 'package:atomic_notes/authentication/auth_services/auth_service.dart';
 import 'package:atomic_notes/utility/component/profile_avatar.dart';
 import 'package:atomic_notes/page/home_page.dart';
@@ -66,8 +65,10 @@ class _MainPageState extends State<MainPage> {
       if (!mounted) return;
       bool seen;
       try {
-        seen = Hive.box<bool>('authBox')
-                .get(EnergyIntroScreen.seenFlag, defaultValue: false) ??
+        seen =
+            Hive.box<bool>(
+              'authBox',
+            ).get(EnergyIntroScreen.seenFlag, defaultValue: false) ??
             false;
       } catch (_) {
         seen = true; // if the box isn't ready, don't nag; skip this launch
@@ -134,8 +135,10 @@ class _MainPageState extends State<MainPage> {
       return;
     }
     _lastBackPress = now;
-    const MySnackBar(text: 'Press back again to exit', sec: 1500)
-        .showMySnackBar(context);
+    const MySnackBar(
+      text: 'Press back again to exit',
+      sec: 1500,
+    ).showMySnackBar(context);
   }
 
   @override
@@ -183,47 +186,49 @@ class _MainPageState extends State<MainPage> {
             children: [
               const ProfileAvatar(size: 34, frame: 2),
               const SizedBox(width: AppSpace.sm + 2),
-              ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxWidth: MediaQuery.sizeOf(context).width * 0.45,
+              Flexible(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: MediaQuery.sizeOf(context).width * 0.45,
+                  ),
+                  child: _isLoading2
+                      ? Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Container(
+                              height: 8,
+                              width: 44,
+                              decoration: const BoxDecoration(
+                                color: AppColors.surfaceHighest,
+                                borderRadius: AppRadius.sm,
+                              ),
+                            ),
+                            const SizedBox(height: 5),
+                            Container(
+                              height: 11,
+                              width: 88,
+                              decoration: const BoxDecoration(
+                                color: AppColors.surfaceHighest,
+                                borderRadius: AppRadius.sm,
+                              ),
+                            ),
+                          ],
+                        )
+                      : Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const MonoLabel('+ ATOMIC', small: true),
+                            Text(
+                              username!,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: AppType.headlineSm.copyWith(height: 1.1),
+                            ),
+                          ],
+                        ),
                 ),
-                child: _isLoading2
-                    ? Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Container(
-                            height: 8,
-                            width: 44,
-                            decoration: const BoxDecoration(
-                              color: AppColors.surfaceHighest,
-                              borderRadius: AppRadius.sm,
-                            ),
-                          ),
-                          const SizedBox(height: 5),
-                          Container(
-                            height: 11,
-                            width: 88,
-                            decoration: const BoxDecoration(
-                              color: AppColors.surfaceHighest,
-                              borderRadius: AppRadius.sm,
-                            ),
-                          ),
-                        ],
-                      )
-                    : Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const MonoLabel('Atomic Notes', small: true),
-                          Text(
-                            username!,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: AppType.headlineSm.copyWith(height: 1.1),
-                          ),
-                        ],
-                      ),
               ),
             ],
           ),
@@ -254,7 +259,10 @@ class _MainPageState extends State<MainPage> {
       // destroying and rebuilding them every time the tab changes.
       body: IndexedStack(
         index: currentIndex,
-        children: _pages,
+        children: [
+          for (var index = 0; index < _pages.length; index++)
+            TickerMode(enabled: currentIndex == index, child: _pages[index]),
+        ],
       ),
 
       // bottom Navigation bar section — the active tab becomes a solid Ink
@@ -270,7 +278,9 @@ class _MainPageState extends State<MainPage> {
           top: false,
           child: Padding(
             padding: const EdgeInsets.symmetric(
-                horizontal: AppSpace.md, vertical: AppSpace.sm + 2),
+              horizontal: AppSpace.md,
+              vertical: AppSpace.sm + 2,
+            ),
             child: GNav(
               mainAxisAlignment: MainAxisAlignment.center,
               onTabChange: (index) => goToPage(index),
@@ -284,7 +294,9 @@ class _MainPageState extends State<MainPage> {
               gap: AppSpace.sm,
               tabBorderRadius: 4,
               padding: const EdgeInsets.symmetric(
-                  horizontal: AppSpace.md, vertical: 12),
+                horizontal: AppSpace.md,
+                vertical: 12,
+              ),
               tabs: const [
                 GButton(
                   icon: Icons.article_outlined,
@@ -340,31 +352,42 @@ class _NotificationBell extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: AppColors.paper,
                   borderRadius: AppRadius.std,
-                  border:
-                      Border.all(color: AppColors.ink, width: AppStroke.rule),
+                  border: Border.all(
+                    color: AppColors.ink,
+                    width: AppStroke.rule,
+                  ),
                 ),
-                child: const Icon(Icons.notifications_none,
-                    size: 20, color: AppColors.ink),
+                child: const Icon(
+                  Icons.notifications_none,
+                  size: 20,
+                  color: AppColors.ink,
+                ),
               ),
               if (count > 0)
                 Positioned(
                   top: -4,
                   right: -4,
                   child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 5,
+                      vertical: 1,
+                    ),
                     constraints: const BoxConstraints(minWidth: 16),
                     decoration: BoxDecoration(
                       color: AppColors.signal,
                       borderRadius: AppRadius.chip,
                       border: Border.all(
-                          color: AppColors.paper, width: AppStroke.rule),
+                        color: AppColors.paper,
+                        width: AppStroke.rule,
+                      ),
                     ),
                     child: Text(
                       count > 9 ? '9+' : '$count',
                       textAlign: TextAlign.center,
-                      style: AppType.labelMonoSm
-                          .copyWith(color: Colors.white, height: 1.1),
+                      style: AppType.labelMonoSm.copyWith(
+                        color: Colors.white,
+                        height: 1.1,
+                      ),
                     ),
                   ),
                 ),

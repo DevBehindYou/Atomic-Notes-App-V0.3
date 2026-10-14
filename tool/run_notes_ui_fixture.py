@@ -8,14 +8,30 @@ import sys
 import tempfile
 
 FILES = {'home': 'test/home_page_test.dart', 'editor': 'test/notes_editor_page_test.dart',
-         'previews': 'test/notes_ui_preview_test.dart'}
+         'previews': 'test/notes_ui_preview_test.dart',
+         'cloud': 'test/cloud_button_test.dart'}
+FAILURE_CASES = {
+    'four-second welcome collapses without removing controls': 'welcome_collapse',
+    'background pause and resume reset date and welcome interval': 'welcome_resume',
+    'muted home starts its four-second interval when shown': 'welcome_tab',
+    'reduced motion collapses immediately after four seconds': 'welcome_reduced_motion',
+    'disposing during welcome cancels timer and ticker': 'welcome_dispose',
+    '320px and 2x text keep 123 pending notes and controls visible': 'welcome_large_text',
+    'selection and responsive layout do not restart a collapsed welcome': 'welcome_selection',
+    'on a short screen the header scrolls away with the notes': 'home_short_screen',
+    'narrow large-text layout keeps search and cards usable': 'home_large_text',
+    'cloud is purple when idle and black with a rotating busy ring': 'cloud_rotation',
+    'foreground pause stops the ring and resume restarts it': 'cloud_resume',
+    'receive-only source sync animates and returns to idle': 'cloud_receive',
+    'manual connectivity check is busy without claiming an upload': 'cloud_connectivity',
+}
 
 
 def classify(raw, code, source):
     result = {'outcome': 'fail', 'passed': 0, 'failed': 0, 'skipped': 0,
               'failureLines': [], 'overflow': False}
     done, valid, started, ended = 0, True, set(), set()
-    lines = set()
+    lines, failures, reported_lines, case_codes, stages = set(), set(), {}, {}, {}
     for line in raw.splitlines():
         try:
             event = json.loads(line)
@@ -32,6 +48,9 @@ def classify(raw, code, source):
                 valid = False
             else:
                 started.add(test_id)
+                name = event.get('test', {}).get('name', '')
+                case_codes[test_id] = next((code for suffix, code in FAILURE_CASES.items()
+                                           if isinstance(name, str) and name.endswith(suffix)), 'other_case')
         elif kind == 'testDone':
             test_id = event.get('testID')
             if test_id not in started or test_id in ended:
@@ -41,20 +60,38 @@ def classify(raw, code, source):
                 result['skipped'] += 1
             elif event.get('result') != 'success':
                 result['failed'] += 1
+                failures.add(test_id)
             elif event.get('hidden') is False:
                 result['passed'] += 1
         elif kind in ('error', 'print'):
             # Only emit bounded numbers against these public source files.
             text = str(event.get('stackTrace', '')) + str(event.get('error', '')) + str(event.get('message', ''))
-            if kind == 'error':
-                for match in re.finditer(re.escape(source) + r':([1-9][0-9]{0,4})(?::[0-9]+)?', text):
-                    lines.add(int(match[1]))
+            stage = re.fullmatch(
+                r'atomic_ui_stage:(welcome_collapse|cloud_connectivity):'
+                r'(mounted|mid_animation|collapsed|controls|semantics|clean|busy|idle)',
+                event.get('message', '') if isinstance(event.get('message', ''), str) else '')
+            if stage and type(event.get('testID')) is int:
+                stages[event['testID']] = stage[2]
+            # Flutter may publish the public test frame in a print event using
+            # whitespace instead of a colon. Retain numbers only, and only for
+            # events belonging to a test that actually failed.
+            found = {int(match[1]) for match in re.finditer(
+                re.escape(source) + r'(?::|\s+)([1-9][0-9]{0,4})(?::[0-9]+)?', text)}
+            test_id = event.get('testID')
+            if type(test_id) is int:
+                reported_lines.setdefault(test_id, set()).update(found)
             if 'RenderFlex overflowed' in text:
                 result['overflow'] = True
         elif kind == 'done':
             done += 1
             valid = valid and event.get('success') is True
+    for test_id in failures:
+        lines.update(reported_lines.get(test_id, set()))
     result['failureLines'] = sorted(lines)[:30]
+    if failures:
+        result['failureCases'] = sorted({case_codes.get(test_id, 'other_case') for test_id in failures})
+        result['failureStages'] = {case_codes[test_id]: stages[test_id]
+                                  for test_id in failures if test_id in stages}
     if (code == 0 and valid and done == 1 and started == ended
             and result['passed'] > 0 and result['failed'] == 0
             and result['skipped'] == 0 and not result['overflow']):
