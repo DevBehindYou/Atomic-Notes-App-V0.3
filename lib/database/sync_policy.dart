@@ -1,4 +1,6 @@
-import 'dart:io';
+import 'network_failure_stub.dart'
+    if (dart.library.io) 'network_failure_io.dart'
+    as platform;
 
 import 'package:http/http.dart' show ClientException;
 
@@ -8,10 +10,7 @@ import 'package:http/http.dart' show ClientException;
 /// True when [error] means the connection went away (no route, dropped socket,
 /// failed TLS), not that the Server answered with a refusal.
 bool isNetworkFailure(Object error) =>
-    error is SocketException ||
-    error is ClientException ||
-    error is TlsException ||
-    error is HttpException;
+    error is ClientException || platform.isPlatformNetworkFailure(error);
 
 /// Whether a sync may send a push now.
 ///

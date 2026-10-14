@@ -14,6 +14,43 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  web-feasibility:
+    name: Guarded WebApp compile feasibility
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.8'
+          channel: stable
+          cache: true
+      - name: Prepare locked non-production configuration
+        run: |
+          cp lib/authentication/auth_services/cred.example.dart lib/authentication/auth_services/cred.dart
+          flutter pub get --enforce-lockfile
+          echo "CHROME_EXECUTABLE=$(command -v google-chrome)" >> "$GITHUB_ENV"
+      - name: Verify bounded proof parser
+        run: python3 -m unittest discover -s tool -p 'test_web_compile_proof.py'
+      - name: Compile actual main and verify browser startup guard
+        env:
+          ATOMIC_WEB_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python3 tool/run_web_compile_proof.py
+      - name: Upload sanitized compile and gate outcomes only
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: sanitized-web-compile-proof
+          path: ci-web-compile-proof.json
+          if-no-files-found: error
+          retention-days: 1
+
   server-wire:
     name: Disposable App to Server contract
     runs-on: ubuntu-24.04
