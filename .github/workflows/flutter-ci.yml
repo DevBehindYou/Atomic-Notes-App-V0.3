@@ -313,6 +313,22 @@ jobs:
           if-no-files-found: warn
           retention-days: 1
 
+      - name: Verify native full-batch push acknowledgement preservation
+        env:
+          ATOMIC_PUSH_ACK_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          python3 tool/test_run_push_ack_proof.py
+          python3 tool/run_push_ack_proof.py
+
+      - name: Upload sanitized native push acknowledgement outcomes
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: sanitized-push-ack-proof
+          path: ci-push-ack-proof.json
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Run existing tests
         id: tests
         run: flutter test --no-pub --reporter expanded 2>&1 | tee ci-logs/test.log
