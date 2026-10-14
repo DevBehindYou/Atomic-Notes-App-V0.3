@@ -7,6 +7,7 @@ import 'package:atomic_notes/database/note_quota.dart';
 import 'package:atomic_notes/database/notes_repository.dart';
 import 'package:atomic_notes/database/sync_status.dart';
 import 'package:atomic_notes/profile/profile_store.dart';
+import 'package:atomic_notes/platform/browser_preview_gate.dart';
 import 'package:atomic_notes/security/screen_security.dart';
 import 'package:atomic_notes/security/vault.dart';
 import 'package:atomic_notes/state/app_bloc_observer.dart';
@@ -39,11 +40,18 @@ import 'package:atomic_notes/theme/editorial.dart';
 import 'package:atomic_notes/utility/intropages/onboarding_screen.dart';
 import 'package:atomic_notes/utility/intropages/energy_intro_screen.dart';
 import 'package:bloc/bloc.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:hive_ce_flutter/hive_ce_flutter.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // W1 compile proof only. Do not initialize native auth, secure storage,
+  // Hive, vault state or repositories on browsers before their release gates.
+  if (kIsWeb) {
+    runApp(const BrowserPreviewGate());
+    return;
+  }
   Bloc.observer = const AppBlocObserver();
 
   try {

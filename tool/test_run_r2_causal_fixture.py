@@ -12,11 +12,46 @@ import unittest
 from unittest.mock import patch
 
 from run_r2_causal_fixture import (
-    CASES, OBSERVATIONS, classify, execute_package, relocated_config, resolved_graph, run_fixture,
+    CASES, OBSERVATIONS, classify, dependency_uris, execute_package,
+    export_dependencies, relocated_config, resolved_graph, run_fixture,
 )
 
 
 class R2CausalProofControls(unittest.TestCase):
+    def test_conditional_dependency_uris_include_every_branch(self):
+        source = '''
+import 'network_failure_stub.dart'
+    if (dart.library.io) 'network_failure_io.dart' as platform;
+export "fallback.dart"
+    if (dart.library.js_interop) "browser.dart"
+    if (dart.library.io == 'true') "native.dart";
+part 'model.g.dart';
+'''
+        self.assertEqual(list(dependency_uris(source)), [
+            'network_failure_stub.dart', 'network_failure_io.dart',
+            'fallback.dart', 'browser.dart', 'native.dart', 'model.g.dart'])
+
+    def test_conditional_sources_exported_from_the_same_revision(self):
+        source = ("import 'network_failure_stub.dart' "
+                  "if (dart.library.io) 'network_failure_io.dart' as platform;")
+        with tempfile.TemporaryDirectory(
+                dir=Path(__file__).resolve().parent.parent) as temporary:
+            destination = Path(temporary)
+            reads = []
+
+            def read(root, revision, path):
+                reads.append((revision, path))
+                return ''
+
+            with patch('run_r2_causal_fixture.read_source', side_effect=read):
+                export_dependencies(destination, 'fixture-revision', destination,
+                                    'lib/database/sync_policy.dart', source, set())
+            self.assertEqual(reads, [
+                ('fixture-revision', 'lib/database/network_failure_stub.dart'),
+                ('fixture-revision', 'lib/database/network_failure_io.dart')])
+            for _, path in reads:
+                self.assertTrue((destination / path).is_file())
+
     def events(self, phase):
         events = [
             {'type': 'testStart', 'test': {'id': 99, 'name': 'loading fixture'}},

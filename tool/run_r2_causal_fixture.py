@@ -163,6 +163,17 @@ def read_source(root, revision, path):
     return git_bytes(root, ['show', revision + ':' + path], 512 * 1024).decode('utf-8')
 
 
+def dependency_uris(source):
+    """Export every conditional URI; the compiler still needs unselected files."""
+    directives = re.finditer(
+        r"\b(?:import|export|part)\s+(['\"])([^'\"]+)\1([^;]*);", source)
+    for directive in directives:
+        yield directive[2]
+        for conditional in re.finditer(
+                r"\bif\s*\([^)]*\)\s*(['\"])([^'\"]+)\1", directive[3]):
+            yield conditional[2]
+
+
 def export_dependencies(root, revision, destination, path, source, visited):
     if path in visited:
         return
@@ -172,7 +183,7 @@ def export_dependencies(root, revision, destination, path, source, visited):
     target = destination / path
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(source, encoding='utf-8')
-    for uri in re.findall(r"(?:import|export|part)\s+['\"]([^'\"]+)['\"]", source):
+    for uri in dependency_uris(source):
         if uri.startswith('package:atomic_notes/'):
             child = 'lib/' + uri.removeprefix('package:atomic_notes/')
         elif ':' not in uri:
