@@ -5,6 +5,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:js_interop';
 
+part 'browser_owner_fence.dart';
+
 enum BrowserRecordFailure {
   invalidBatch,
   limit,
@@ -17,6 +19,13 @@ enum BrowserRecordFailure {
   enqueue,
   aborted,
   invalidRecord,
+  invalidContext,
+  missingContext,
+  malformedContext,
+  contextMismatch,
+  bootstrapRefused,
+  transitionRefused,
+  reservedKey,
 }
 
 /// Safe typed verdict. Never retains DOM messages, keys or record contents.
@@ -72,6 +81,7 @@ extension type _Store(JSObject _) implements JSObject {
   external _Request add(JSString value, JSString key);
   @JS('delete')
   external _Request remove(JSString key);
+  external _Request get(JSString key);
   external _Request openCursor();
 }
 
@@ -200,6 +210,94 @@ class BrowserRecordBoundary {
     Set<String> deletes = const {},
   }) async {
     _checkOpen();
+    final batch = _prepareBatch(puts, inserts, deletes);
+    final transaction = _begin('readwrite');
+    final settled = _Settlement(transaction);
+    try {
+      final store = transaction.objectStore(_storeName.toJS);
+      batch.enqueue(store, settled);
+    } catch (_) {
+      settled.abortWith(BrowserRecordFailure.enqueue);
+    }
+    await settled.future; // Request success can never resolve this future.
+  }
+
+  /// Reads paired cursor keys/values in one readonly transaction. A detached
+  /// immutable snapshot is returned only after native transaction completion.
+  Future<Map<String, String>> readSnapshot() async {
+    _checkOpen();
+    final transaction = _begin('readonly');
+    final settled = _Settlement(transaction);
+    final records = <String, String>{};
+    try {
+      _collectRecords(
+        transaction.objectStore(_storeName.toJS),
+        settled,
+        records,
+      );
+    } catch (_) {
+      settled.abortWith(BrowserRecordFailure.enqueue);
+    }
+    await settled.future;
+    return Map<String, String>.unmodifiable(records);
+  }
+
+  static void _collectRecords(
+    _Store store,
+    _Settlement settled,
+    Map<String, String> records, {
+    bool omitContext = false,
+  }) {
+    var bytes = 0;
+    try {
+      final request = store.openCursor();
+      settled.observe(request);
+      request.onsuccess = ((JSAny? _) {
+        try {
+          final raw = request.result;
+          if (raw == null) return;
+          final cursor = _Cursor(raw as JSObject);
+          final key = cursor.key;
+          final value = cursor.value;
+          if (!key.isA<JSString>() || value == null || !value.isA<JSString>()) {
+            settled.abortWith(BrowserRecordFailure.invalidRecord);
+            return;
+          }
+          final dartKey = (key as JSString).toDart;
+          final dartValue = (value as JSString).toDart;
+          if (omitContext && dartKey == BrowserOwnerFence.contextKey) {
+            cursor.advance();
+            return;
+          }
+          if (dartKey.isEmpty) {
+            settled.abortWith(BrowserRecordFailure.invalidRecord);
+            return;
+          }
+          if (dartKey.length > maxBytes || dartValue.length > maxBytes) {
+            settled.abortWith(BrowserRecordFailure.limit);
+            return;
+          }
+          bytes += utf8.encode(dartKey).length + utf8.encode(dartValue).length;
+          if (records.length >= maxRecords || bytes > maxBytes) {
+            settled.abortWith(BrowserRecordFailure.limit);
+            return;
+          }
+          records[dartKey] = dartValue;
+          cursor.advance();
+        } catch (_) {
+          settled.abortWith(BrowserRecordFailure.request);
+        }
+      }).toJS;
+    } catch (_) {
+      settled.abortWith(BrowserRecordFailure.enqueue);
+    }
+  }
+
+  static _PreparedBatch _prepareBatch(
+    Map<String, String> puts,
+    Map<String, String> inserts,
+    Set<String> deletes,
+  ) {
     if (puts.length + inserts.length + deletes.length > maxRecords) {
       throw const BrowserRecordException(BrowserRecordFailure.limit);
     }
@@ -227,73 +325,7 @@ class BrowserRecordBoundary {
         throw const BrowserRecordException(BrowserRecordFailure.limit);
       }
     }
-    final transaction = _begin('readwrite');
-    final settled = _Settlement(transaction);
-    try {
-      final store = transaction.objectStore(_storeName.toJS);
-      for (final entry in putCopy.entries) {
-        settled.observe(store.put(entry.value.toJS, entry.key.toJS));
-      }
-      for (final entry in insertCopy.entries) {
-        settled.observe(store.add(entry.value.toJS, entry.key.toJS));
-      }
-      for (final key in deleteCopy) {
-        settled.observe(store.remove(key.toJS));
-      }
-    } catch (_) {
-      settled.abortWith(BrowserRecordFailure.enqueue);
-    }
-    await settled.future; // Request success can never resolve this future.
-  }
-
-  /// Reads paired cursor keys/values in one readonly transaction. A detached
-  /// immutable snapshot is returned only after native transaction completion.
-  Future<Map<String, String>> readSnapshot() async {
-    _checkOpen();
-    final transaction = _begin('readonly');
-    final settled = _Settlement(transaction);
-    final records = <String, String>{};
-    var bytes = 0;
-    try {
-      final request = transaction.objectStore(_storeName.toJS).openCursor();
-      settled.observe(request);
-      request.onsuccess = ((JSAny? _) {
-        try {
-          final raw = request.result;
-          if (raw == null) return;
-          final cursor = _Cursor(raw as JSObject);
-          final key = cursor.key;
-          final value = cursor.value;
-          if (!key.isA<JSString>() || value == null || !value.isA<JSString>()) {
-            settled.abortWith(BrowserRecordFailure.invalidRecord);
-            return;
-          }
-          final dartKey = (key as JSString).toDart;
-          final dartValue = (value as JSString).toDart;
-          if (dartKey.isEmpty) {
-            settled.abortWith(BrowserRecordFailure.invalidRecord);
-            return;
-          }
-          if (dartKey.length > maxBytes || dartValue.length > maxBytes) {
-            settled.abortWith(BrowserRecordFailure.limit);
-            return;
-          }
-          bytes += utf8.encode(dartKey).length + utf8.encode(dartValue).length;
-          if (records.length >= maxRecords || bytes > maxBytes) {
-            settled.abortWith(BrowserRecordFailure.limit);
-            return;
-          }
-          records[dartKey] = dartValue;
-          cursor.advance();
-        } catch (_) {
-          settled.abortWith(BrowserRecordFailure.request);
-        }
-      }).toJS;
-    } catch (_) {
-      settled.abortWith(BrowserRecordFailure.enqueue);
-    }
-    await settled.future;
-    return Map<String, String>.unmodifiable(records);
+    return _PreparedBatch(putCopy, insertCopy, deleteCopy);
   }
 
   _Transaction _begin(String mode) {
@@ -350,6 +382,24 @@ class _Settlement {
       transaction.abort();
     } catch (_) {
       // If settlement is already queued, still wait for its native event.
+    }
+  }
+}
+
+class _PreparedBatch {
+  final Map<String, String> puts, inserts;
+  final Set<String> deletes;
+  _PreparedBatch(this.puts, this.inserts, this.deletes);
+  Iterable<String> get keys => [...puts.keys, ...inserts.keys, ...deletes];
+  void enqueue(_Store store, _Settlement settled) {
+    for (final entry in puts.entries) {
+      settled.observe(store.put(entry.value.toJS, entry.key.toJS));
+    }
+    for (final entry in inserts.entries) {
+      settled.observe(store.add(entry.value.toJS, entry.key.toJS));
+    }
+    for (final key in deletes) {
+      settled.observe(store.remove(key.toJS));
     }
   }
 }
