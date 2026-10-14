@@ -40,6 +40,21 @@ class ProofParserTests(unittest.TestCase):
     def test_refuses_nonzero(self):
         self.assertEqual(self.parse(stream(), 1)['outcome'], 'fail')
 
+    def test_refuses_boolean_test_id(self):
+        events = stream()
+        events[4]['testID'] = True
+        self.assertEqual(self.parse(events)['outcome'], 'fail')
+
+    def test_refuses_error_even_with_false_success_receipts(self):
+        events = stream()
+        events.insert(4, {'type': 'error', 'testID': 1, 'error': 'private message'})
+        self.assertEqual(self.parse(events)['outcome'], 'fail')
+
+    def test_refuses_unlinked_error(self):
+        events = stream()
+        events.insert(4, {'type': 'error', 'testID': 500, 'error': 'private message'})
+        self.assertEqual(self.parse(events)['outcome'], 'fail')
+
     def test_refuses_unknown_case(self):
         events = stream()
         events[2]['test']['name'] = 'unrecognized case'

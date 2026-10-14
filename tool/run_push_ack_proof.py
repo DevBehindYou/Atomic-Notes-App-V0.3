@@ -21,6 +21,7 @@ def classify(raw, returncode, loader_name):
     report = {'outcome': 'fail', 'cases': {code: 'not_run' for code in CASES.values()},
               'cleanup': {code: 'not_run' for code in CASES.values()}}
     ids, loaders, ended, loader_ended, clean = {}, set(), set(), set(), set()
+    error_ids = set()
     terminal, success, valid = 0, False, True
     source_lines = {}
     for line in raw.splitlines():
@@ -49,6 +50,9 @@ def classify(raw, returncode, loader_name):
                 valid = False
         elif kind == 'testDone':
             ident = event.get('testID')
+            if type(ident) is not int:
+                valid = False
+                continue
             if ident in loaders:
                 if ident in loader_ended or event.get('result') != 'success' or event.get('skipped') is not False:
                     valid = False
@@ -65,13 +69,17 @@ def classify(raw, returncode, loader_name):
             ident, message = event.get('testID'), event.get('message')
             if isinstance(message, str) and message.startswith('atomic_push_ack_cleanup:'):
                 code = message.strip().removeprefix('atomic_push_ack_cleanup:')
-                if code not in CASES.values() or ids.get(ident) != code or code in clean:
+                if type(ident) is not int or code not in CASES.values() or ids.get(ident) != code or code in clean:
                     valid = False
                 else:
                     clean.add(code)
                     report['cleanup'][code] = 'pass'
         elif kind == 'error':
             ident = event.get('testID')
+            if type(ident) is not int or (ident not in ids and ident not in loaders):
+                valid = False
+                continue
+            error_ids.add(ident)
             if ident in ids and isinstance(event.get('stackTrace'), str):
                 matches = re.findall(r'push_ack_boundary_test\.dart:([1-9][0-9]{0,3})(?::|\s)',
                                      event['stackTrace'])
@@ -84,7 +92,7 @@ def classify(raw, returncode, loader_name):
                              and loaders == loader_ended and set(ids) == ended
                              and set(ids.values()) == set(CASES.values())
                              and clean == set(CASES.values()))
-    if returncode == 0 and success and report['streamValid'] and set(report['cases'].values()) == {'pass'}:
+    if returncode == 0 and success and not error_ids and report['streamValid'] and set(report['cases'].values()) == {'pass'}:
         report['outcome'] = 'pass'
     if source_lines:
         report['failureLines'] = source_lines
