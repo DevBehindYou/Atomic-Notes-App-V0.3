@@ -93,6 +93,7 @@ const _hooks = r'''
     keep = false;
     for (const db of connections) db.close();
   };
+  globalThis.atomicOpenStopKeepAlive = () => { keep = false; };
   globalThis.atomicOpenWait = wait;
   globalThis.atomicOpenEvents = () => JSON.stringify(events);
   globalThis.atomicOpenFault = mode => {
@@ -144,6 +145,8 @@ external JSPromise<JSAny?> _deleteQueue();
 external JSPromise<JSAny?> _holdUpgrade();
 @JS('atomicOpenRelease')
 external void _release();
+@JS('atomicOpenStopKeepAlive')
+external void _stopKeepAlive();
 @JS('atomicOpenWait')
 external JSPromise<JSBoolean> _wait(JSString event);
 @JS('atomicOpenEvents')
@@ -250,7 +253,9 @@ void main() {
       expect(clock.elapsedMilliseconds, greaterThanOrEqualTo(4900));
       stage('still_held');
       expect(observed(), ['upgrade-held']);
-      _release();
+      // Let the original open succeed normally and close in its success
+      // callback. Closing a still-upgrading connection would fail that open.
+      _stopKeepAlive();
       stage('waiting_late_success');
       await _wait('late-success'.toJS).toDart;
       stage('late_event_order');
