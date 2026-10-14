@@ -356,9 +356,7 @@ void main() {
       boundary.readSnapshot(),
       throwsA(failure(BrowserRecordFailure.invalidRecord)),
     );
-    final error = const BrowserRecordException(
-      BrowserRecordFailure.invalidRecord,
-    );
+    const error = BrowserRecordException(BrowserRecordFailure.invalidRecord);
     expect(error.toString(), 'BrowserRecordException(invalidRecord)');
   });
 
