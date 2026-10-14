@@ -49,7 +49,7 @@ descriptor, delete exactly the owned database and check its absence. Each case
 emits one fixed cleanup receipt only after restoration and absence are checked.
 
 The separate `browser-open-proof.yml` workflow pins Flutter 3.44.8 and the
-existing lockfile. It runs nineteen parser controls and this five-case suite.
+existing lockfile. It runs twenty-one parser controls and this five-case suite.
 `sanitized-browser-open-proof` contains only `ci-browser-open-proof.json`.
 Raw test/compiler output and synthetic records never enter the artifact.
 
@@ -61,6 +61,9 @@ The fixed nineteen-field schema is `version`, `scope`, `sourceHead`, `phase`,
 requires all five case values and all five cleanup values true, successful SDK
 identity and source/hash checks, a successful terminal event and exit code zero.
 Unknown, duplicated, skipped, incomplete or malformed test streams cannot pass.
+Only failing reports may additionally contain `failureStages`, mapping a failed
+known case to its last fixed public fixture marker. Native messages, unknown
+markers, records and completed successful cases are never retained.
 
 Local validation comprises formatting and parser controls only. Browser claims
 require exact-head CI, independent source review and repeated merged-main proof.

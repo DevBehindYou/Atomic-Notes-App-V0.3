@@ -199,9 +199,13 @@ void main() {
         boundary.close();
       }
     } finally {
-      expect(_restore().toDart, isTrue);
+      try {
+        expect(_restore().toDart, isTrue);
+      } finally {
+        // Owned cleanup is attempted even if restoration verification fails.
+        expect((await _cleanup(name.toJS).toDart).toDart, isTrue);
+      }
     }
-    expect((await _cleanup(name.toJS).toDart).toDart, isTrue);
     // Receipt follows owned absence and native factory/descriptor restoration.
     // ignore: avoid_print
     print('ATOMIC_OPEN_CLEANUP_OK');
