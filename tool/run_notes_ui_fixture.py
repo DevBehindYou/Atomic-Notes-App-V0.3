@@ -10,13 +10,28 @@ import tempfile
 FILES = {'home': 'test/home_page_test.dart', 'editor': 'test/notes_editor_page_test.dart',
          'previews': 'test/notes_ui_preview_test.dart',
          'cloud': 'test/cloud_button_test.dart'}
+FAILURE_CASES = {
+    'four-second welcome collapses without removing controls': 'welcome_collapse',
+    'background pause and resume reset date and welcome interval': 'welcome_resume',
+    'muted home starts its four-second interval when shown': 'welcome_tab',
+    'reduced motion collapses immediately after four seconds': 'welcome_reduced_motion',
+    'disposing during welcome cancels timer and ticker': 'welcome_dispose',
+    '320px and 2x text keep 123 pending notes and controls visible': 'welcome_large_text',
+    'selection and responsive layout do not restart a collapsed welcome': 'welcome_selection',
+    'on a short screen the header scrolls away with the notes': 'home_short_screen',
+    'narrow large-text layout keeps search and cards usable': 'home_large_text',
+    'cloud is purple when idle and black with a rotating busy ring': 'cloud_rotation',
+    'foreground pause stops the ring and resume restarts it': 'cloud_resume',
+    'receive-only source sync animates and returns to idle': 'cloud_receive',
+    'manual connectivity check is busy without claiming an upload': 'cloud_connectivity',
+}
 
 
 def classify(raw, code, source):
     result = {'outcome': 'fail', 'passed': 0, 'failed': 0, 'skipped': 0,
               'failureLines': [], 'overflow': False}
     done, valid, started, ended = 0, True, set(), set()
-    lines, failures, reported_lines = set(), set(), {}
+    lines, failures, reported_lines, case_codes = set(), set(), {}, {}
     for line in raw.splitlines():
         try:
             event = json.loads(line)
@@ -33,6 +48,9 @@ def classify(raw, code, source):
                 valid = False
             else:
                 started.add(test_id)
+                name = event.get('test', {}).get('name', '')
+                case_codes[test_id] = next((code for suffix, code in FAILURE_CASES.items()
+                                           if isinstance(name, str) and name.endswith(suffix)), 'other_case')
         elif kind == 'testDone':
             test_id = event.get('testID')
             if test_id not in started or test_id in ended:
@@ -64,6 +82,8 @@ def classify(raw, code, source):
     for test_id in failures:
         lines.update(reported_lines.get(test_id, set()))
     result['failureLines'] = sorted(lines)[:30]
+    if failures:
+        result['failureCases'] = sorted({case_codes.get(test_id, 'other_case') for test_id in failures})
     if (code == 0 and valid and done == 1 and started == ended
             and result['passed'] > 0 and result['failed'] == 0
             and result['skipped'] == 0 and not result['overflow']):
