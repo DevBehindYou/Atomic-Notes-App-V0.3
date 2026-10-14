@@ -6,6 +6,7 @@ import 'dart:js_interop';
 import 'dart:js_interop_unsafe';
 import 'dart:math';
 
+import 'package:atomic_notes/database/note.dart';
 import 'package:atomic_notes/platform/browser_record_boundary.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -186,8 +187,20 @@ void main() {
     'B1 commit acknowledgment follows native complete and survives reopen',
     () async {
       final boundary = await open();
+      final note = Note(
+        id: 'public-note',
+        title: 'Public synthetic Ω checklist',
+        kind: NoteKind.todo,
+        items: [TodoItem(text: 'Public task', done: true)],
+        dirty: true,
+        pinned: true,
+        serverVersion: 3,
+        syncedSig: 'public-synthetic-signature',
+        createdAt: DateTime.utc(2026, 10, 14),
+        updatedAt: DateTime.utc(2026, 10, 14),
+      );
       final draft = <String, String>{
-        'note': 'public Ω checklist',
+        'note': jsonEncode(note.toMap()),
         'journal': 'pending-v3',
       };
       final expected = Map<String, String>.of(draft);
@@ -209,7 +222,11 @@ void main() {
         throwsUnsupportedError,
       );
       boundary.close();
-      expect(await (await open()).readSnapshot(), expected);
+      final reopened = await (await open()).readSnapshot();
+      expect(reopened, expected);
+      final reloaded = Note.fromMap(jsonDecode(reopened['note']!) as Map);
+      expect(reloaded.toMap(), note.toMap());
+      expect(reloaded.contentSig, note.contentSig);
     },
   );
 
