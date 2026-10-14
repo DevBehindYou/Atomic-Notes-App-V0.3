@@ -223,6 +223,14 @@ class _SettingsPageState extends State<SettingsPage> {
                         ),
                         // The destructive entry stands apart, on its own row.
                         SettingsCard(
+                          icon: Icons.devices_outlined,
+                          title: 'Sign-ins',
+                          caption: 'Review other sign-ins',
+                          wide: true,
+                          onTap: () => Navigator.pushNamed(context, '/usersessions'),
+                        ),
+                        const SizedBox(height: AppSpace.sm + 4),
+                        SettingsCard(
                           icon: Icons.warning_amber_rounded,
                           title: 'Danger Zone',
                           caption: 'Wipe cloud or this device',
