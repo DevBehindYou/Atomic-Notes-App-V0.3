@@ -31,7 +31,7 @@ def classify(raw, code, source):
     result = {'outcome': 'fail', 'passed': 0, 'failed': 0, 'skipped': 0,
               'failureLines': [], 'overflow': False}
     done, valid, started, ended = 0, True, set(), set()
-    lines, failures, reported_lines, case_codes = set(), set(), {}, {}
+    lines, failures, reported_lines, case_codes, stages = set(), set(), {}, {}, {}
     for line in raw.splitlines():
         try:
             event = json.loads(line)
@@ -66,6 +66,12 @@ def classify(raw, code, source):
         elif kind in ('error', 'print'):
             # Only emit bounded numbers against these public source files.
             text = str(event.get('stackTrace', '')) + str(event.get('error', '')) + str(event.get('message', ''))
+            stage = re.fullmatch(
+                r'atomic_ui_stage:(welcome_collapse|cloud_connectivity):'
+                r'(mounted|mid_animation|collapsed|controls|semantics|clean|busy|idle)',
+                event.get('message', '') if isinstance(event.get('message', ''), str) else '')
+            if stage and type(event.get('testID')) is int:
+                stages[event['testID']] = stage[2]
             # Flutter may publish the public test frame in a print event using
             # whitespace instead of a colon. Retain numbers only, and only for
             # events belonging to a test that actually failed.
@@ -84,6 +90,8 @@ def classify(raw, code, source):
     result['failureLines'] = sorted(lines)[:30]
     if failures:
         result['failureCases'] = sorted({case_codes.get(test_id, 'other_case') for test_id in failures})
+        result['failureStages'] = {case_codes[test_id]: stages[test_id]
+                                  for test_id in failures if test_id in stages}
     if (code == 0 and valid and done == 1 and started == ended
             and result['passed'] > 0 and result['failed'] == 0
             and result['skipped'] == 0 and not result['overflow']):

@@ -10,6 +10,12 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import 'support/fake_notes_source.dart';
 
+void _stage(String value) {
+  // Fixed public fixture markers only; no credentials or widget text.
+  // ignore: avoid_print
+  print('atomic_ui_stage:cloud_connectivity:$value');
+}
+
 // Match MainPage's composition, with counters instead of network/UI work.
 Widget control({
   required bool busy,
@@ -195,15 +201,19 @@ void main() {
     await tester.tap(find.byType(CloudButton));
     await tester.pump();
     await tester.pump();
+    _stage('busy');
     expect(find.byKey(const ValueKey('cloud-sync-ring')), findsOneWidget);
     final node = tester.getSemantics(find.bySemanticsLabel('Sync now'));
+    _stage('semantics');
     expect(node.getSemanticsData().value, 'Syncing');
     expect(source.syncCalls, 0);
     connectivity.complete(false);
     await tester.pump();
     await tester.pump();
+    _stage('idle');
     expect(find.byKey(const ValueKey('cloud-sync-ring')), findsNothing);
     expect(bloc.state.notice!.text, 'No Internet Connection!');
+    _stage('clean');
     expect(source.syncCalls, 0);
   });
 

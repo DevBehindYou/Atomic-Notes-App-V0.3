@@ -15,6 +15,12 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'support/fake_notes_source.dart';
 
+void _stage(String value) {
+  // Fixed public fixture markers only; the CI runner never exports test text.
+  // ignore: avoid_print
+  print('atomic_ui_stage:welcome_collapse:$value');
+}
+
 FakeNotesSource _source({int limit = 30, bool empty = false}) =>
     FakeNotesSource(
       limit: limit,
@@ -109,6 +115,7 @@ void main() {
       final semantics = tester.ensureSemantics();
       addTearDown(semantics.dispose);
       await _open(tester, _source(), now: () => DateTime(2026, 10, 14, 20));
+      _stage('mounted');
       final welcome = find.byKey(const ValueKey('notes-welcome-section'));
       final search = find.byType(TextField);
       final originalHeight = tester.getSize(welcome).height;
@@ -117,6 +124,7 @@ void main() {
       expect(tester.getSize(welcome).height, originalHeight);
       await tester.pump(const Duration(milliseconds: 1));
       await tester.pump(const Duration(milliseconds: 140));
+      _stage('mid_animation');
       expect(tester.getSize(welcome).height, greaterThan(0));
       expect(tester.getSize(welcome).height, lessThan(originalHeight));
       final opacity = tester.widget<Opacity>(
@@ -124,16 +132,23 @@ void main() {
       );
       expect(opacity.opacity, allOf(greaterThan(0.0), lessThan(1.0)));
       await tester.pump(const Duration(milliseconds: 160));
+      _stage('collapsed');
       expect(tester.getSize(welcome).height, 0);
       expect(
         tester.getTopLeft(search).dy,
         closeTo(originalSearchTop - originalHeight, 0.01),
       );
       expect(find.text('3 / 30').hitTestable(), findsOneWidget);
+      _stage('controls');
       expect(find.text('NEW NOTE').hitTestable(), findsOneWidget);
       expect(find.byType(Image).hitTestable(), findsOneWidget);
       expect(find.byType(DataChip).hitTestable(), findsWidgets);
-      expect(find.bySemanticsLabel('Clear head. Write it down.'), findsNothing);
+      _stage('semantics');
+      expect(
+        find.semantics.byLabel('Clear head. Write it down.'),
+        findsNothing,
+      );
+      _stage('clean');
       expect(tester.takeException(), isNull);
     });
 
@@ -308,9 +323,9 @@ void main() {
         expect(find.byType(NotesBulder).first.hitTestable(), findsOneWidget);
         await tester.pump(const Duration(seconds: 4));
         await tester.pump(const Duration(milliseconds: 300));
-        expect(tester.getSize(welcome).height, 0);
         await tester.drag(find.byType(NestedScrollView), const Offset(0, 500));
         await tester.pumpAndSettle();
+        expect(tester.getSize(welcome).height, 0);
         expectUsable();
         expect(find.byType(NotesBulder).first.hitTestable(), findsOneWidget);
       },
