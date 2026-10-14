@@ -38,6 +38,7 @@ jobs:
           python3 -m unittest discover -s tool -p 'test_web_storage_proof.py'
           python3 -m unittest discover -s tool -p 'test_browser_record_proof.py'
           python3 -m unittest discover -s tool -p 'test_browser_owner_proof.py'
+          python3 -m unittest discover -s tool -p 'test_browser_preimage_proof.py'
       - name: Observe real Hive browser commit and late abort boundaries
         env:
           ATOMIC_WEB_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -72,5 +73,17 @@ jobs:
         with:
           name: sanitized-browser-owner-proof
           path: ci-browser-owner-proof.json
+          if-no-files-found: error
+          retention-days: 1
+      - name: Prove inactive exact record preimages in native transactions
+        env:
+          ATOMIC_WEB_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python3 tool/run_browser_preimage_proof.py
+      - name: Upload fixed inactive preimage outcomes only
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: sanitized-browser-preimage-proof
+          path: ci-browser-preimage-proof.json
           if-no-files-found: error
           retention-days: 1
