@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'logout_protocol.dart';
+import 'wire_timestamp.dart';
 
 enum LogoutRecoveryState { prepared, completed, aborted }
 
@@ -188,22 +189,9 @@ class LogoutRecoveryReceipts {
   final List<LogoutRecoveryBatchReceipt> batches;
   static const maxWireBytes = 128 * 1024;
   static final _errorCode = RegExp(r'^[a-z][a-z0-9_]{0,79}$');
-  static final _timestamp = RegExp(
-    r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z$',
-  );
   static bool _positive(Object? value) =>
       LogoutRecoveryStatus._whole(value) && (value as int) > 0;
-  static bool _validTimestamp(Object? value) {
-    if (value is! String || !_timestamp.hasMatch(value)) return false;
-    final parsed = DateTime.tryParse(value);
-    if (parsed == null) return false;
-    // DateTime parsing normalizes impossible dates; exact round-trip rejects
-    // them. Current Server receipts use UTC ISO milliseconds (or whole seconds).
-    final canonical = value.contains('.')
-        ? value
-        : value.replaceFirst('Z', '.000Z');
-    return parsed.toUtc().toIso8601String() == canonical;
-  }
+  static bool _validTimestamp(Object? value) => isServerUtcTimestamp(value);
 
   factory LogoutRecoveryReceipts.parse(
     Object? value,
