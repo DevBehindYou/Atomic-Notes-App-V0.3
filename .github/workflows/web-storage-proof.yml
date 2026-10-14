@@ -1,0 +1,49 @@
+name: Browser storage boundary proof
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: browser-storage-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser-storage:
+    name: Owned Chromium Hive commit and abort proof
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.8'
+          channel: stable
+          cache: true
+      - name: Resolve locked non-production dependencies
+        run: |
+          cp lib/authentication/auth_services/cred.example.dart lib/authentication/auth_services/cred.dart
+          flutter pub get --enforce-lockfile
+          echo "CHROME_EXECUTABLE=$(command -v google-chrome)" >> "$GITHUB_ENV"
+      - name: Verify bounded proof parser controls
+        run: python3 -m unittest discover -s tool -p 'test_web_storage_proof.py'
+      - name: Observe real Hive browser commit and late abort boundaries
+        env:
+          ATOMIC_WEB_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python3 tool/run_web_storage_proof.py
+      - name: Upload fixed outcomes only
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: sanitized-web-storage-proof
+          path: ci-web-storage-proof.json
+          if-no-files-found: error
+          retention-days: 1
