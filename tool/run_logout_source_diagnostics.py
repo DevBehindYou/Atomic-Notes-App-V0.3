@@ -15,6 +15,9 @@ FILES |= {'lib/utility/component/atomic_brand.dart', 'lib/page/home_page.dart',
           'lib/page/logout_screen.dart', 'lib/page/splash_screen.dart',
           'lib/theme/editorial.dart', 'lib/utility/component/logo_container.dart',
           'test/atomic_brand_test.dart', 'test/r2_logout_causal_test.dart'}
+FILES |= {'lib/api/user_sessions.dart', 'lib/page/endpage/user_sessions_page.dart',
+          'lib/main.dart', 'lib/page/settings_page.dart', 'test/user_sessions_test.dart',
+          'test/user_sessions_wire_integration_test.dart'}
 FILES |= {'lib/page/notes_editor_page.dart', 'lib/utility/component/notes_builder.dart',
           'test/home_page_test.dart', 'test/notes_editor_page_test.dart',
           'test/notes_ui_preview_test.dart'}
