@@ -171,8 +171,18 @@ class _HomePageState extends State<HomePage>
             onTap: () => FocusScope.of(context).unfocus(),
             behavior: HitTestBehavior.opaque,
             child: LayoutBuilder(
-              builder: (context, constraints) =>
-                  constraints.maxHeight < _shortScreen ? _scrollingBody : _body,
+              builder: (context, constraints) {
+                final fontSize = AppType.bodyMd.fontSize!;
+                final largeText =
+                    MediaQuery.textScalerOf(context).scale(fontSize) >
+                    fontSize * 1.6;
+                // A fixed welcome/search header can crowd out enlarged note
+                // cards. Reuse the scrolling header so notes remain reachable
+                // immediately, as well as after the four-second collapse.
+                return constraints.maxHeight < _shortScreen || largeText
+                    ? _scrollingBody
+                    : _body;
+              },
             ),
           ),
           floatingActionButton: selecting ? null : const _AddMenu(),

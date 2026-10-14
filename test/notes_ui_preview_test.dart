@@ -140,6 +140,7 @@ void main() {
       if (scene == 'home-collapsed') {
         await tester.pump(const Duration(seconds: 4));
         await tester.pump(const Duration(milliseconds: 300));
+        await tester.pumpAndSettle();
         expect(
           tester
               .getSize(find.byKey(const ValueKey('notes-welcome-section')))

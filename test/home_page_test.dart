@@ -140,15 +140,28 @@ void main() {
     testWidgets('background pause and resume reset date and welcome interval', (
       tester,
     ) async {
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
       var localTime = DateTime(2026, 10, 14, 20);
       await _open(tester, _source(), now: () => localTime);
       final welcome = find.byKey(const ValueKey('notes-welcome-section'));
       await tester.pump(const Duration(seconds: 3));
-      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      for (final state in [
+        AppLifecycleState.inactive,
+        AppLifecycleState.hidden,
+        AppLifecycleState.paused,
+      ]) {
+        tester.binding.handleAppLifecycleStateChanged(state);
+      }
       await tester.pump(const Duration(seconds: 10));
       expect(tester.getSize(welcome).height, greaterThan(0));
       localTime = DateTime(2026, 10, 15, 8);
-      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      for (final state in [
+        AppLifecycleState.hidden,
+        AppLifecycleState.inactive,
+        AppLifecycleState.resumed,
+      ]) {
+        tester.binding.handleAppLifecycleStateChanged(state);
+      }
       await tester.pump();
       expect(find.text('GOOD MORNING · 2026-10-15'), findsOneWidget);
       await tester.pump(const Duration(milliseconds: 3999));
@@ -279,18 +292,27 @@ void main() {
           expect(bounds.right, lessThanOrEqualTo(320));
           expect(find.byType(TextField).hitTestable(), findsOneWidget);
           expect(find.byType(Image).hitTestable(), findsOneWidget);
-          expect(find.byType(NotesBulder).first.hitTestable(), findsOneWidget);
+          final card = tester.getRect(find.byType(NotesBulder).first);
+          expect(
+            card.intersect(const Rect.fromLTWH(0, 0, 320, 700)).height,
+            greaterThan(0),
+          );
           expect(find.text('NEW NOTE').hitTestable(), findsOneWidget);
           expect(bloc.state.pending, 123);
         }
 
         expectUsable();
-        await tester.pump(const Duration(milliseconds: 3999));
-        expect(tester.getSize(welcome).height, initialHeight);
-        await tester.pump(const Duration(milliseconds: 1));
+        expect(find.byType(NestedScrollView), findsOneWidget);
+        await tester.drag(find.byType(NestedScrollView), const Offset(0, -500));
+        await tester.pump();
+        expect(find.byType(NotesBulder).first.hitTestable(), findsOneWidget);
+        await tester.pump(const Duration(seconds: 4));
         await tester.pump(const Duration(milliseconds: 300));
         expect(tester.getSize(welcome).height, 0);
+        await tester.drag(find.byType(NestedScrollView), const Offset(0, 500));
+        await tester.pumpAndSettle();
         expectUsable();
+        expect(find.byType(NotesBulder).first.hitTestable(), findsOneWidget);
       },
     );
 
