@@ -1,7 +1,7 @@
 import json
 import unittest
 
-from run_browser_open_proof import CASES, TEST_FILES, browser_cases, cleanup_receipts
+from run_browser_open_proof import CASES, TEST_FILES, browser_cases, cleanup_receipts, failure_stages
 
 
 def case_events(*, skipped=False, terminal=True):
@@ -20,6 +20,25 @@ def event_stream(events):
 
 
 class BrowserOpenProofParserTest(unittest.TestCase):
+    def test_failure_stage_only_retains_fixed_active_failed_case(self):
+        stream = event_stream([
+            {'type': 'testStart', 'test': {'id': 1, 'name': CASES[1]}},
+            {'type': 'print', 'testID': 1, 'message': 'ATOMIC_OPEN_STAGE_waiting_timeout'},
+            {'type': 'print', 'testID': 1, 'message': 'ATOMIC_OPEN_STAGE_private_unknown'},
+            {'type': 'print', 'testID': 44, 'message': 'ATOMIC_OPEN_STAGE_complete'},
+        ])
+        self.assertEqual(failure_stages(stream, {name: False for name in CASES}),
+                         {CASES[1]: 'waiting_timeout'})
+        self.assertEqual(failure_stages(stream, {name: True for name in CASES}), {})
+
+    def test_stage_after_case_completion_is_not_retained(self):
+        stream = event_stream([
+            {'type': 'testStart', 'test': {'id': 1, 'name': CASES[1]}},
+            {'type': 'testDone', 'testID': 1},
+            {'type': 'print', 'testID': 1, 'message': 'ATOMIC_OPEN_STAGE_complete'},
+        ])
+        self.assertEqual(failure_stages(stream, {name: False for name in CASES}), {})
+
     def test_cleanup_receipts_require_exact_active_case(self):
         events = []
         for number, name in enumerate(CASES):

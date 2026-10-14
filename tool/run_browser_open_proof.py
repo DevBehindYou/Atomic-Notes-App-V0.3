@@ -16,6 +16,31 @@ CASES = (
 )
 TEST_FILES = ('test/browser_open_lifecycle_test.dart',)
 STREAM_LIMIT = 20 * 1024 * 1024
+STAGES = frozenset(('holding', 'waiting_timeout', 'elapsed', 'still_held',
+                    'waiting_late_success', 'late_event_order', 'unblocked_delete', 'complete'))
+
+def failure_stages(stream, cases):
+    active, seen = {}, {}
+    for line in stream.splitlines():
+        try:
+            event = json.loads(line)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(event, dict):
+            continue
+        if event.get('type') == 'testStart':
+            test = event.get('test', {})
+            if isinstance(test, dict) and test.get('name') in CASES:
+                active[test['id']] = test['name']
+        elif event.get('type') == 'print':
+            name, message = active.get(event.get('testID')), event.get('message')
+            if name is not None and isinstance(message, str):
+                stage = message.removeprefix('ATOMIC_OPEN_STAGE_')
+                if message.startswith('ATOMIC_OPEN_STAGE_') and stage in STAGES:
+                    seen[name] = stage
+        elif event.get('type') == 'testDone':
+            active.pop(event.get('testID'), None)
+    return {name: seen[name] for name in CASES if not cases[name] and name in seen}
 
 def run_private(command, root, timeout):
     """Keep bounded CI-private output transient; never serialize its contents."""
@@ -165,6 +190,7 @@ def main():
         terminal, report['cases'] = browser_cases(stream)
         report['cleanup'] = cleanup_receipts(stream)
         if code or not terminal or not all(report['cases'].values()) or not all(report['cleanup'].values()):
+            report['failureStages'] = failure_stages(stream, report['cases'])
             raise ValueError('case or owned cleanup failure')
         report['phase'], report['outcome'] = 'complete', 'passed'
     except (OSError, ValueError, subprocess.TimeoutExpired):

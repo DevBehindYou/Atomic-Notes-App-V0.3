@@ -180,6 +180,12 @@ void main() {
     expect(await boundary.readSnapshot(), {'public': 'recovered'});
   }
 
+  void stage(String value) {
+    // Fixed public fixture stages only; never native messages or record data.
+    // ignore: avoid_print
+    print('ATOMIC_OPEN_STAGE_$value');
+  }
+
   setUp(() {
     name = 'atomic-open-${Random.secure().nextInt(1 << 30)}-${index++}';
     boundaries.clear();
@@ -228,16 +234,22 @@ void main() {
   test(
     'O2 native upgrade queue times out and closes late successful connection',
     () async {
+      stage('holding');
       await _holdUpgrade().toDart;
+      stage('waiting_timeout');
       final clock = Stopwatch()..start();
       await expectLater(
         BrowserRecordBoundary.open(name),
         throwsA(failure(BrowserRecordFailure.openTimedOut)),
       );
+      stage('elapsed');
       expect(clock.elapsedMilliseconds, greaterThanOrEqualTo(4900));
+      stage('still_held');
       expect(observed(), ['upgrade-held']);
       _release();
+      stage('waiting_late_success');
       await _wait('late-success'.toJS).toDart;
+      stage('late_event_order');
       expect(observed(), [
         'upgrade-held',
         'held-upgrade-complete',
@@ -245,7 +257,9 @@ void main() {
       ]);
       // This deletion must not be rescued by teardown closing observer handles:
       // a leaked late successful boundary connection would produce onblocked.
+      stage('unblocked_delete');
       expect((await _deleteWithoutClosing(name.toJS).toDart).toDart, isTrue);
+      stage('complete');
     },
     timeout: const Timeout(Duration(seconds: 25)),
   );
