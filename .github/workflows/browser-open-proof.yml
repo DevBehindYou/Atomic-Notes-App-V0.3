@@ -1,0 +1,49 @@
+name: Browser opening lifecycle proof
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: browser-open-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser-open:
+    name: Owned Chromium opening timeout and cleanup proof
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.8'
+          channel: stable
+          cache: true
+      - name: Resolve locked non-production dependencies
+        run: |
+          cp lib/authentication/auth_services/cred.example.dart lib/authentication/auth_services/cred.dart
+          flutter pub get --enforce-lockfile
+          echo "CHROME_EXECUTABLE=$(command -v google-chrome)" >> "$GITHUB_ENV"
+      - name: Verify bounded opening proof parser controls
+        run: python3 -m unittest discover -s tool -p 'test_browser_open_proof.py'
+      - name: Observe owned native opening timeout and synthetic denial boundaries
+        env:
+          ATOMIC_WEB_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python3 tool/run_browser_open_proof.py
+      - name: Upload fixed opening outcomes only
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: sanitized-browser-open-proof
+          path: ci-browser-open-proof.json
+          if-no-files-found: error
+          retention-days: 1
