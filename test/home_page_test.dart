@@ -112,8 +112,8 @@ void main() {
     testWidgets('four-second welcome collapses without removing controls', (
       tester,
     ) async {
-      final semantics = tester.ensureSemantics();
-      addTearDown(semantics.dispose);
+      // testWidgets owns its enabled semantics handle and disposes it before
+      // end-of-test verification; addTearDown would dispose an extra one late.
       await _open(tester, _source(), now: () => DateTime(2026, 10, 14, 20));
       _stage('mounted');
       final welcome = find.byKey(const ValueKey('notes-welcome-section'));

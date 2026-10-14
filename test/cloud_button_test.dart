@@ -168,8 +168,8 @@ void main() {
   testWidgets('manual connectivity check is busy without claiming an upload', (
     tester,
   ) async {
-    final semantics = tester.ensureSemantics();
-    addTearDown(semantics.dispose);
+    // Use the semantics handle owned by testWidgets. An extra handle disposed
+    // in addTearDown would outlive end-of-test handle verification.
     final connectivity = Completer<bool>();
     final source = FakeNotesSource();
     final bloc = NotesBloc(
