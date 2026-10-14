@@ -14,7 +14,8 @@ void main() {
     {'id': 'note-a', 'base_version': 3},
   ];
   const accepted = <Map<String, dynamic>>[
-    {'id': 'note-a', 'ok': true, 'version': 4, 'seq': 9},
+    {'id': 'note-a', 'ok': true, 'version': 4, 'seq': 9,
+      'updated_at': '2026-10-14T00:00:00.000Z'},
   ];
   const rejected = <Map<String, dynamic>>[
     {'id': 'note-a', 'ok': false, 'error': 'note_write_failed'},

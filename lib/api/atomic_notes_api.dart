@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:atomic_notes/api/logout_protocol.dart';
 import 'package:atomic_notes/api/logout_recovery.dart';
 import 'package:atomic_notes/api/user_sessions.dart';
+import 'package:atomic_notes/api/wire_timestamp.dart';
 
 import 'package:atomic_notes/authentication/auth_services/cred.dart';
 import 'package:atomic_notes/security/secure_options.dart';
@@ -283,10 +284,14 @@ class ApiClient {
 
   Future<PushReply> pushNotes(List<Map<String, dynamic>> rows,
       {required String requestId, bool instant = false}) async {
+    // Freeze identity/version primitives before transport awaits. Validation
+    // binds acknowledgements to these submitted rows, never later caller edits.
+    final sentRows = rows.map((row) => Map<String, dynamic>.from(row)).toList();
+    final expected = _pushExpectedVersions(sentRows);
     final data = await _request('POST', '/notes/push',
-      body: {'rows': rows, 'requestId': requestId, 'mode': instant ? 'instant' : 'standard'},
+      body: {'rows': sentRows, 'requestId': requestId, 'mode': instant ? 'instant' : 'standard'},
       timeout: const Duration(seconds: 90), acceptSyncFailure: true) as Map;
-    return _pushReply(data, requestId, instant);
+    return _pushReply(data, requestId, instant, expected);
   }
 
   Future<LogoutAdmission> beginLogoutSync(String attemptId, List<Map<String, dynamic>> batches) async {
@@ -323,33 +328,12 @@ class ApiClient {
   }
 
   Future<PushReply> pushLogoutNotes(LogoutEnvelope envelope) async {
+    final expected = _pushExpectedVersions(envelope.rows);
     final data = await _request('POST', '/notes/push', body: envelope.toWire(),
       timeout: const Duration(seconds: 90), acceptSyncFailure: true) as Map;
-    final reply = _pushReply(data, envelope.requestId, true);
-    final expected = envelope.rows.map((row) => row['id']).toSet();
-    final seen = <String>{};
-    if (reply.receipt == null || reply.results.length != expected.length) {
+    final reply = _pushReply(data, envelope.requestId, true, expected);
+    if (reply.receipt == null) {
       throw const FormatException('Invalid logout push receipt');
-    }
-    for (final result in reply.results) {
-      final id = result['id'];
-      if (id is! String ||
-          !expected.contains(id) ||
-          !seen.add(id) ||
-          result['ok'] is! bool) {
-        throw const FormatException('Invalid logout note receipt');
-      }
-      if (result['ok'] == true) {
-        final version = result['version'], updated = result['updated_at'];
-        if (version is! int ||
-            version <= 0 ||
-            updated is! String ||
-            DateTime.tryParse(updated) == null) {
-          throw const FormatException('Invalid logout acknowledgement');
-        }
-      } else if (result['error'] is! String) {
-        throw const FormatException('Invalid logout failure');
-      }
     }
     return reply;
   }
@@ -400,7 +384,60 @@ class ApiClient {
     // Session-revision fencing above also applies to completion receipt replay.
   }
 
-  PushReply _pushReply(Map data, String requestId, bool instant) {
+  Map<String, int> _pushExpectedVersions(List<Map<String, dynamic>> rows) {
+    final expected = <String, int>{};
+    for (final row in rows) {
+      final id = row['id'], version = row['base_version'];
+      if (id is! String || id.isEmpty || expected.containsKey(id) ||
+          version is! int || version < 0) {
+        throw const FormatException('Invalid submitted push identities');
+      }
+      expected[id] = version;
+    }
+    return expected;
+  }
+
+  List<Map<String, dynamic>> _pushResults(Object? value, Map<String, int> expected) {
+    if (value is! List || value.length != expected.length) {
+      throw const FormatException('Invalid push acknowledgement coverage');
+    }
+    final seen = <String>{}, results = <Map<String, dynamic>>[];
+    for (final entry in value) {
+      if (entry is! Map || !entry.keys.every((key) => key is String)) {
+        throw const FormatException('Invalid push acknowledgement');
+      }
+      final result = Map<String, dynamic>.from(entry);
+      final id = result['id'], ok = result['ok'];
+      if (id is! String || !expected.containsKey(id) || !seen.add(id) || ok is! bool) {
+        throw const FormatException('Invalid push acknowledgement identity');
+      }
+      final seq = result['seq'], unchanged = result['unchanged'];
+      if ((result.containsKey('seq') && (seq is! int || seq <= 0)) ||
+          (result.containsKey('unchanged') && unchanged is! bool)) {
+        throw const FormatException('Invalid push acknowledgement metadata');
+      }
+      if (ok) {
+        final version = result['version'];
+        final base = expected[id]!;
+        if (version is! int || version <= 0 || version < base ||
+            (version == base && unchanged != true) ||
+            !isServerUtcTimestamp(result['updated_at'])) {
+          throw const FormatException('Invalid push success acknowledgement');
+        }
+      } else {
+        final error = result['error'];
+        if (error is! String || error.trim().isEmpty) {
+          throw const FormatException('Invalid push failure acknowledgement');
+        }
+      }
+      results.add(Map<String, dynamic>.unmodifiable(result));
+    }
+    // Nothing escapes until the entire batch has passed validation.
+    return List<Map<String, dynamic>>.unmodifiable(results);
+  }
+
+  PushReply _pushReply(Map data, String requestId, bool instant, Map<String, int> expected) {
+    final results = _pushResults(data['results'], expected);
     final charged = data['charged'];
     final refunded = data['refunded'];
     // Old Servers omit receipts. Malformed optional billing metadata must not
@@ -410,7 +447,7 @@ class ApiClient {
         ? PushReceipt(charged: charged, refunded: refunded) : null;
     return PushReply(
       requestId: requestId, instant: instant,
-      results: List<Map<String, dynamic>>.from(data['results'] as List),
+      results: results,
       receipt: receipt,
     );
   }
