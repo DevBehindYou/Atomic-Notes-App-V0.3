@@ -55,6 +55,8 @@ const _hooks = r'''
     IDBDatabase.prototype.transaction = transaction;
     IDBObjectStore.prototype.put = put;
     prefix = '';
+    return IDBDatabase.prototype.transaction === transaction &&
+      IDBObjectStore.prototype.put === put && prefix === '';
   };
 })();
 ''';
@@ -72,7 +74,7 @@ external JSPromise<JSString> _settlement();
 @JS('atomicW2Remaining')
 external JSPromise<JSNumber> _remaining(JSString name);
 @JS('atomicW2Restore')
-external void _restore();
+external JSBoolean _restore();
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -91,12 +93,13 @@ void main() {
       await Hive.close();
       await Hive.deleteBoxFromDisk(name);
       expect((await _remaining(name.toJS).toDart).toDartInt, 0);
-      // Fixed receipt only: never include namespace, stored records or errors.
-      // ignore: avoid_print
-      print('ATOMIC_W2_CLEANUP_OK');
     } finally {
-      _restore();
+      expect(_restore().toDart, isTrue);
     }
+    // Receipt requires owned deletion AND verified native-method restoration.
+    // Never include namespace, stored records or errors.
+    // ignore: avoid_print
+    print('ATOMIC_W2_CLEANUP_OK');
   });
 
   List<dynamic> observed() => jsonDecode(_events().toDart) as List<dynamic>;
