@@ -43,6 +43,7 @@ class BrowserOwnerContext {
         epoch: value['epoch'] as int,
       );
       context._validate();
+      if (context._encode() != text) throw const FormatException();
       return context;
     } catch (_) {
       throw const BrowserRecordException(BrowserRecordFailure.malformedContext);

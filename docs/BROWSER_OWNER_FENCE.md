@@ -10,7 +10,9 @@ editing remains disabled.
 
 `BrowserOwnerContext` contains an opaque owner hint (1–128 UTF-8 bytes), schema 1
 and a monotonically increasing epoch (1 through 2^53−1). It is a local consistency
-token, not an authenticated identity. Its encoded record is stored at
+token, not an authenticated identity. Stored JSON must exactly match canonical
+writer encoding; duplicate keys, whitespace/order variations and ambiguous numeric
+representations are refused rather than guessed or migrated. Its encoded record is stored at
 `@atomic/context/v1` in the existing `records` store. Guarded data mutations
 refuse the complete `@atomic/` namespace, including deletes and add-only inserts.
 
@@ -60,12 +62,12 @@ request hashing, cloud call, authentication or vault operation is implemented.
 
 The existing three Hive characterization cases and thirteen native-boundary
 cases remain unchanged. The owned Chromium storage job additionally runs the
-fourteen exact F1–F14 cases in `test/browser_owner_fence_test.dart`. They cover
+fifteen exact F1–F15 cases in `test/browser_owner_fence_test.dart`. They cover
 reopen, missing/malformed context retention, competing first owners, stale reads
 and writes, reserved/invalid preflight with no transaction, same-owner transition,
 cross-owner/overflow refusal, both ordered two-connection races, exactly one
-concurrent transition winner, late abort rollback, domain caps and closed
-admission. Every case closes/deletes only its generated database, checks absence,
+concurrent transition winner, late abort rollback, domain caps closed
+admission and safe synchronous snapshot enqueue failure. Every case closes/deletes only its generated database, checks absence,
 and restores all test-only prototype hooks before its fixed cleanup receipt.
 
 `sanitized-browser-owner-proof/ci-browser-owner-proof.json` contains only twenty

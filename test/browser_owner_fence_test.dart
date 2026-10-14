@@ -16,11 +16,19 @@ const _hooks = r'''
   const put = IDBObjectStore.prototype.put;
   const add = IDBObjectStore.prototype.add;
   const create = IDBDatabase.prototype.createObjectStore;
+  const objectStore = IDBTransaction.prototype.objectStore;
+  let failSnapshot = false;
   let owned = '', events = [], requestCount = 0, enqueueCount = 0;
   let abortAt = 0, throwAt = 0, cancelError = false, failSchema = false;
   globalThis.atomicFenceReset = (name, fault, throwing, canceled, schema) => {
-    owned = name; events = []; requestCount = 0; enqueueCount = 0;
+    owned = name; events = []; requestCount = 0; enqueueCount = 0; failSnapshot = false;
     abortAt = fault; throwAt = throwing; cancelError = canceled; failSchema = schema;
+  };
+  globalThis.atomicFenceFailSnapshot = value => { failSnapshot = value; };
+  IDBTransaction.prototype.objectStore = function (...args) {
+    if (this.db.name === owned && this.mode === 'readonly' && failSnapshot)
+      throw new Error('public snapshot enqueue fault');
+    return objectStore.apply(this, args);
   };
   IDBDatabase.prototype.transaction = function (...args) {
     const txn = transaction.apply(this, args);
@@ -98,14 +106,19 @@ const _hooks = r'''
     IDBObjectStore.prototype.put = put;
     IDBObjectStore.prototype.add = add;
     IDBDatabase.prototype.createObjectStore = create;
+    IDBTransaction.prototype.objectStore = objectStore;
+    failSnapshot = false;
     owned = '';
     return IDBDatabase.prototype.transaction === transaction &&
       IDBObjectStore.prototype.put === put && IDBObjectStore.prototype.add === add &&
-      IDBDatabase.prototype.createObjectStore === create && owned === '';
+      IDBDatabase.prototype.createObjectStore === create &&
+      IDBTransaction.prototype.objectStore === objectStore && !failSnapshot && owned === '';
   };
 })();
 ''';
 
+@JS('atomicFenceFailSnapshot')
+external void _failSnapshot(JSBoolean value);
 @JS('atomicFenceReset')
 external void _reset(
   JSString name,
@@ -231,6 +244,11 @@ void main() {
       final guard = BrowserOwnerFence(boundary);
       for (final value in [
         'invalid-json',
+        '{"schema":1,"schema":1,"owner":"public-owner-a","epoch":1}',
+        '{"schema":1,"owner":"public-owner-a","owner":"public-owner-a","epoch":1}',
+        '{"schema":1.0,"owner":"public-owner-a","epoch":1}',
+        '{ "schema":1,"owner":"public-owner-a","epoch":1}',
+        '{"owner":"public-owner-a","schema":1,"epoch":1}',
         '{}',
         '{"schema":2,"owner":"public-owner-a","epoch":1}',
         '{"schema":1,"owner":"public-owner-a","epoch":0}',
@@ -556,4 +574,24 @@ void main() {
       throwsA(failure(BrowserRecordFailure.closed)),
     );
   });
+  test(
+    'F15 synchronous snapshot enqueue failure returns safe error and retains rows',
+    () async {
+      final boundary = await open();
+      final guard = BrowserOwnerFence(boundary);
+      await guard.bootstrap(a1);
+      await guard.commitBatch(expected: a1, puts: {'note': 'retained public'});
+      _failSnapshot(true.toJS);
+      await expectLater(
+        boundary.readSnapshot(),
+        throwsA(failure(BrowserRecordFailure.enqueue)),
+      );
+      await expectLater(
+        guard.readSnapshot(a1),
+        throwsA(failure(BrowserRecordFailure.enqueue)),
+      );
+      _failSnapshot(false.toJS);
+      expect(await guard.readSnapshot(a1), {'note': 'retained public'});
+    },
+  );
 }

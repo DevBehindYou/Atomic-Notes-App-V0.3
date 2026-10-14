@@ -22,6 +22,7 @@ CASES = (
     'F12 late abort rolls back bootstrap transition and guarded batch completely',
     'F13 guarded snapshot allows 256 domain rows and refuses 257 without truncation',
     'F14 closed connection refuses every guarded admission',
+    'F15 synchronous snapshot enqueue failure returns safe error and retains rows',
 )
 TEST_FILES = ('test/browser_owner_fence_test.dart',)
 STREAM_LIMIT = 20 * 1024 * 1024
