@@ -34,7 +34,9 @@ jobs:
           flutter pub get --enforce-lockfile
           echo "CHROME_EXECUTABLE=$(command -v google-chrome)" >> "$GITHUB_ENV"
       - name: Verify bounded proof parser controls
-        run: python3 -m unittest discover -s tool -p 'test_web_storage_proof.py'
+        run: |
+          python3 -m unittest discover -s tool -p 'test_web_storage_proof.py'
+          python3 -m unittest discover -s tool -p 'test_browser_record_proof.py'
       - name: Observe real Hive browser commit and late abort boundaries
         env:
           ATOMIC_WEB_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -45,5 +47,17 @@ jobs:
         with:
           name: sanitized-web-storage-proof
           path: ci-web-storage-proof.json
+          if-no-files-found: error
+          retention-days: 1
+      - name: Prove inactive native record commit and failure boundaries
+        env:
+          ATOMIC_WEB_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python3 tool/run_browser_record_proof.py
+      - name: Upload fixed inactive record outcomes only
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: sanitized-browser-record-proof
+          path: ci-browser-record-proof.json
           if-no-files-found: error
           retention-days: 1
