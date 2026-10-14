@@ -211,8 +211,13 @@ void main() {
       stage('render_safe_logout');
       expect(find.textContaining('Use Logout in Settings'), findsOneWidget);
       stage('inventory_visible');
-      await tester.ensureVisible(
+      // At 2x text this lazy ListView has not built the next card yet.
+      // Scroll as a user would, rather than looking up an absent element.
+      await tester.scrollUntilVisible(
         find.byKey(const ValueKey('session-$otherHandle')),
+        300,
+        scrollable: find.byType(Scrollable),
+        maxScrolls: 12,
       );
       stage('inventory_pump');
       await tester.pump();
