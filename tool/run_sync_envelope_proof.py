@@ -155,7 +155,7 @@ def main():
         'version': 1, 'scope': 'pure shared envelope actual locked Server, VM and CI-owned Chrome only',
         'sourceHead': head if re.fullmatch('[0-9a-f]{40}', head) else None,
         'serverHead': SERVER_HEAD, 'flutterVersion': None, 'chromeVersion': None,
-        'phase': 'guard', 'outcome': 'failed', 'sourceSha256': {},
+        'phase': 'guard', 'outcome': 'failed', 'failureCode': None, 'sourceSha256': {},
         'nodeExitCode': None, 'vmExitCode': None, 'chromeExitCode': None,
         'nodeVmWireExitCode': None, 'nodeChromeWireExitCode': None,
         'nodeCases': dict.fromkeys(node_cases, False),
@@ -206,12 +206,16 @@ def main():
             report['phase'] = 'actual-server-' + target + '-wire'
             code, oracle = run_wire_oracle(root, emitted_wires(stream, names))
             key = 'node' + target.title() + 'Wire'
-            report[key + 'ExitCode'], report[key + 'Cases'] = code, node_results(oracle, names)
+            report[key + 'ExitCode'] = code
+            report[key + 'Cases'] = node_results(oracle, names)
             if code or not all(report[key + 'Cases'].values()):
                 raise ValueError('actual emitted wire cases')
         report['phase'], report['outcome'] = 'complete', 'passed'
-    except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired):
-        pass
+    except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired) as error:
+        # A fixed category only; never serialize tool diagnostics or raw values.
+        reasons = {'wire shape', 'wire identity', 'wire bound', 'incomplete emitted wires',
+                   'Node schema', 'Node outcomes', 'actual emitted wire cases'}
+        report['failureCode'] = str(error) if type(error) is ValueError and str(error) in reasons else 'proof stage failed'
     (root / 'ci-sync-envelope-proof.json').write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
     print(json.dumps({'phase': report['phase'], 'outcome': report['outcome']}))
     return 0 if report['outcome'] == 'passed' else 1
