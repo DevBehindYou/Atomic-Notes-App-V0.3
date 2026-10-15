@@ -35,6 +35,7 @@ def case_results(stream, cases):
     """Fail closed for missing, skipped, repeated or foreign test events."""
     ids, names, completed = {}, set(), set()
     passed, ended, terminal = dict.fromkeys(cases, False), False, False
+    loader_seen = False
     for line in stream.splitlines():
         if len(line) > 256_000:
             raise ValueError('event bound')
@@ -45,6 +46,8 @@ def case_results(stream, cases):
         if not isinstance(event, dict):
             continue
         kind = event.get('type')
+        if kind == 'error':
+            raise ValueError('test error')
         if kind not in {'testStart', 'testDone', 'done'}:
             continue
         if ended:
@@ -60,6 +63,10 @@ def case_results(stream, cases):
             loading = name.startswith('loading ') and (path == TEST_FILE or path.endswith('/' + TEST_FILE))
             if number in ids or name in names or (name not in cases and not loading):
                 raise ValueError('duplicate or unknown case')
+            if loading:
+                if loader_seen:
+                    raise ValueError('duplicate loader')
+                loader_seen = True
             ids[number] = (name, loading)
             names.add(name)
         elif kind == 'testDone':

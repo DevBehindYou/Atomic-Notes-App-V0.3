@@ -61,6 +61,19 @@ class EnvelopeProofControls(unittest.TestCase):
         with self.assertRaises(ValueError):
             case_results(stream(loading + events()), CASES)
 
+    def test_error_events_and_second_loader_fail_closed(self):
+        for error in [{'type': 'error'}, {'type': 'error', 'testID': 999},
+                      {'type': 'error', 'testID': True}, {'type': 'error', 'testID': 0}]:
+            for values in [[error] + events(), events() + [error]]:
+                with self.assertRaises(ValueError):
+                    case_results(stream(values), CASES)
+        loading = [{'type': 'testStart', 'test': {'id': 100, 'name': 'loading /owned/' + TEST_FILE}},
+                   {'type': 'testDone', 'testID': 100, 'hidden': True, 'result': 'success', 'skipped': False},
+                   {'type': 'testStart', 'test': {'id': 101, 'name': 'loading /other/' + TEST_FILE}},
+                   {'type': 'testDone', 'testID': 101, 'hidden': True, 'result': 'success', 'skipped': False}]
+        with self.assertRaises(ValueError):
+            case_results(stream(loading + events()), CASES)
+
     def test_raw_diagnostics_are_discarded_and_events_bounded(self):
         diagnostic = json.dumps({'type': 'print', 'message': 'Public synthetic discarded diagnostic'})
         results = case_results('public fixture\n' + diagnostic + '\n' + stream(events()), CASES)[1]
