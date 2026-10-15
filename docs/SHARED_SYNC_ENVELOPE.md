@@ -36,7 +36,8 @@ tracked tests remain byte unchanged.
 
 `ci-sync-envelope-proof.json` schema version 1 records exact App/Server heads,
 Flutter/Chrome identity, SHA-256 bindings for source/tests/locks, process exit
-codes, and complete fixed-name boolean outcome maps (`nodeCases`, `vmCases`,
+codes, a bounded fixed-category `failureCode` (null on success), and complete
+fixed-name boolean outcome maps (`nodeCases`, `vmCases`,
 `chromeCases`, `nodeVmWireCases`, `nodeChromeWireCases`). Both Dart runtimes emit
 public synthetic wires only into transient private streams; Node reparses each
 actual wire through the locked Server schema and fingerprint function and

@@ -36,7 +36,7 @@ def case_results(stream, cases):
     ids, names, completed = {}, set(), set()
     passed, ended, terminal = dict.fromkeys(cases, False), False, False
     loader_seen = False
-    for line in stream.splitlines():
+    for line in stream.split('\n'):
         if len(line) > 256_000:
             raise ValueError('event bound')
         try:
@@ -106,7 +106,9 @@ def node_results(stream, cases):
 
 def emitted_wires(stream, cases):
     active, wires = {}, {}
-    for line in stream.splitlines():
+    # JSON reporter records use LF. Unicode line/paragraph separators can be
+    # literal content in public fixture wires and must not split a record.
+    for line in stream.split('\n'):
         try:
             event = json.loads(line)
         except (ValueError, TypeError):

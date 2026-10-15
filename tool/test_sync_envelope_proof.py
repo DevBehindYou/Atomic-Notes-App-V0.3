@@ -102,6 +102,12 @@ class EnvelopeProofControls(unittest.TestCase):
                 {'type': 'testDone', 'testID': number},
             ])
         self.assertEqual(len(emitted_wires(stream(values), names)), 16)
+        unicode_values = [dict(value) for value in values]
+        unicode_wire = '{"body":"\u2028\u2029\u0085"}'
+        unicode_values[1]['message'] = WIRE_MARKER + json.dumps(
+            {'case': names[0], 'wire': unicode_wire}, ensure_ascii=False)
+        unicode_stream = '\n'.join(json.dumps(value, ensure_ascii=False) for value in unicode_values)
+        self.assertEqual(emitted_wires(unicode_stream, names)[0]['wire'], unicode_wire)
         for variant in [values[3:], values[1:], values + [values[1]], values[:2] + [values[1]] + values[2:]]:
             with self.assertRaises(ValueError):
                 emitted_wires(stream(variant), names)
