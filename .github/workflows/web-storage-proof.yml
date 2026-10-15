@@ -17,7 +17,7 @@ jobs:
   browser-storage:
     name: Owned Chromium Hive commit and abort proof
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
         with:
@@ -49,6 +49,34 @@ jobs:
         with:
           name: sanitized-web-storage-proof
           path: ci-web-storage-proof.json
+          if-no-files-found: error
+          retention-days: 1
+      - name: Checkout fixed pure Server envelope authority
+        uses: actions/checkout@v5
+        with:
+          repository: DevBehindYou/Atomic-Notes-Server-V0.3
+          ref: 95070c0cff488e4984bd669d31bfdf348ec74aca
+          path: server-fixture
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: server-fixture/package-lock.json
+      - name: Resolve locked pure Server proof dependencies
+        run: npm ci --prefix server-fixture
+      - name: Verify bounded shared envelope proof controls
+        run: python3 -m unittest discover -s tool -p 'test_sync_envelope_proof.py'
+      - name: Prove pure shared envelope with actual Server VM and owned Chrome
+        env:
+          ATOMIC_WEB_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python3 tool/run_sync_envelope_proof.py
+      - name: Upload fixed shared envelope outcomes only
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: sanitized-sync-envelope-proof
+          path: ci-sync-envelope-proof.json
           if-no-files-found: error
           retention-days: 1
       - name: Prove inactive native record commit and failure boundaries
