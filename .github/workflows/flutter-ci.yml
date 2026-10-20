@@ -195,6 +195,9 @@ jobs:
       - name: Resolve Flutter dependencies
         run: flutter pub get --enforce-lockfile | tee ci-logs/pub-get.log
 
+      - name: Verify pinned mascot catalog and default assets
+        run: dart run tool/verify_mascot_catalog.dart
+
       - name: Analyze (errors, warnings, and infos are fatal)
         id: analyze
         run: flutter analyze --no-pub --fatal-warnings --fatal-infos 2>&1 | tee ci-logs/analyze.log
