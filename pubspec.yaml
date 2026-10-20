@@ -126,6 +126,7 @@ flutter:
   # NOTE: `- assets/` only includes files directly in assets/, not subfolders,
   # so the Atomic icon sets are listed explicitly.
   assets:
+    - assets/Atomic Notes Mascot/061 Cubie/
     - assets/
     - assets/new-atomic-icons/png/atomic-icon-on-light.png
     - assets/new-atomic-icons/png/atomic-icon-on-dark.png
