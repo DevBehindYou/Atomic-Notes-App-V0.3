@@ -22,6 +22,25 @@ class Source implements MascotFrameSource {
 }
 
 void main() {
+  testWidgets('failed artwork retains status activation on retry',
+      (tester) async {
+    var activations = 0;
+    await tester.pumpWidget(MaterialApp(
+        home: MascotView(
+            mascot: MascotCatalog.defaultMascot,
+            resolver: Resolver(),
+            frameSource: Source(),
+            semanticActionLabel: 'show sync status and change animation',
+            onAdvance: () => activations++)));
+    for (var i = 0; i < 8; i++) {
+      await tester.pump();
+    }
+    expect(find.byType(TextButton), findsOneWidget);
+    await tester.tap(find.byType(TextButton));
+    expect(activations, 1);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets(
       'hidden route performs no decode; keyboard and tap have same action and 48 target',
       (tester) async {

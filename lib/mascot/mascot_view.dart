@@ -103,6 +103,11 @@ class _MascotViewState extends State<MascotView> with WidgetsBindingObserver {
     widget.onAdvance?.call();
   }
 
+  void _retry() {
+    _player.retry();
+    widget.onAdvance?.call();
+  }
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
@@ -123,8 +128,11 @@ class _MascotViewState extends State<MascotView> with WidgetsBindingObserver {
           width: widget.size < 48 ? 48 : widget.size,
           height: widget.size < 48 ? 48 : widget.size,
           child: TextButton(
-              onPressed: _player.retry,
-              child: Text('${widget.mascot.displayName} unavailable. Retry')));
+              onPressed: _retry,
+              child: Text('${widget.mascot.displayName} unavailable. Retry',
+                  semanticsLabel: widget.onAdvance == null
+                      ? null
+                      : '${widget.mascot.displayName} unavailable. Retry and ${widget.semanticActionLabel}')));
     }
     final label = '${widget.mascot.displayName}, ${widget.semanticActionLabel}';
     final art = RepaintBoundary(
@@ -137,7 +145,7 @@ class _MascotViewState extends State<MascotView> with WidgetsBindingObserver {
                   if (_player.state == MascotPlaybackState.failed) {
                     return Center(
                         child: TextButton(
-                            onPressed: _player.retry,
+                            onPressed: _retry,
                             child: const Text('Mascot unavailable. Retry')));
                   }
                   return ColoredBox(
