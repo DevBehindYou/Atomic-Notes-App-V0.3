@@ -1,0 +1,52 @@
+name: Device acceptance builds
+on:
+  pull_request:
+    paths:
+      - 'tool/device_acceptance/**'
+      - 'android/app/src/debug/**'
+      - 'android/app/src/profile/**'
+      - '.github/workflows/device-acceptance.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    name: Acceptance ${{ matrix.mode }} APK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [debug, profile]
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.8'
+          channel: stable
+          cache: true
+      - name: Resolve locked dependencies and public configuration
+        run: |
+          cp lib/authentication/auth_services/cred.example.dart lib/authentication/auth_services/cred.dart
+          flutter pub get --enforce-lockfile
+      - name: Verify guarded acceptance bootstrap
+        run: flutter test --no-pub test/mascot/device_acceptance_guard_test.dart
+      - name: Build localhost-only synthetic acceptance target
+        run: >-
+          flutter build apk --${{ matrix.mode }} --no-pub
+          --target tool/device_acceptance/main.dart
+          --build-number 2010
+          --dart-define=ATOMIC_DEVICE_ACCEPTANCE=true
+          --dart-define=API_BASE_URL=http://127.0.0.1:24139/api
+      - uses: actions/upload-artifact@v6
+        with:
+          name: atomic-notes-device-acceptance-${{ matrix.mode }}
+          path: build/app/outputs/flutter-apk/app-${{ matrix.mode }}.apk
+          if-no-files-found: error
+          retention-days: 1
