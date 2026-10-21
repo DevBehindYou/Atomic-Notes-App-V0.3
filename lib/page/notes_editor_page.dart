@@ -293,7 +293,9 @@ class _NotesCreaterPageState extends State<NotesCreaterPage> {
                                 textCapitalization:
                                     TextCapitalization.sentences,
                                 maxLines: null,
-                                style: AppType.displayLg,
+                                style: AppType.displayLg.copyWith(
+                                  fontSize: AppType.displayLg.fontSize! / 2,
+                                ),
                                 cursorColor: AppColors.signal,
                                 decoration: _decoration('Title'),
                                 onChanged: (_) => setState(() {}),
