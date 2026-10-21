@@ -1,19 +1,20 @@
 import 'package:flutter/material.dart';
+import '../../mascot/mascot_catalog.dart';
+import '../../mascot/mascot_runtime.dart';
+import '../../mascot/mascot_view.dart';
 
 /// Runtime branding paths are intentionally separate from native/store artwork.
 abstract final class AtomicBrandAssets {
   static const lightLogo =
       'assets/new-atomic-icons/png/atomic-icon-on-light.png';
   static const darkLogo = 'assets/new-atomic-icons/png/atomic-icon-on-dark.png';
-  static const worker = 'assets/Atomic Icons/devbehindyou-worker.gif';
-  static const dotgrid = 'assets/Atomic Icons/dotgrid-blink-transparent.gif';
-  static const workerStatic =
-      'assets/new-atomic-icons/png/devbehindyou-worker-static.png';
-  static const dotgridStatic = 'assets/new-atomic-icons/png/dotgrid-static.png';
 }
 
 int _decodeWidth(BuildContext context, double size) =>
-    (size * MediaQuery.devicePixelRatioOf(context)).ceil().clamp(1, 1024).toInt();
+    (size * MediaQuery.devicePixelRatioOf(context))
+        .ceil()
+        .clamp(1, 1024)
+        .toInt();
 
 class AtomicBrandMark extends StatelessWidget {
   const AtomicBrandMark({super.key, this.size = 44, this.onDark = false});
@@ -23,54 +24,56 @@ class AtomicBrandMark extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Image.asset(
-    onDark ? AtomicBrandAssets.darkLogo : AtomicBrandAssets.lightLogo,
-    width: size,
-    height: size,
-    cacheWidth: _decodeWidth(context, size),
-    fit: BoxFit.contain,
-    excludeFromSemantics: true,
-    filterQuality: FilterQuality.medium,
-  );
-}
-
-/// DevBehindYou is the primary mascot; dotgrid is a secondary activity accent.
-/// Decode at display resolution, and use static frames for reduced motion and
-/// inactive routes. Neither rendering nor animation gates navigation or sync.
-class DevBehindYouMascot extends StatelessWidget {
-  const DevBehindYouMascot({super.key, this.size = 72, this.secondary = false});
-
-  final double size;
-  final bool secondary;
-
-  @override
-  Widget build(BuildContext context) {
-    final still =
-        MediaQuery.disableAnimationsOf(context) ||
-        !TickerMode.valuesOf(context).enabled;
-    final fallback = secondary
-        ? AtomicBrandAssets.dotgridStatic
-        : AtomicBrandAssets.workerStatic;
-    final source = still
-        ? fallback
-        : secondary
-        ? AtomicBrandAssets.dotgrid
-        : AtomicBrandAssets.worker;
-    return Image.asset(
-      source,
-      width: size,
-      height: size,
-      cacheWidth: _decodeWidth(context, size),
-      fit: BoxFit.contain,
-      excludeFromSemantics: true,
-      filterQuality: FilterQuality.medium,
-      errorBuilder: (context, error, stackTrace) => Image.asset(
-        fallback,
+        onDark ? AtomicBrandAssets.darkLogo : AtomicBrandAssets.lightLogo,
         width: size,
         height: size,
         cacheWidth: _decodeWidth(context, size),
         fit: BoxFit.contain,
         excludeFromSemantics: true,
-      ),
+        filterQuality: FilterQuality.medium,
+      );
+}
+
+/// Displays only the supplied catalog artwork. Small accents remain still.
+class DevBehindYouMascot extends StatelessWidget {
+  const DevBehindYouMascot({
+    super.key,
+    this.size = 72,
+    this.secondary = false,
+    this.interactive = false,
+  });
+  final double size;
+  final bool secondary;
+  final bool interactive;
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = MascotScope.maybeOf(context);
+    Widget artwork() {
+      final preferences = scope?.preferences.state.desired;
+      final desired = MascotCatalog.findById(preferences?.selectedId ?? '');
+      final mascot = desired ?? MascotCatalog.defaultMascot;
+      return SizedBox(
+        width: size,
+        height: size,
+        child: ClipRect(
+            child: MascotView(
+          mascot: mascot,
+          resolver: scope?.resolver ?? BundledMascotResolver.instance,
+          size: size,
+          interactive: interactive,
+          animationsEnabled: !secondary &&
+              size >= 64 &&
+              (preferences?.animationsEnabled ?? true),
+          routeVisible: ModalRoute.of(context)?.isCurrent ?? true,
+        )),
+      );
+    }
+
+    if (scope == null) return artwork();
+    return StreamBuilder(
+      stream: scope.preferences.stream,
+      builder: (context, _) => artwork(),
     );
   }
 }

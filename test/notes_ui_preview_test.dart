@@ -22,11 +22,13 @@ void main() {
   setUpAll(() async {
     await (FontLoader(
       'MaterialIcons',
-    )..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'))).load();
+    )..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf')))
+        .load();
     for (final family in ['BebasNeue', 'HankenGrotesk', 'JetBrainsMono']) {
       await (FontLoader(
         family,
-      )..addFont(rootBundle.load('assets/fonts/$family-Regular.ttf'))).load();
+      )..addFont(rootBundle.load('assets/fonts/$family-Regular.ttf')))
+          .load();
     }
   });
 
@@ -94,9 +96,9 @@ void main() {
       });
       final homeScene = scene.startsWith('home') || scene == 'cloud-busy';
       Widget notesHome() => BlocProvider<NotesBloc>.value(
-        value: bloc,
-        child: HomePage(now: () => DateTime(2026, 10, 14, 20)),
-      );
+            value: bloc,
+            child: HomePage(now: () => DateTime(2026, 10, 14, 20)),
+          );
       await tester.pumpWidget(
         MaterialApp(
           theme: AppTheme.light,
@@ -106,36 +108,46 @@ void main() {
           ),
           home: homeScene
               ? (scene == 'cloud-busy'
-                    ? Scaffold(
+                  ? Scaffold(
+                      backgroundColor: AppColors.paper,
+                      appBar: AppBar(
                         backgroundColor: AppColors.paper,
-                        appBar: AppBar(
-                          backgroundColor: AppColors.paper,
-                          title: const Text('Atomic Notes'),
-                          actions: [
-                            CloudButton(
-                              ico: 'assets/sync.svg',
-                              action: () {},
-                              onLongPress: () {},
-                              clr: 0,
-                              isLoading: true,
-                            ),
-                            const SizedBox(width: AppSpace.md),
-                          ],
-                        ),
-                        body: notesHome(),
-                      )
-                    : notesHome())
+                        title: const Text('Atomic Notes'),
+                        actions: [
+                          CloudButton(
+                            ico: 'assets/sync.svg',
+                            action: () {},
+                            onLongPress: () {},
+                            clr: 0,
+                            isLoading: true,
+                          ),
+                          const SizedBox(width: AppSpace.md),
+                        ],
+                      ),
+                      body: notesHome(),
+                    )
+                  : notesHome())
               : NotesCreaterPage(note: scene == 'text' ? featured : checklist),
         ),
       );
       await tester.pumpAndSettle();
       if (homeScene) {
-        final image = tester.widget<Image>(find.byType(Image));
-        await tester.runAsync(
-          () => precacheImage(image.image, key.currentContext!),
+        final artwork = find.descendant(
+          of: find.byKey(const ValueKey('mascot-character')),
+          matching: find.byType(RawImage),
         );
-        await tester.pumpAndSettle();
-        expect(tester.widget<RawImage>(find.byType(RawImage)).image, isNotNull);
+        // Native codec work must run outside the test's fake async clock.
+        for (var attempt = 0; attempt < 100; attempt++) {
+          await tester.runAsync(
+              () => Future<void>.delayed(const Duration(milliseconds: 20)));
+          await tester.pump();
+          if (artwork
+              .evaluate()
+              .any((element) => (element.widget as RawImage).image != null)) {
+            break;
+          }
+        }
+        expect(tester.widget<RawImage>(artwork).image, isNotNull);
       }
       if (scene == 'home-collapsed') {
         await tester.pump(const Duration(seconds: 4));

@@ -461,8 +461,7 @@ class _FilterAndSearch extends StatelessWidget {
   }
 }
 
-/// DevBehindYou, the app's mascot. A tap opens a small chat bubble saying how sync
-/// stands; it closes by itself after a few seconds or on a second tap.
+/// Artwork changes animation on touch; the adjacent button shows live sync status.
 class _Mascot extends StatefulWidget {
   const _Mascot();
 
@@ -550,16 +549,21 @@ class _MascotState extends State<_Mascot> {
             ),
           ),
         ),
-        // Hard-clipped: fixed regardless of device text scale or the GIF's own
-        // frame size, so it can never paint past its box onto the search field.
-        child: GestureDetector(
-          onTap: _onTap,
-          behavior: HitTestBehavior.opaque,
-          child: Semantics(
-            label: 'DevBehindYou sync status',
-            button: true,
-            child: const ClipRect(child: DevBehindYouMascot()),
-          ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const ClipRect(
+              key: ValueKey('mascot-character'),
+              child: DevBehindYouMascot(interactive: true),
+            ),
+            IconButton(
+              key: const ValueKey('mascot-sync-status'),
+              tooltip: 'Sync status',
+              constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+              onPressed: _onTap,
+              icon: const Icon(Icons.sync, size: 22),
+            ),
+          ],
         ),
       ),
     );
@@ -576,7 +580,9 @@ class _ChatBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     return TweenAnimationBuilder<double>(
       tween: Tween(begin: 0, end: 1),
-      duration: const Duration(milliseconds: 180),
+      duration: MediaQuery.disableAnimationsOf(context)
+          ? Duration.zero
+          : const Duration(milliseconds: 180),
       curve: Curves.easeOutCubic,
       builder: (context, t, child) => Opacity(
         opacity: t,
