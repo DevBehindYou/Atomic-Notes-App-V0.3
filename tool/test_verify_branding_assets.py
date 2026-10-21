@@ -63,6 +63,16 @@ def transparent_store() -> None:
     substitution(path,png(w,h,pixels),"store_icon")
 
 
+def light_launcher_background() -> None:
+    path=verifier.RES/"values/ic_launcher_background.xml"
+    substitution(path,verifier.bounded(path).replace(b"#15171B",b"#F4F5F1"),"dark_launcher_style")
+
+
+def thin_launcher_orbits() -> None:
+    path=verifier.RES/"drawable/atomic_launcher_foreground.xml"
+    substitution(path,verifier.bounded(path).replace(b'strokeWidth="15"',b'strokeWidth="11"'),"dark_launcher_style")
+
+
 def wrong_legacy_size() -> None:
     path=verifier.RES/"mipmap-mdpi/launcher_icon.png"
     substitution(path,png(49,49,b"\xff\xff\xff\xff"*(49*49)),"android_launcher")
@@ -112,7 +122,8 @@ def manifest_path_escape() -> None:
 def main() -> None:
     controls=(valid_library,png_crc_corruption,adaptive_outside_safe_zone,colored_monochrome,
               transparent_store,wrong_legacy_size,native_monochrome_alias,source_asset_tamper,
-              raw_exception_hidden,decode_bound,manifest_path_escape)
+              raw_exception_hidden,decode_bound,manifest_path_escape,
+              light_launcher_background,thin_launcher_orbits)
     outcomes={}
     for control in controls:
         try:
