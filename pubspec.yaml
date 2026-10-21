@@ -142,6 +142,10 @@ flutter:
     - assets/
     - assets/new-atomic-icons/png/atomic-icon-on-light.png
     - assets/new-atomic-icons/png/atomic-icon-on-dark.png
+    - assets/new-atomic-icons/gif/atomic-spin-on-light.gif
+    - assets/new-atomic-icons/gif/atomic-spin-on-dark.gif
+    - assets/atomic-splash/atomic-spin-on-light-static.png
+    - assets/atomic-splash/atomic-spin-on-dark-static.png
     - assets/Atomic Icons/atom-formation.gif
     - assets/Atomic Icons/atom-to-coin.gif
     - assets/Atomic Icons/atomic-notes-orbit.gif

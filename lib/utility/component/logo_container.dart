@@ -5,7 +5,8 @@ import 'package:flutter/material.dart';
 /// Atomic Notes wordmark lockup using the current DevBehindYou icon library.
 class LogoContainer extends StatelessWidget {
   final bool showTagline;
-  const LogoContainer({super.key, this.showTagline = true});
+  final Widget? mark;
+  const LogoContainer({super.key, this.showTagline = true, this.mark});
 
   @override
   Widget build(BuildContext context) {
@@ -16,7 +17,7 @@ class LogoContainer extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           mainAxisSize: MainAxisSize.min,
           children: [
-            const InkLogoMark(size: 46),
+            mark ?? const InkLogoMark(size: 46),
             const SizedBox(width: AppSpace.md),
             Column(
               mainAxisSize: MainAxisSize.min,
