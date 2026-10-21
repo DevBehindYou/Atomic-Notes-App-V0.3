@@ -47,7 +47,7 @@ Future<void> _open(
 }
 
 Future<void> _tap(WidgetTester tester) async {
-  await tester.tap(find.byKey(const ValueKey('mascot-sync-status')));
+  await tester.tap(find.byKey(const ValueKey('mascot-character')));
   await tester.pump();
 }
 

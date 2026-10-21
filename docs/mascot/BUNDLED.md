@@ -8,7 +8,7 @@ The complete source artwork totals 18,721,297 bytes (17.85 MiB), 16,513,252 byte
 
 ## Behavior and boundaries
 
-Cubie is the default. Settings offers every character offline and saves the favorite and motion setting only on this device. One selected hero animates; list cards display still first frames and are built lazily. Home touch changes animation within the favorite. The adjacent named Sync status button retains the existing live NotesBloc status bubble and deadline; neither action starts note, account, or Energy operations.
+Cubie is the default. Settings offers every character offline and saves the favorite and motion setting only on this device. One selected hero animates; list cards display still first frames and are built lazily. Touching the Home character changes animation within the favorite and opens the existing live NotesBloc status bubble. Keyboard and assistive activation use the same action, named "show sync status and change animation". The bubble retains its three-second deadline and second-tap dismissal. No adjacent reload button is shown, and mascot activation starts no note, sync, account or Energy operation.
 
 Playback uses a shuffled bag of four original animations, encoded timing and bounded image ownership. Reduced motion, hidden routes, TickerMode, and background lifecycle suspend animation. Small activity accents stay still. Startup preference reads do not block the child or note loading. Future preference schemas remain read-only, with original data preserved.
 

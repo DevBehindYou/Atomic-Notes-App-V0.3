@@ -41,10 +41,14 @@ class DevBehindYouMascot extends StatelessWidget {
     this.size = 72,
     this.secondary = false,
     this.interactive = false,
+    this.onAdvance,
+    this.semanticActionLabel = 'change animation',
   });
   final double size;
   final bool secondary;
   final bool interactive;
+  final VoidCallback? onAdvance;
+  final String semanticActionLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -62,6 +66,8 @@ class DevBehindYouMascot extends StatelessWidget {
           resolver: scope?.resolver ?? BundledMascotResolver.instance,
           size: size,
           interactive: interactive,
+          onAdvance: onAdvance,
+          semanticActionLabel: semanticActionLabel,
           animationsEnabled: !secondary &&
               size >= 64 &&
               (preferences?.animationsEnabled ?? true),
