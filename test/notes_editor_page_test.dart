@@ -1,4 +1,5 @@
 import 'package:atomic_notes/database/note.dart';
+import 'package:atomic_notes/database/note_document.dart';
 import 'package:atomic_notes/page/notes_editor_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -99,27 +100,50 @@ void main() {
     expect(find.byType(NotesCreaterPage), findsNothing);
   });
 
-  testWidgets('editor_mode_switch_preserves_latest_rows', (tester) async {
-    final note = Note(id: 'existing', body: 'Old first\nSecond');
+  testWidgets('checklist button adds after current text without converting it',
+      (tester) async {
+    final note = Note(id: 'existing', body: 'First\nSecond');
     await openEditor(tester, note);
-    await tester.tap(find.byTooltip('Switch to checklist'));
+    final body = tester.widget<TextField>(field('note-body')).controller!;
+    await tester.tap(field('note-body'));
+    body.selection = const TextSelection.collapsed(offset: 2);
+    await tester.tap(find.byTooltip('Add checklist line'));
     await tester.pumpAndSettle();
-    await tester.enterText(field('note-item-0'), 'Edited first');
+    expect(body.text, 'First');
+    expect(tester.widget<TextField>(field('note-text-2')).controller!.text,
+        'Second');
+    await tester.enterText(field('note-item-1'), 'Task');
     await tester.tap(find.byType(Checkbox).first);
-    await tester.tap(find.byTooltip('Switch to text'));
-    await tester.pumpAndSettle();
-    expect(
-      tester.widget<TextField>(field('note-body')).controller!.text,
-      'Edited first\nSecond',
-    );
-    await tester.tap(find.byTooltip('Switch to checklist'));
-    await tester.pumpAndSettle();
-    expect(tester.widget<Checkbox>(find.byType(Checkbox).first).value, isTrue);
     await tester.tap(find.text('Done'));
     await tester.pumpAndSettle();
-    expect(note.kind, NoteKind.todo);
-    expect(note.items.map((item) => item.text), ['Edited first', 'Second']);
-    expect(note.items.first.done, isTrue);
+    expect(note.kind, NoteKind.text);
+    expect(NoteDocument.isEncoded(note), isTrue);
+    expect(note.body, 'First\n- [x] Task\nSecond');
+    await openEditor(tester, note);
+    expect(tester.widget<Checkbox>(find.byType(Checkbox).first).value, isTrue);
+    expect(
+        tester.widget<TextField>(field('note-body')).controller!.text, 'First');
+    expect(tester.widget<TextField>(field('note-text-2')).controller!.text,
+        'Second');
+  });
+
+  testWidgets('text button after checklist preserves done and duplicate rows',
+      (tester) async {
+    final note = Note(id: 'todo', kind: NoteKind.todo, items: [
+      TodoItem(text: 'Same', done: true),
+      TodoItem(text: ''),
+      TodoItem(text: 'Same'),
+    ]);
+    await openEditor(tester, note);
+    await tester.tap(field('note-item-0'));
+    await tester.tap(find.byTooltip('Add text line'));
+    await tester.pumpAndSettle();
+    await tester.enterText(field('note-text-1'), 'Context');
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
+    expect(note.kind, NoteKind.text);
+    expect(NoteDocument.isEncoded(note), isTrue);
+    expect(note.body, '- [x] Same\nContext\n- [ ] \n- [ ] Same');
   });
 
   testWidgets('editor_copy_blank_row_does_not_mutate_draft', (tester) async {
@@ -151,13 +175,58 @@ void main() {
     await openEditor(tester, note);
     await tester.tap(find.byTooltip('Copy note'));
     await tester.pump();
-    expect(copied, '[ ] First\n[x] Last');
+    expect(copied, '[ ] First\n[ ] \n[x] Last');
     expect(note.items, hasLength(3));
     await tester.enterText(field('note-item-2'), 'Edited last');
     await tester.tap(find.text('Done'));
     await tester.pumpAndSettle();
-    expect(note.items.map((item) => item.text), ['First', 'Edited last']);
+    expect(note.items.map((item) => item.text), ['First', '', 'Edited last']);
     expect(note.items.last.done, isTrue);
+  });
+
+  testWidgets('mixed draft copy and discard leave original untouched',
+      (tester) async {
+    final note = Note(id: 'existing', body: 'Intro');
+    final before = note.toMap();
+    String? copied;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copied = (call.arguments as Map)['text'] as String;
+        }
+        return null;
+      },
+    );
+    addTearDown(() => tester.binding.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, null));
+    await openEditor(tester, note);
+    await tester.tap(field('note-body'));
+    await tester.tap(find.byTooltip('Add checklist line'));
+    await tester.pumpAndSettle();
+    await tester.enterText(field('note-item-1'), 'Task');
+    await tester.tap(find.byTooltip('Copy note'));
+    await tester.pump();
+    expect(copied, 'Intro\n- [ ] Task');
+    await tester.tap(find.byTooltip('Back to notes'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Discard'));
+    await tester.pumpAndSettle();
+    expect(note.toMap(), before);
+  });
+
+  testWidgets('unchanged legacy checklist Done retains body and blank items',
+      (tester) async {
+    final note = Note(
+        id: 'existing',
+        kind: NoteKind.todo,
+        body: 'Legacy\nbody',
+        items: [TodoItem(text: ''), TodoItem(text: 'Same', done: true)]);
+    final before = note.contentSig;
+    await openEditor(tester, note);
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
+    expect(note.contentSig, before);
   });
 
   testWidgets('editor_small_keyboard_large_text', (tester) async {

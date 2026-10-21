@@ -1,4 +1,5 @@
 import 'package:atomic_notes/database/note.dart';
+import 'package:atomic_notes/database/note_document.dart';
 import 'package:atomic_notes/database/note_quota.dart';
 import 'package:atomic_notes/database/notes_source.dart';
 import 'package:atomic_notes/state/ui_message.dart';
@@ -32,7 +33,8 @@ class NotesBloc extends Bloc<NotesEvent, NotesState> {
     on<NoteSelectionAllToggled>(_onSelectionAllToggled);
     on<NotesDeleteSelected>(_onDeleteSelected);
     on<NoteSaved>(_onNoteSaved);
-    on<NoteItemToggled>(_onItemToggled);
+    on<NoteItemToggled>(_onItemToggled,
+        transformer: (events, mapper) => events.asyncExpand(mapper));
     on<NotesSyncRequested>(_onSyncRequested);
     _source.addListener(_sourceChanged);
   }
@@ -165,9 +167,25 @@ class NotesBloc extends Bloc<NotesEvent, NotesState> {
 
   Future<void> _onItemToggled(
       NoteItemToggled event, Emitter<NotesState> emit) async {
-    final item = event.note.items[event.index];
+    final current = _source.byId(event.note.id);
+    if (current == null || current.deleted) return;
+    if (current.kind == NoteKind.text) {
+      final document = NoteDocument.fromNote(current);
+      if (event.index < 0 ||
+          event.index >= document.lines.length ||
+          !document.lines[event.index].isChecklist) {
+        return;
+      }
+      document.setDone(event.index, !document.lines[event.index].done);
+      await _source.save(document.toNote(current));
+      return;
+    }
+    if (event.index < 0 || event.index >= current.items.length) {
+      return;
+    }
+    final item = current.items[event.index];
     item.done = !item.done;
-    await _source.save(event.note);
+    await _source.save(current);
   }
 
   Future<void> _onSyncRequested(

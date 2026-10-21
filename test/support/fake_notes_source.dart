@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:atomic_notes/database/note.dart';
+import 'package:atomic_notes/database/note_document.dart';
 import 'package:atomic_notes/database/notes_source.dart';
 import 'package:flutter/foundation.dart';
 
@@ -52,7 +53,7 @@ class FakeNotesSource extends ChangeNotifier implements NotesSource {
     final list = all.where((n) => !n.deleted).toList();
     switch (filter) {
       case NoteFilter.todos:
-        list.retainWhere((n) => n.kind == NoteKind.todo);
+        list.retainWhere((n) => n.kind == NoteKind.todo || NoteDocument.fromNote(n).hasChecklist);
       case NoteFilter.notes:
         list.retainWhere((n) => n.kind == NoteKind.text);
       case NoteFilter.newest:
