@@ -1,4 +1,5 @@
 import 'package:atomic_notes/database/note.dart';
+import 'package:atomic_notes/database/note_document.dart';
 import 'package:atomic_notes/theme/app_tokens.dart';
 import 'package:atomic_notes/theme/editorial.dart';
 import 'package:flutter/material.dart';
@@ -34,6 +35,9 @@ class NotesBulder extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bool untitled = note.title.trim().isEmpty;
+    final document = NoteDocument.fromNote(note);
+    final mixedChecklist = note.kind == NoteKind.text && document.hasChecklist;
+    final tasks = document.lines.where((line) => line.isChecklist).toList();
 
     return Padding(
       padding: const EdgeInsets.only(bottom: AppSpace.xs),
@@ -50,8 +54,8 @@ class NotesBulder extends StatelessWidget {
               color: selected
                   ? AppColors.signal
                   : featured
-                  ? AppColors.ink
-                  : AppColors.outlineVariant,
+                      ? AppColors.ink
+                      : AppColors.outlineVariant,
               width: selected ? AppStroke.offset : AppStroke.rule,
             ),
             boxShadow: featured
@@ -88,10 +92,8 @@ class NotesBulder extends StatelessWidget {
                       style:
                           (featured ? AppType.headlineMd : AppType.headlineSm)
                               .copyWith(
-                                color: untitled
-                                    ? AppColors.outline
-                                    : AppColors.ink,
-                              ),
+                        color: untitled ? AppColors.outline : AppColors.ink,
+                      ),
                       maxLines: 2,
                     ),
                   ),
@@ -101,7 +103,9 @@ class NotesBulder extends StatelessWidget {
                   ],
                 ],
               ),
-              if (note.kind == NoteKind.todo)
+              if (mixedChecklist)
+                _mixedContent(document)
+              else if (note.kind == NoteKind.todo)
                 _checklist()
               else if (note.body.trim().isNotEmpty) ...[
                 const SizedBox(height: AppSpace.xs + 2),
@@ -112,10 +116,11 @@ class NotesBulder extends StatelessWidget {
                   style: AppType.bodyMd,
                 ),
               ],
-              if (note.kind == NoteKind.todo && note.items.isNotEmpty) ...[
+              if ((note.kind == NoteKind.todo || mixedChecklist) &&
+                  tasks.isNotEmpty) ...[
                 const SizedBox(height: AppSpace.sm),
                 MonoLabel(
-                  '${note.doneCount} / ${note.items.length} DONE',
+                  '${tasks.where((line) => line.done).length} / ${tasks.length} DONE',
                   small: true,
                   color: AppColors.signal,
                 ),
@@ -138,6 +143,46 @@ class NotesBulder extends StatelessWidget {
     if (day == yesterday) return 'YESTERDAY';
     final stamp = '${pad(date.month)}-${pad(date.day)}';
     return date.year == now.year ? stamp : '${date.year}-$stamp';
+  }
+
+  Widget _mixedContent(NoteDocument document) {
+    final lines = document.lines;
+    return Padding(
+      padding: const EdgeInsets.only(top: AppSpace.sm),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (var i = 0; i < lines.length && i < 4; i++)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: lines[i].isChecklist
+                  ? GestureDetector(
+                      onTap: selectionMode ? null : () => onToggleItem(i),
+                      behavior: HitTestBehavior.opaque,
+                      child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _Tick(on: lines[i].done, small: true),
+                            const SizedBox(width: AppSpace.sm),
+                            Expanded(
+                                child: Text(lines[i].text,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: AppType.bodySm.copyWith(
+                                        decoration: lines[i].done
+                                            ? TextDecoration.lineThrough
+                                            : null))),
+                          ]))
+                  : Text(lines[i].text,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppType.bodyMd),
+            ),
+          if (lines.length > 4)
+            MonoLabel('+${lines.length - 4} MORE', small: true),
+        ],
+      ),
+    );
   }
 
   Widget _checklist() {
@@ -168,9 +213,8 @@ class NotesBulder extends StatelessWidget {
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: AppType.bodySm.copyWith(
-                          decoration: rows[i].done
-                              ? TextDecoration.lineThrough
-                              : null,
+                          decoration:
+                              rows[i].done ? TextDecoration.lineThrough : null,
                           color: rows[i].done
                               ? AppColors.outline
                               : AppColors.onSurface,

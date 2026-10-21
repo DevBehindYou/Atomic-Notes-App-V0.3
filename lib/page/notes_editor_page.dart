@@ -1,4 +1,5 @@
 import 'package:atomic_notes/database/note.dart';
+import 'package:atomic_notes/database/note_document.dart';
 import 'package:atomic_notes/theme/app_tokens.dart';
 import 'package:atomic_notes/theme/editorial.dart';
 import 'package:atomic_notes/utility/component/my_snackbar.dart';
@@ -18,34 +19,41 @@ class NotesCreaterPage extends StatefulWidget {
 class _NotesCreaterPageState extends State<NotesCreaterPage> {
   late final Note _draft;
   late final TextEditingController _title;
-  late final TextEditingController _body;
+  late final NoteDocument _document;
   final _scroll = ScrollController();
-  final List<TextEditingController> _items = [];
+  final List<TextEditingController> _lines = [];
   final List<FocusNode> _focus = [];
+  int _activeLine = -1;
   bool _allowPop = false;
   bool _closing = false;
   bool _confirmingClose = false;
-
-  bool get _isTodo => _draft.kind == NoteKind.todo;
 
   @override
   void initState() {
     super.initState();
     _draft = Note.fromMap(widget.note.toMap());
     _title = TextEditingController(text: _draft.title);
-    _body = TextEditingController(text: _draft.body);
-    for (final item in _draft.items) {
-      _items.add(TextEditingController(text: item.text));
-      _focus.add(FocusNode());
+    _document = NoteDocument.fromNote(_draft);
+    for (final line in _document.lines) {
+      _lines.add(TextEditingController(text: line.text));
+      _focus.add(_newLineFocus());
     }
+    _activeLine = _focus.length - 1;
+  }
+
+  FocusNode _newLineFocus() {
+    final node = FocusNode();
+    node.addListener(() {
+      if (node.hasFocus) _activeLine = _focus.indexOf(node);
+    });
+    return node;
   }
 
   @override
   void dispose() {
     _title.dispose();
-    _body.dispose();
     _scroll.dispose();
-    for (final controller in _items) {
+    for (final controller in _lines) {
       controller.dispose();
     }
     for (final node in _focus) {
@@ -54,19 +62,9 @@ class _NotesCreaterPageState extends State<NotesCreaterPage> {
     super.dispose();
   }
 
-  // Snapshot without mutating the list backing the live text fields. Copying
-  // a checklist with blank rows must not misalign its controllers.
   Note _snapshot() {
-    final result = Note.fromMap(_draft.toMap());
+    final result = _document.toNote(_draft);
     result.title = _title.text;
-    result.body = _isTodo ? '' : _body.text;
-    result.items = _isTodo
-        ? [
-            for (var i = 0; i < _items.length; i++)
-              if (_items[i].text.trim().isNotEmpty)
-                TodoItem(text: _items[i].text, done: _draft.items[i].done),
-          ]
-        : [];
     return result;
   }
 
@@ -125,74 +123,54 @@ class _NotesCreaterPageState extends State<NotesCreaterPage> {
     if (action == 'discard') _finish(false);
   }
 
-  void _switchKind() {
-    FocusScope.of(context).unfocus();
+  void _insertLine({required bool checklist, int? after}) {
+    final active = after ?? _activeLine;
+    final index = active.clamp(-1, _document.lines.length - 1);
+    final selection = index < 0 ? null : _lines[index].selection;
+    final caret =
+        selection != null && selection.isValid ? selection.extentOffset : null;
+    final node = _newLineFocus();
+    late final int inserted;
     setState(() {
-      if (_isTodo) {
-        // Always use the live fields, never an earlier copy of the text body.
-        _body.text = _items.map((item) => item.text).join('\n');
-        _draft.kind = NoteKind.text;
-      } else {
-        final lines = _body.text.split('\n');
-        final prior = [
-          for (var i = 0; i < _items.length; i++)
-            TodoItem(text: _items[i].text, done: _draft.items[i].done),
-        ];
-        for (final controller in _items) {
-          controller.dispose();
-        }
-        for (final node in _focus) {
-          node.dispose();
-        }
-        _items.clear();
-        _focus.clear();
-        _draft.items = [
-          for (var i = 0; i < lines.length; i++)
-            TodoItem(
-              text: lines[i],
-              done:
-                  i < prior.length &&
-                  prior[i].text == lines[i] &&
-                  prior[i].done,
-            ),
-        ];
-        for (final item in _draft.items) {
-          _items.add(TextEditingController(text: item.text));
-          _focus.add(FocusNode());
-        }
-        _draft.kind = NoteKind.todo;
+      final priorCount = _lines.length;
+      inserted = checklist
+          ? _document.insertChecklistAfter(index, caretOffset: caret)
+          : _document.insertTextAfter(index, caretOffset: caret);
+      if (index >= 0 && _lines[index].text != _document.lines[index].text) {
+        _lines[index].text = _document.lines[index].text;
       }
-    });
-  }
-
-  void _addItem({int? after}) {
-    final node = FocusNode();
-    setState(() {
-      final index = after == null ? _items.length : after + 1;
-      _draft.items.insert(index, TodoItem(text: ''));
-      _items.insert(index, TextEditingController());
-      _focus.insert(index, node);
+      _lines.insert(inserted, TextEditingController());
+      _focus.insert(inserted, node);
+      if (_document.lines.length == priorCount + 2) {
+        _lines.insert(inserted + 1,
+            TextEditingController(text: _document.lines[inserted + 1].text));
+        _focus.insert(inserted + 1, _newLineFocus());
+      }
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && _focus.contains(node)) node.requestFocus();
     });
   }
 
-  void _removeItem(int index) {
+  void _removeLine(int index) {
     setState(() {
-      _draft.items.removeAt(index);
-      _items.removeAt(index).dispose();
+      _document.removeAt(index);
+      _lines.removeAt(index).dispose();
       _focus.removeAt(index).dispose();
     });
   }
 
   Future<void> _copy() async {
     final snapshot = _snapshot();
-    final body = _isTodo
+    final body = snapshot.kind == NoteKind.todo && !_document.isMixed
         ? snapshot.items
-              .map((item) => '${item.done ? "[x]" : "[ ]"} ${item.text}')
-              .join('\n')
-        : snapshot.body;
+            .map((item) => '${item.done ? "[x]" : "[ ]"} ${item.text}')
+            .join('\n')
+        : _document.lines
+            .map((line) => line.isChecklist
+                ? '${line.done ? "- [x]" : "- [ ]"} ${line.text}'
+                : line.text)
+            .join('\n');
     try {
       await Clipboard.setData(
         ClipboardData(
@@ -268,9 +246,8 @@ class _NotesCreaterPageState extends State<NotesCreaterPage> {
                               onPressed: () => setState(
                                 () => _draft.pinned = !_draft.pinned,
                               ),
-                              tooltip: _draft.pinned
-                                  ? 'Unpin note'
-                                  : 'Pin note',
+                              tooltip:
+                                  _draft.pinned ? 'Unpin note' : 'Pin note',
                               isSelected: _draft.pinned,
                               color: AppColors.signal,
                               icon: const Icon(Icons.push_pin_outlined),
@@ -322,31 +299,8 @@ class _NotesCreaterPageState extends State<NotesCreaterPage> {
                                 onChanged: (_) => setState(() {}),
                               ),
                               const SizedBox(height: AppSpace.md),
-                              if (_isTodo) ...[
-                                for (var i = 0; i < _items.length; i++)
-                                  _itemRow(i),
-                                Align(
-                                  alignment: Alignment.centerLeft,
-                                  child: TextButton.icon(
-                                    onPressed: _addItem,
-                                    icon: const Icon(Icons.add),
-                                    label: const Text('Add item'),
-                                  ),
-                                ),
-                              ] else
-                                TextField(
-                                  key: const ValueKey('note-body'),
-                                  controller: _body,
-                                  keyboardType: TextInputType.multiline,
-                                  textCapitalization:
-                                      TextCapitalization.sentences,
-                                  maxLines: null,
-                                  minLines: 5,
-                                  style: AppType.bodyLg,
-                                  cursorColor: AppColors.signal,
-                                  decoration: _decoration('Start writing…'),
-                                  onChanged: (_) => setState(() {}),
-                                ),
+                              for (var i = 0; i < _document.lines.length; i++)
+                                _lineRow(i),
                             ],
                           ),
                         ),
@@ -368,17 +322,23 @@ class _NotesCreaterPageState extends State<NotesCreaterPage> {
                         child: Row(
                           children: [
                             IconButton.filled(
-                              onPressed: _switchKind,
-                              tooltip: _isTodo
-                                  ? 'Switch to text'
-                                  : 'Switch to checklist',
+                              onPressed: () => _insertLine(checklist: false),
+                              tooltip: 'Add text line',
                               style: IconButton.styleFrom(
                                 backgroundColor: AppColors.ink,
                                 foregroundColor: AppColors.paper,
                               ),
-                              icon: Icon(
-                                _isTodo ? Icons.notes : Icons.checklist,
+                              icon: const Icon(Icons.notes),
+                            ),
+                            const SizedBox(width: AppSpace.xs),
+                            IconButton.filled(
+                              onPressed: () => _insertLine(checklist: true),
+                              tooltip: 'Add checklist line',
+                              style: IconButton.styleFrom(
+                                backgroundColor: AppColors.ink,
+                                foregroundColor: AppColors.paper,
                               ),
+                              icon: const Icon(Icons.checklist),
                             ),
                             const Spacer(),
                             DecoratedBox(
@@ -419,38 +379,54 @@ class _NotesCreaterPageState extends State<NotesCreaterPage> {
     );
   }
 
-  Widget _itemRow(int index) {
+  Widget _lineRow(int index) {
+    final line = _document.lines[index];
+    if (!line.isChecklist) {
+      return TextField(
+        key: ValueKey(index == 0 ? 'note-body' : 'note-text-$index'),
+        controller: _lines[index],
+        focusNode: _focus[index],
+        keyboardType: TextInputType.multiline,
+        textCapitalization: TextCapitalization.sentences,
+        maxLines: null,
+        minLines: _document.lines.length == 1 ? 5 : null,
+        style: AppType.bodyLg,
+        cursorColor: AppColors.signal,
+        decoration: _decoration('Start writing…'),
+        onChanged: (value) =>
+            setState(() => _document.replaceText(index, value)),
+      );
+    }
     return Row(
-      key: ObjectKey(_items[index]),
+      key: ObjectKey(_lines[index]),
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Checkbox(
-          value: _draft.items[index].done,
+          value: line.done,
           activeColor: AppColors.signal,
           semanticLabel: 'Complete item ${index + 1}',
           onChanged: (value) =>
-              setState(() => _draft.items[index].done = value!),
+              setState(() => _document.setDone(index, value!)),
         ),
         Expanded(
           child: TextField(
             key: ValueKey('note-item-$index'),
-            controller: _items[index],
+            controller: _lines[index],
             focusNode: _focus[index],
             textCapitalization: TextCapitalization.sentences,
             textInputAction: TextInputAction.next,
             maxLines: null,
-            onSubmitted: (_) => _addItem(after: index),
-            onChanged: (_) => setState(() {}),
+            onSubmitted: (_) => _insertLine(checklist: true, after: index),
+            onChanged: (value) =>
+                setState(() => _document.replaceText(index, value)),
             style: AppType.bodyMd.copyWith(
-              decoration: _draft.items[index].done
-                  ? TextDecoration.lineThrough
-                  : null,
+              decoration: line.done ? TextDecoration.lineThrough : null,
             ),
             decoration: _decoration('List item'),
           ),
         ),
         IconButton(
-          onPressed: () => _removeItem(index),
+          onPressed: () => _removeLine(index),
           tooltip: 'Remove item ${index + 1}',
           icon: const Icon(Icons.close, size: 18),
         ),
@@ -462,8 +438,7 @@ class _NotesCreaterPageState extends State<NotesCreaterPage> {
     final snapshot = _snapshot();
     final text = [
       snapshot.title,
-      snapshot.body,
-      ...snapshot.items.map((item) => item.text),
+      ..._document.lines.map((line) => line.text),
     ].join(' ').trim();
     final words = text.isEmpty ? 0 : text.split(RegExp(r'\s+')).length;
     return Wrap(
@@ -471,9 +446,9 @@ class _NotesCreaterPageState extends State<NotesCreaterPage> {
       runSpacing: AppSpace.xs,
       children: [
         MonoLabel('$words WORDS', small: true),
-        if (_isTodo)
+        if (snapshot.kind == NoteKind.todo || _document.hasChecklist)
           MonoLabel(
-            '${snapshot.doneCount} / ${snapshot.items.length} DONE',
+            '${_document.lines.where((line) => line.isChecklist && line.done).length} / ${_document.lines.where((line) => line.isChecklist).length} DONE',
             small: true,
             color: AppColors.signal,
           ),
@@ -482,12 +457,12 @@ class _NotesCreaterPageState extends State<NotesCreaterPage> {
   }
 
   static InputDecoration _decoration(String hint) => InputDecoration(
-    border: InputBorder.none,
-    enabledBorder: InputBorder.none,
-    focusedBorder: InputBorder.none,
-    hintText: hint,
-    contentPadding: const EdgeInsets.symmetric(vertical: AppSpace.sm),
-  );
+        border: InputBorder.none,
+        enabledBorder: InputBorder.none,
+        focusedBorder: InputBorder.none,
+        hintText: hint,
+        contentPadding: const EdgeInsets.symmetric(vertical: AppSpace.sm),
+      );
 
   static String _stamp(DateTime value) {
     final local = value.toLocal();

@@ -6,6 +6,7 @@ import 'package:atomic_notes/api/logout_protocol.dart';
 import 'package:atomic_notes/api/logout_recovery.dart';
 import 'package:atomic_notes/database/energy_service.dart';
 import 'package:atomic_notes/database/note.dart';
+import 'package:atomic_notes/database/note_document.dart';
 import 'package:atomic_notes/database/logout_plan.dart';
 import 'package:atomic_notes/database/note_quota.dart';
 import 'package:atomic_notes/database/notes_source.dart';
@@ -478,7 +479,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
 
     switch (filter) {
       case NoteFilter.todos:
-        list.retainWhere((n) => n.kind == NoteKind.todo);
+        list.retainWhere((n) => n.kind == NoteKind.todo || NoteDocument.fromNote(n).hasChecklist);
       case NoteFilter.notes:
         list.retainWhere((n) => n.kind == NoteKind.text);
       case NoteFilter.newest:
