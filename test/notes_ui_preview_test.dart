@@ -164,7 +164,7 @@ void main() {
         expect(find.byKey(const ValueKey('cloud-sync-ring')), findsOneWidget);
         expect(
           tester.getSize(find.byKey(const ValueKey('cloud-button-surface'))),
-          const Size(48, 44),
+          const Size(46, 38),
         );
       }
       expect(tester.takeException(), isNull);
