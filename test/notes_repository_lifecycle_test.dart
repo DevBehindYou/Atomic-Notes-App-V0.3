@@ -405,6 +405,7 @@ void main() {
       expect(await repository.syncNow(), isTrue);
       final local = repository.byId(seed.id)!
         ..body = 'offline device B'
+        ..important = true
         ..items = [TodoItem(text: 'B task', done: true)];
       await repository.save(local);
       local.updatedAt = DateTime.utc(2099); // skew does not decide the version conflict
@@ -416,10 +417,12 @@ void main() {
       expect(api.pushes.single.single['base_version'], 3);
       expect(api.pullCursors, [null, null], reason: 'conflict resets the old cursor');
       expect(repository.byId(seed.id)!.body, 'device A accepted');
+      expect(repository.byId(seed.id)!.important, isFalse);
       expect(repository.byId(seed.id)!.serverVersion, 4);
       final copy = repository.visible().singleWhere((n) => n.id != seed.id);
       expect(copy.title, 'shared (conflict copy)');
       expect(copy.body, 'offline device B');
+      expect(copy.important, isTrue);
       expect(copy.items.single.text, 'B task');
       expect(copy.items.single.done, isTrue);
       expect(copy.dirty, isTrue, reason: 'conflict copy is initially local, not uploaded');
@@ -427,6 +430,7 @@ void main() {
       expect(repository.pendingCount, 1);
       final stored = box.get(copy.id) as Map;
       expect(stored['dirty'], isTrue);
+      expect(stored['important'], isTrue);
       if (encrypted) {
         expect(stored['enc_v'], 1);
         expect(stored['body'], '');
@@ -436,9 +440,11 @@ void main() {
       }
       await repository.stop(); repository.clearMemory(); await repository.start();
       expect(repository.byId(copy.id)!.body, 'offline device B');
+      expect(repository.byId(copy.id)!.important, isTrue);
       api.pushResults = null;
       expect(await repository.syncNow(instant: true), isTrue);
       expect(api.pushes.last.single['id'], copy.id);
+      expect(api.pushes.last.single['important'], isTrue);
       expect(repository.pendingCount, 0);
       expect(repository.byId(seed.id)!.body, 'device A accepted');
     });

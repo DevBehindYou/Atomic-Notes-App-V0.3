@@ -82,6 +82,7 @@ class _NotesCreaterPageState extends State<NotesCreaterPage> {
         ..kind = edited.kind
         ..items = edited.items
         ..pinned = edited.pinned;
+      widget.note.important = edited.important;
     }
     setState(() => _allowPop = true);
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -252,6 +253,17 @@ class _NotesCreaterPageState extends State<NotesCreaterPage> {
                               color: AppColors.signal,
                               icon: const Icon(Icons.push_pin_outlined),
                               selectedIcon: const Icon(Icons.push_pin),
+                            ),
+                            IconButton(
+                              onPressed: () => setState(
+                                () => _draft.important = !_draft.important,
+                              ),
+                              tooltip: _draft.important
+                                  ? 'Unmark important' : 'Mark important',
+                              isSelected: _draft.important,
+                              color: AppColors.signal,
+                              icon: const Icon(Icons.label_important_outline),
+                              selectedIcon: const Icon(Icons.label_important),
                             ),
                             IconButton(
                               onPressed: _copy,

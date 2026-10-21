@@ -34,19 +34,21 @@ class SyncEnvelope {
     required String requestId,
     required SyncEnvelopeMode mode,
     required List<Map<String, dynamic>> rows,
-  }) => _prepare(requestId: requestId, mode: mode, rows: rows);
+  }) =>
+      _prepare(requestId: requestId, mode: mode, rows: rows);
 
   /// Preserve the established native logout validation, errors and wire bytes.
   static Future<SyncEnvelope> prepareLogout({
     required String attemptId,
     required String requestId,
     required List<Map<String, dynamic>> rows,
-  }) => _prepare(
-    requestId: requestId,
-    mode: SyncEnvelopeMode.instant,
-    rows: rows,
-    logoutAttemptId: attemptId,
-  );
+  }) =>
+      _prepare(
+        requestId: requestId,
+        mode: SyncEnvelopeMode.instant,
+        rows: rows,
+        logoutAttemptId: attemptId,
+      );
 
   static Future<SyncEnvelope> _prepare({
     required String requestId,
@@ -134,6 +136,7 @@ class SyncEnvelope {
         row['body'] is! String ||
         row['items'] is! List ||
         row['pinned'] is! bool ||
+        (row.containsKey('important') && row['important'] is! bool) ||
         row['deleted'] is! bool ||
         row['created_at'] is! String ||
         (row.containsKey('updated_at') && row['updated_at'] is! String) ||
@@ -143,31 +146,29 @@ class SyncEnvelope {
         version < 0) {
       throw FormatException(noteError);
     }
-    final items = (row['items'] as List)
-        .map((item) {
-          if (item is! Map) throw FormatException(checklistError);
-          // Server's union chooses one complete representation. Historical native
-          // logout instead falls back per field; retain that established behavior.
-          final longForm = item['text'] is String && item['done'] is bool;
-          final text = legacyLogout
-              ? item['text'] ?? item['t']
-              : longForm
+    final items = (row['items'] as List).map((item) {
+      if (item is! Map) throw FormatException(checklistError);
+      // Server's union chooses one complete representation. Historical native
+      // logout instead falls back per field; retain that established behavior.
+      final longForm = item['text'] is String && item['done'] is bool;
+      final text = legacyLogout
+          ? item['text'] ?? item['t']
+          : longForm
               ? item['text']
               : item['t'];
-          final done = legacyLogout
-              ? item['done'] ?? item['d']
-              : longForm
+      final done = legacyLogout
+          ? item['done'] ?? item['d']
+          : longForm
               ? item['done']
               : item['d'];
-          if (text is! String || done is! bool) {
-            throw FormatException(checklistError);
-          }
-          return Map<String, dynamic>.unmodifiable({
-            'text': text,
-            'done': done,
-          });
-        })
-        .toList(growable: false);
+      if (text is! String || done is! bool) {
+        throw FormatException(checklistError);
+      }
+      return Map<String, dynamic>.unmodifiable({
+        'text': text,
+        'done': done,
+      });
+    }).toList(growable: false);
     // Match the existing Server Zod projection and key ordering exactly.
     return Map<String, dynamic>.unmodifiable({
       'id': row['id'],
@@ -176,6 +177,7 @@ class SyncEnvelope {
       'body': row['body'],
       'items': List.unmodifiable(items),
       'pinned': row['pinned'],
+      if (row.containsKey('important')) 'important': row['important'],
       'deleted': row['deleted'],
       'created_at': row['created_at'],
       if (row.containsKey('updated_at')) 'updated_at': row['updated_at'],
@@ -186,9 +188,9 @@ class SyncEnvelope {
   }
 
   Map<String, dynamic> toWire() => Map.unmodifiable({
-    'rows': rows,
-    'requestId': requestId,
-    'mode': mode.name,
-    if (logoutAttemptId != null) 'logoutAttemptId': logoutAttemptId,
-  });
+        'rows': rows,
+        'requestId': requestId,
+        'mode': mode.name,
+        if (logoutAttemptId != null) 'logoutAttemptId': logoutAttemptId,
+      });
 }

@@ -359,6 +359,8 @@ void main() {
   });
   test('conflict preserves both versions and cancels logout', () async {
     final note = await dirtyNote();
+    note.important = true;
+    await repo.save(note);
     api.pushResults = [
       {'id': note.id, 'ok': false, 'error': 'note_conflict'}
     ];
@@ -368,13 +370,18 @@ void main() {
         'version': 2,
         'title': 'Other device',
         'body': 'Public other version',
+        'important': false,
         'updated_at': DateTime.now().toUtc().toIso8601String()
       }
     ];
     await expectLater(logout(), throwsA(isA<LogoutBlocked>()));
     expect(repo.byId(note.id)!.body, 'Public other version');
+    expect(repo.byId(note.id)!.important, isFalse);
     expect(repo.visible().singleWhere((n) => n.id != note.id).body,
         'Preserve this offline edit');
+    final copy = repo.visible().singleWhere((n) => n.id != note.id);
+    expect(copy.important, isTrue);
+    expect((box.get(copy.id) as Map)['important'], isTrue);
     expect(finished, 0);
     expect(api.aborts, 1);
   });
