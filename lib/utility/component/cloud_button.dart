@@ -40,32 +40,32 @@ class CloudButton extends StatelessWidget {
         onTap: isLoading ? null : action,
         onLongPress: onLongPress,
         behavior: HitTestBehavior.opaque,
-        child: Container(
-          key: const ValueKey('cloud-button-surface'),
-          height: 44,
-          width: 48,
-          padding: const EdgeInsets.all(AppSpace.sm),
-          decoration: BoxDecoration(
-            color: isLoading ? AppColors.ink : AppColors.signal,
-            borderRadius: AppRadius.std,
-            border: Border.all(color: AppColors.ink, width: AppStroke.hairline),
-            boxShadow: const [
-              BoxShadow(
-                color: AppColors.ink,
-                offset: Offset(AppStroke.offset, AppStroke.offset),
-                blurRadius: 0,
-              ),
-            ],
-          ),
-          child: isLoading
-              ? const Center(child: _SyncActivityRing())
-              : SvgPicture.asset(
-                  ico,
-                  colorFilter: const ColorFilter.mode(
-                    Colors.white,
-                    BlendMode.srcIn,
-                  ),
-                ),
+        child: SizedBox.square(
+          dimension: 48,
+          child: Center(
+              child: Container(
+            key: const ValueKey('cloud-button-surface'),
+            height: 38,
+            width: 46,
+            padding: const EdgeInsets.all(AppSpace.sm),
+            decoration: BoxDecoration(
+              color: isLoading ? AppColors.ink : AppColors.signal,
+              borderRadius: AppRadius.std,
+              border: Border.all(color: AppColors.ink, width: AppStroke.rule),
+            ),
+            child: Center(
+                child: SizedBox.square(
+                    dimension: 20,
+                    child: isLoading
+                        ? const Center(child: _SyncActivityRing())
+                        : SvgPicture.asset(
+                            ico,
+                            colorFilter: const ColorFilter.mode(
+                              Colors.white,
+                              BlendMode.srcIn,
+                            ),
+                          ))),
+          )),
         ),
       ),
     );
@@ -105,8 +105,7 @@ class _SyncActivityRingState extends State<_SyncActivityRing>
 
   void _updateRotation() {
     final media = MediaQuery.maybeOf(context);
-    final reduceMotion =
-        (media?.disableAnimations ?? false) ||
+    final reduceMotion = (media?.disableAnimations ?? false) ||
         (media?.accessibleNavigation ?? false);
     if (_foreground && TickerMode.valuesOf(context).enabled && !reduceMotion) {
       if (!_rotation.isAnimating) _rotation.repeat();
@@ -131,13 +130,13 @@ class _SyncActivityRingState extends State<_SyncActivityRing>
 
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
-    animation: _rotation,
-    builder: (_, __) => CustomPaint(
-      key: const ValueKey('cloud-sync-ring'),
-      size: const Size.square(22),
-      painter: _SyncRingPainter(_rotation.value * math.pi * 2),
-    ),
-  );
+        animation: _rotation,
+        builder: (_, __) => CustomPaint(
+          key: const ValueKey('cloud-sync-ring'),
+          size: const Size.square(22),
+          painter: _SyncRingPainter(_rotation.value * math.pi * 2),
+        ),
+      );
 }
 
 class _SyncRingPainter extends CustomPainter {

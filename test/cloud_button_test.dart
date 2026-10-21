@@ -24,47 +24,60 @@ Widget control({
   bool disableAnimations = false,
   bool accessibleNavigation = false,
   bool tickerEnabled = true,
-}) => MaterialApp(
-  builder: (context, child) => MediaQuery(
-    data: MediaQuery.of(context).copyWith(
-      disableAnimations: disableAnimations,
-      accessibleNavigation: accessibleNavigation,
-    ),
-    child: child!,
-  ),
-  home: TickerMode(
-    enabled: tickerEnabled,
-    child: Scaffold(
-      body: CloudButton(
-        ico: 'assets/sync.svg',
-        action: sync,
-        clr: 0xff5F5EF7,
-        isLoading: busy,
-        onLongPress: energy,
+}) =>
+    MaterialApp(
+      builder: (context, child) => MediaQuery(
+        data: MediaQuery.of(context).copyWith(
+          disableAnimations: disableAnimations,
+          accessibleNavigation: accessibleNavigation,
+        ),
+        child: child!,
       ),
-    ),
-  ),
-);
+      home: TickerMode(
+        enabled: tickerEnabled,
+        child: Scaffold(
+          body: CloudButton(
+            ico: 'assets/sync.svg',
+            action: sync,
+            clr: 0xff5F5EF7,
+            isLoading: busy,
+            onLongPress: energy,
+          ),
+        ),
+      ),
+    );
 
 void main() {
   CustomPainter ringPainter(WidgetTester tester) => tester
       .widget<CustomPaint>(find.byKey(const ValueKey('cloud-sync-ring')))
       .painter!;
 
-  BoxDecoration surface(WidgetTester tester) =>
-      tester
-              .widget<Container>(
-                find.byKey(const ValueKey('cloud-button-surface')),
-              )
-              .decoration!
-          as BoxDecoration;
+  BoxDecoration surface(WidgetTester tester) => tester
+      .widget<Container>(
+        find.byKey(const ValueKey('cloud-button-surface')),
+      )
+      .decoration! as BoxDecoration;
+
+  testWidgets('cloud matches bell surface and keeps a 48px touch target',
+      (tester) async {
+    for (final busy in [false, true]) {
+      await tester.pumpWidget(control(busy: busy, sync: () {}, energy: () {}));
+      expect(tester.getSize(find.byKey(const ValueKey('cloud-button-surface'))),
+          const Size(46, 38));
+      final target = tester.getSize(find.byType(GestureDetector));
+      expect(target.width, greaterThanOrEqualTo(48));
+      expect(target.height, greaterThanOrEqualTo(48));
+      expect(surface(tester).boxShadow, isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    }
+  });
 
   testWidgets('cloud is purple when idle and black with a rotating busy ring', (
     tester,
   ) async {
     await tester.pumpWidget(control(busy: false, sync: () {}, energy: () {}));
     expect(surface(tester).color, AppColors.signal);
-    expect(surface(tester).boxShadow!.single.blurRadius, 0);
+    expect(surface(tester).boxShadow, isNull);
     expect(find.byKey(const ValueKey('cloud-sync-ring')), findsNothing);
     await tester.pumpWidget(control(busy: true, sync: () {}, energy: () {}));
     expect(surface(tester).color, AppColors.ink);
