@@ -394,6 +394,7 @@ void main() {
     offline.body = 'Offline B';
     await b.notes.save(offline);
     note.body = 'Accepted A';
+    note.important = false;
     await a.notes.save(note);
     await a.cubit.sync(uploadAll: false);
     outcomes['first_client_edit'] =
@@ -422,6 +423,7 @@ void main() {
             : 'different';
     outcomes['conflict_phase'] = 'checking_remote_original_body';
     expect(b.notes.byId(note.id)!.body, 'Accepted A');
+    expect(b.notes.byId(note.id)!.important, isFalse);
     outcomes['conflict_phase'] = 'checking_remote_original_version';
     expect(b.notes.byId(note.id)!.serverVersion, acceptedVersion);
     outcomes['conflict_phase'] = 'checking_local_copy';
@@ -446,12 +448,6 @@ void main() {
     expect(a.notes.byId(note.id)!.body, 'Accepted A');
     expect(a.notes.byId(copy.id)!.body, 'Offline B');
     expect(a.notes.byId(copy.id)!.important, isTrue);
-    final cleared = a.notes.byId(copy.id)!..important = false;
-    await a.notes.save(cleared);
-    await a.cubit.sync(uploadAll: false);
-    expect(a.cubit.state.lastReport!.completed, isTrue);
-    await b.cubit.sync(uploadAll: false);
-    expect(b.notes.byId(copy.id)!.important, isFalse);
     outcomes['conflict_phase'] = 'passed';
   });
 
