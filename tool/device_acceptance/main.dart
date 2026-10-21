@@ -10,6 +10,7 @@ import 'package:http/http.dart' as http;
 import 'package:atomic_notes/main.dart' as production;
 import 'package:atomic_notes/security/secure_options.dart';
 import 'guard.dart';
+import 'bootstrap.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -21,26 +22,7 @@ Future<void> main() async {
     const bindingKey = 'atomic_acceptance_fixture_binding_v1';
     final saved = await storage.read(key: bindingKey);
     if (saved == null) {
-      final client = http.Client();
-      Object? descriptor;
-      try {
-        final request =
-            http.Request('GET', base.replace(path: '/__fixture/ready'));
-        final response =
-            await client.send(request).timeout(const Duration(seconds: 8));
-        if (response.statusCode != 200) throw StateError('fixture_unavailable');
-        final bytes = <int>[];
-        await for (final chunk
-            in response.stream.timeout(const Duration(seconds: 8))) {
-          if (bytes.length + chunk.length > 4096) {
-            throw StateError('fixture_invalid');
-          }
-          bytes.addAll(chunk);
-        }
-        descriptor = jsonDecode(utf8.decode(bytes));
-      } finally {
-        client.close();
-      }
+      final descriptor = await fetchAcceptanceDescriptor(http.Client(), base);
       final owner = acceptanceOwner(descriptor);
       // These credentials are public constants accepted only by the disposable
       // Server fixture. No Google account or production session is used.

@@ -36,7 +36,7 @@ jobs:
           cp lib/authentication/auth_services/cred.example.dart lib/authentication/auth_services/cred.dart
           flutter pub get --enforce-lockfile
       - name: Verify guarded acceptance bootstrap
-        run: flutter test --no-pub test/mascot/device_acceptance_guard_test.dart
+        run: flutter test --no-pub test/mascot/device_acceptance_guard_test.dart test/mascot/device_acceptance_bootstrap_test.dart
       - name: Build localhost-only synthetic acceptance target
         run: >-
           flutter build apk --${{ matrix.mode }} --no-pub
