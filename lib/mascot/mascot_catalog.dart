@@ -10,12 +10,11 @@ class MascotClip {
       required this.width,
       required this.height,
       required this.frameCount,
-      required this.encodedCycleDuration,
-      this.bundledAssetPath});
+      required this.encodedCycleDuration});
   final String id, sourcePath, originalFilename, sha256;
   final int slot, bytes, width, height, frameCount;
   final Duration encodedCycleDuration;
-  final String? bundledAssetPath;
+  String get bundledAssetPath => sourcePath;
 }
 
 class MascotDefinition {
@@ -481,9 +480,7 @@ abstract final class MascotCatalog {
           width: 480,
           height: 480,
           frameCount: 48,
-          encodedCycleDuration: Duration(milliseconds: 2000),
-          bundledAssetPath:
-              'assets/Atomic Notes Mascot/061 Cubie/061-cubie-1-bounce.gif'),
+          encodedCycleDuration: Duration(milliseconds: 2000)),
       MascotClip(
           id: '061-cubie-2-look-around',
           sourcePath:
@@ -496,9 +493,7 @@ abstract final class MascotCatalog {
           width: 480,
           height: 480,
           frameCount: 72,
-          encodedCycleDuration: Duration(milliseconds: 3000),
-          bundledAssetPath:
-              'assets/Atomic Notes Mascot/061 Cubie/061-cubie-2-look-around.gif'),
+          encodedCycleDuration: Duration(milliseconds: 3000)),
       MascotClip(
           id: '061-cubie-3-spin-hop',
           sourcePath:
@@ -511,9 +506,7 @@ abstract final class MascotCatalog {
           width: 480,
           height: 480,
           frameCount: 48,
-          encodedCycleDuration: Duration(milliseconds: 2000),
-          bundledAssetPath:
-              'assets/Atomic Notes Mascot/061 Cubie/061-cubie-3-spin-hop.gif'),
+          encodedCycleDuration: Duration(milliseconds: 2000)),
       MascotClip(
           id: '061-cubie-4-write-the-lines',
           sourcePath:
@@ -526,9 +519,7 @@ abstract final class MascotCatalog {
           width: 480,
           height: 480,
           frameCount: 96,
-          encodedCycleDuration: Duration(milliseconds: 4000),
-          bundledAssetPath:
-              'assets/Atomic Notes Mascot/061 Cubie/061-cubie-4-write-the-lines.gif'),
+          encodedCycleDuration: Duration(milliseconds: 4000)),
     ]),
     MascotDefinition._('062-atomblock', 'Atomblock', [
       MascotClip(

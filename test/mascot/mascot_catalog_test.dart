@@ -21,15 +21,14 @@ void main() {
         expect(clip.height, 480);
         expect(clip.frameCount, greaterThan(0));
         expect(clip.encodedCycleDuration.inMilliseconds, greaterThan(0));
-        expect(clip.bundledAssetPath,
-            mascot.id == MascotCatalog.defaultId ? clip.sourcePath : isNull);
+        expect(clip.bundledAssetPath, clip.sourcePath);
       }
     }
     expect(ids, hasLength(52));
     expect(MascotCatalog.all.fold<int>(0, (sum, m) => sum + m.encodedBytes),
         18721297);
   });
-  test('only Cubie is bundled and unknown IDs stay unknown', () {
+  test('Cubie is the default and every supplied clip is bundled', () {
     expect(MascotCatalog.defaultMascot.id, '061-cubie');
     expect(MascotCatalog.defaultMascot.encodedBytes, 2208045);
     expect(MascotCatalog.findById('unknown'), isNull);

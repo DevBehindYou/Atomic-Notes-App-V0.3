@@ -30,6 +30,32 @@ class Resolver implements MascotAssetResolver {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test(
+      'all 52 supplied GIFs decode with their pinned frame counts and cycle durations',
+      () async {
+    var decoded = 0;
+    for (final mascot in MascotCatalog.all) {
+      for (final clip in mascot.clips) {
+        final lease = Lease(await File(clip.sourcePath).readAsBytes());
+        final session =
+            await FlutterGifFrameSource(Resolver(lease)).open(clip, 96);
+        var duration = Duration.zero;
+        for (var index = 0; index < session.frameCount; index++) {
+          final frame = await session.nextFrame();
+          expect(frame.image.width, clip.width, reason: clip.id);
+          expect(frame.image.height, clip.height, reason: clip.id);
+          duration += frame.duration;
+          frame.dispose();
+        }
+        expect(session.frameCount, clip.frameCount, reason: clip.id);
+        expect(duration, clip.encodedCycleDuration, reason: clip.id);
+        await session.close();
+        expect(lease.closes, 1);
+        decoded++;
+      }
+    }
+    expect(decoded, 52);
+  }, timeout: const Timeout(Duration(minutes: 2)));
   test('real GIF honors encoded cycle durations and closes byte lease once',
       () async {
     final clip = MascotCatalog.defaultMascot.clips.first;

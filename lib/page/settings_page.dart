@@ -24,7 +24,12 @@ typedef SettingsLogoutOperation = Future<void> Function({
 });
 
 class SettingsPage extends StatefulWidget {
-  const SettingsPage({super.key, this.api, this.repository, this.finishLogout, this.logoutOperation});
+  const SettingsPage(
+      {super.key,
+      this.api,
+      this.repository,
+      this.finishLogout,
+      this.logoutOperation});
   final ApiClient? api;
   final NotesRepository? repository;
   final Future<void> Function(void Function() checkCurrent)? finishLogout;
@@ -227,7 +232,8 @@ class _SettingsPageState extends State<SettingsPage> {
                           title: 'Sign-ins',
                           caption: 'Review other sign-ins',
                           wide: true,
-                          onTap: () => Navigator.pushNamed(context, '/usersessions'),
+                          onTap: () =>
+                              Navigator.pushNamed(context, '/usersessions'),
                         ),
                         const SizedBox(height: AppSpace.sm + 4),
                         SettingsCard(
@@ -242,6 +248,17 @@ class _SettingsPageState extends State<SettingsPage> {
                       ],
                     );
                   },
+                ),
+                const SizedBox(height: AppSpace.xl),
+
+                const SectionHeader('APPEARANCE'),
+                const SizedBox(height: AppSpace.md),
+                SettingsCard(
+                  icon: Icons.animation,
+                  title: 'Mascot',
+                  caption: 'Choose a character and motion',
+                  wide: true,
+                  onTap: () => Navigator.pushNamed(context, '/mascot'),
                 ),
                 const SizedBox(height: AppSpace.xl),
 

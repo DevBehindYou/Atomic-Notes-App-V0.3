@@ -44,29 +44,30 @@ Future<void> main(List<String> args) async {
     require(jsonEncode(actual) == jsonEncode(m),
         'catalog metadata mismatch: ${c.id}');
     require(c.originalFilename == '${c.id}.gif', 'filename mismatch');
-    if (c.bundledAssetPath != null) {
-      final bytes = File(c.bundledAssetPath!).readAsBytesSync();
+    require(c.bundledAssetPath == c.sourcePath, 'every clip must be bundled');
+    {
+      final bytes = File(c.bundledAssetPath).readAsBytesSync();
       require(bytes.length == c.bytes && await digest(bytes) == c.sha256,
           'bundled hash mismatch: ${c.id}');
     }
   }
-  final expected = clips
-      .where((c) => c.bundledAssetPath != null)
-      .map((c) => c.sourcePath)
-      .toSet();
+  final expected = clips.map((c) => c.sourcePath).toSet();
   final actual = Directory('assets/Atomic Notes Mascot')
       .listSync(recursive: true)
       .whereType<File>()
       .map((f) => f.path.replaceAll('\\', '/'))
       .toSet();
   require(
-      expected.length == 4 &&
-          actual.length == 4 &&
+      expected.length == 52 &&
+          actual.length == 52 &&
           actual.containsAll(expected),
       'unexpected bundled mascot files');
   final yaml = File('pubspec.yaml').readAsStringSync();
-  require(yaml.contains('    - assets/Atomic Notes Mascot/061 Cubie/'),
-      'bundle declaration missing');
+  for (final directory
+      in expected.map((p) => p.substring(0, p.lastIndexOf('/') + 1)).toSet()) {
+    require(yaml.contains('    - $directory'),
+        'bundle declaration missing: $directory');
+  }
   if (args.isNotEmpty) {
     final source = File(args.single).readAsBytesSync();
     require(await digest(source) == pinned['sourceManifestSha256'],
@@ -82,5 +83,5 @@ Future<void> main(List<String> args) async {
     }
   }
   stdout.writeln(
-      'Verified 13 mascots / 52 clips; bundled Cubie 4 GIFs / 2208045 bytes.');
+      'Verified 13 mascots / 52 clips; all 52 GIFs bundled / 18721297 bytes.');
 }

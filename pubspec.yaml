@@ -126,13 +126,25 @@ flutter:
   # NOTE: `- assets/` only includes files directly in assets/, not subfolders,
   # so the Atomic icon sets are listed explicitly.
   assets:
+    - assets/Atomic Notes Mascot/022 Antimatter/
+    - assets/Atomic Notes Mascot/038 Ollie/
+    - assets/Atomic Notes Mascot/040 Vaulty/
+    - assets/Atomic Notes Mascot/047 Rocco/
+    - assets/Atomic Notes Mascot/049 Sat/
+    - assets/Atomic Notes Mascot/051 Blink/
+    - assets/Atomic Notes Mascot/052 Tilde/
+    - assets/Atomic Notes Mascot/058 Commit/
     - assets/Atomic Notes Mascot/061 Cubie/
+    - assets/Atomic Notes Mascot/062 Atomblock/
+    - assets/Atomic Notes Mascot/066 Hoot/
+    - assets/Atomic Notes Mascot/073 Lappy/
+    - assets/Atomic Notes Mascot/076 Pocket/
     - assets/
     - assets/new-atomic-icons/png/atomic-icon-on-light.png
     - assets/new-atomic-icons/png/atomic-icon-on-dark.png
-    - assets/new-atomic-icons/png/devbehindyou-worker-static.png
-    - assets/new-atomic-icons/png/dotgrid-static.png
-    - assets/Atomic Icons/
+    - assets/Atomic Icons/atom-formation.gif
+    - assets/Atomic Icons/atom-to-coin.gif
+    - assets/Atomic Icons/atomic-notes-orbit.gif
     - assets/Atomic Icons/Icons-With-label/
     - assets/Atomic Icons/Icons-Without-label/
     - assets/Atomic Icons/Icons-Without-label-2.5D/

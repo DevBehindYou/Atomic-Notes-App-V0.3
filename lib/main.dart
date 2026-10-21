@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'mascot/mascot_runtime.dart';
+import 'page/endpage/mascot_settings_page.dart';
 
 import 'package:atomic_notes/api/atomic_notes_api.dart';
 import 'package:atomic_notes/authentication/auth_pages/login_page.dart';
@@ -89,7 +91,7 @@ Future<void> main() async {
     return;
   }
 
-  runApp(const MyApp());
+  runApp(const MascotScope(child: MyApp()));
 }
 
 /// Shown when Supabase or Hive can't be initialised at all. There is no usable
@@ -196,6 +198,15 @@ class _MyAppState extends State<MyApp> {
           '/loggedout': (context) => const LoggedOutScreen(),
           '/mainpage': (context) => const MainPage(),
           '/settingspage': (context) => const SettingsPage(),
+          '/mascot': (context) {
+            final scope = MascotScope.maybeOf(context);
+            if (scope == null) {
+              return const Scaffold(
+                  body: Center(child: Text('Mascot settings unavailable')));
+            }
+            return MascotSettingsPage(
+                preferences: scope.preferences, resolver: scope.resolver);
+          },
           '/onboardingscreen': (context) => const OnBoardingScreen(),
           '/energyintro': (context) => const EnergyIntroScreen(),
           '/appinfo': (context) => const AppInfo(),
