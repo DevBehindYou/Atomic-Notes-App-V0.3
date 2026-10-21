@@ -17,12 +17,14 @@ class MascotView extends StatefulWidget {
       this.interactive = true,
       this.size = 96,
       this.onAdvance,
+      this.semanticActionLabel = 'change animation',
       this.frameSource});
   final MascotDefinition mascot;
   final MascotAssetResolver resolver;
   final bool animationsEnabled, routeVisible, interactive;
   final double size;
   final VoidCallback? onAdvance;
+  final String semanticActionLabel;
   final MascotFrameSource? frameSource;
   @override
   State<MascotView> createState() => _MascotViewState();
@@ -124,7 +126,7 @@ class _MascotViewState extends State<MascotView> with WidgetsBindingObserver {
               onPressed: _player.retry,
               child: Text('${widget.mascot.displayName} unavailable. Retry')));
     }
-    final label = '${widget.mascot.displayName}, change animation';
+    final label = '${widget.mascot.displayName}, ${widget.semanticActionLabel}';
     final art = RepaintBoundary(
         child: SizedBox(
             width: widget.size,

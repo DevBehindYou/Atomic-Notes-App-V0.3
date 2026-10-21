@@ -461,7 +461,7 @@ class _FilterAndSearch extends StatelessWidget {
   }
 }
 
-/// Artwork changes animation on touch; the adjacent button shows live sync status.
+/// Touching the character changes animation and shows live sync status.
 class _Mascot extends StatefulWidget {
   const _Mascot();
 
@@ -549,21 +549,13 @@ class _MascotState extends State<_Mascot> {
             ),
           ),
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const ClipRect(
-              key: ValueKey('mascot-character'),
-              child: DevBehindYouMascot(interactive: true),
-            ),
-            IconButton(
-              key: const ValueKey('mascot-sync-status'),
-              tooltip: 'Sync status',
-              constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-              onPressed: _onTap,
-              icon: const Icon(Icons.sync, size: 22),
-            ),
-          ],
+        child: ClipRect(
+          key: const ValueKey('mascot-character'),
+          child: DevBehindYouMascot(
+            interactive: true,
+            onAdvance: _onTap,
+            semanticActionLabel: 'show sync status and change animation',
+          ),
         ),
       ),
     );

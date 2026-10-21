@@ -35,6 +35,7 @@ void main() {
                 frameSource: s,
                 size: 24,
                 routeVisible: false,
+                semanticActionLabel: 'show sync status and change animation',
                 onAdvance: () => taps++))));
     await tester.pump();
     expect(s.opens, 0);
@@ -48,6 +49,9 @@ void main() {
     expect(taps, 2);
     await tester.sendKeyEvent(LogicalKeyboardKey.space);
     expect(taps, 3);
+    tester.semantics.tap(find.semantics.byLabel(
+        '${MascotCatalog.defaultMascot.displayName}, show sync status and change animation'));
+    expect(taps, 4);
     await tester.pumpWidget(const SizedBox());
   });
 }

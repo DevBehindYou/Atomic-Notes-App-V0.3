@@ -85,15 +85,12 @@ Future<NotesBloc> _open(
 }
 
 void main() {
-  testWidgets('touching artwork never opens status or starts sync',
-      (tester) async {
+  testWidgets('mascot alone opens status without starting sync', (tester) async {
     final source = _source();
     await _open(tester, source);
+    expect(find.byKey(const ValueKey('mascot-sync-status')), findsNothing);
+    expect(find.byTooltip('Sync status'), findsNothing);
     await tester.tap(find.byKey(const ValueKey('mascot-character')));
-    await tester.pump();
-    expect(find.textContaining('No local changes waiting.'), findsNothing);
-    expect(source.syncCalls, 0);
-    await tester.tap(find.byKey(const ValueKey('mascot-sync-status')));
     await tester.pump();
     expect(find.textContaining('No local changes waiting.'), findsOneWidget);
     expect(source.syncCalls, 0);
@@ -384,7 +381,7 @@ void main() {
         );
         await tester.pump();
         await tester.pump();
-        await tester.tap(find.byKey(const ValueKey('mascot-sync-status')));
+        await tester.tap(find.byKey(const ValueKey('mascot-character')));
         await tester.pump();
         expect(
           find.text(
@@ -408,7 +405,7 @@ void main() {
       });
       await tester.pump();
       await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('mascot-sync-status')));
+      await tester.tap(find.byKey(const ValueKey('mascot-character')));
       await tester.pump();
       expect(find.text('Checking for cloud changes…'), findsOneWidget);
       expect(find.text('Previous failure'), findsNothing);
@@ -424,7 +421,7 @@ void main() {
         source.changeBehindTheScenes(() => source.isSyncing = true);
         await tester.pump();
         await tester.pump();
-        await tester.tap(find.byKey(const ValueKey('mascot-sync-status')));
+        await tester.tap(find.byKey(const ValueKey('mascot-character')));
         await tester.pump();
         expect(find.text('Syncing 1 change now.'), findsOneWidget);
         await tester.pump(const Duration(seconds: 4));
@@ -436,19 +433,19 @@ void main() {
         final source = _source()
           ..nextAutoSyncAt = DateTime.now().add(const Duration(minutes: 40));
         await _open(tester, source);
-        await tester.tap(find.byKey(const ValueKey('mascot-sync-status')));
+        await tester.tap(find.byKey(const ValueKey('mascot-character')));
         await tester.pump();
         expect(
           find.text('No local changes waiting. Next sync in 40 min.'),
           findsOneWidget,
         );
-        await tester.tap(find.byKey(const ValueKey('mascot-sync-status')));
+        await tester.tap(find.byKey(const ValueKey('mascot-character')));
         await tester.pump();
 
         source.changeBehindTheScenes(() => source.nextAutoSyncAt = null);
         await tester.pump();
         await tester.pump();
-        await tester.tap(find.byKey(const ValueKey('mascot-sync-status')));
+        await tester.tap(find.byKey(const ValueKey('mascot-character')));
         await tester.pump();
         expect(find.text('No local changes waiting.'), findsOneWidget);
         expect(find.textContaining('Next sync in'), findsNothing);
@@ -471,7 +468,7 @@ void main() {
       'tapping the mascot opens a chat bubble that closes by itself',
       (tester) async {
         await _open(tester, _source());
-        await tester.tap(find.byKey(const ValueKey('mascot-sync-status')));
+        await tester.tap(find.byKey(const ValueKey('mascot-character')));
         await tester.pump();
         expect(find.text('No local changes waiting.'), findsOneWidget);
         expect(find.byType(SnackBar), findsNothing);
@@ -483,9 +480,9 @@ void main() {
 
     testWidgets('a second tap closes the bubble', (tester) async {
       await _open(tester, _source());
-      await tester.tap(find.byKey(const ValueKey('mascot-sync-status')));
+      await tester.tap(find.byKey(const ValueKey('mascot-character')));
       await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('mascot-sync-status')));
+      await tester.tap(find.byKey(const ValueKey('mascot-character')));
       await tester.pump();
       expect(find.text('No local changes waiting.'), findsNothing);
     });
@@ -496,7 +493,7 @@ void main() {
       final source = _source()
         ..nextAutoSyncAt = DateTime.now().add(const Duration(minutes: 40));
       await _open(tester, source);
-      await tester.tap(find.byKey(const ValueKey('mascot-sync-status')));
+      await tester.tap(find.byKey(const ValueKey('mascot-character')));
       await tester.pump();
       expect(
         find.text('No local changes waiting. Next sync in 40 min.'),
@@ -511,7 +508,7 @@ void main() {
       source.poke();
       await tester.pump();
       await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('mascot-sync-status')));
+      await tester.tap(find.byKey(const ValueKey('mascot-character')));
       await tester.pump();
       // Nothing is running: the change waits (offline, or for the few seconds before auto-sync).
       expect(
@@ -578,7 +575,7 @@ void main() {
       bloc.add(const NotesSyncRequested(instant: true));
       await tester.pump();
       await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('mascot-sync-status')));
+      await tester.tap(find.byKey(const ValueKey('mascot-character')));
       await tester.pump();
       expect(find.text('Syncing 1 change now.'), findsOneWidget);
       source.syncGate!.complete();
