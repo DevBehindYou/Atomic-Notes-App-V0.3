@@ -33,6 +33,14 @@ has one white color and a transparent even-odd nucleus hole; it never reuses the
 colored foreground. Legacy icons and the opaque 32-bit Play PNG have no manually
 rounded outer corners. The Play PNG is below 1 MiB.
 
+The launcher and Play artwork use the existing on-dark companion palette on Ink
+(`#15171B`). Launcher orbit strokes are 15 source units instead of the supplied
+11, a 36% weight increase for small-size legibility. Ellipse geometry, electrons,
+nucleus and adaptive scale are unchanged. Both colored and themed launcher
+orbits use that weight. The supplied SVG/PNG companions, in-app logos and native
+splash retain their original strokes. `manifest.json` records this launcher-only
+derivation. The mask preview includes actual 48 px and 32 px circular icons.
+
 Android 12+ uses a **static VectorDrawable** on a 288 dp canvas with artwork inside
 the central 192 dp circle. Earlier Android versions show the same light/dark
 vector and background through the existing launch theme. There is no GIF in a
@@ -63,7 +71,8 @@ store opacity, dimensions, CRC, source hashes and native aliases; oversized
 decodes, path escapes and private exception text are also rejected. No source
 asset is mutated by those controls. Exact decoded GIF first-frame identity is
 verified by the local generation tool; CI checks the committed hashes, dimensions
-and alpha of those PNG fallbacks.
+and alpha of those PNG fallbacks. Two additional controls reject restoring the
+light launcher background or original thin launcher orbit weight.
 
 The one-time `--import-source <existing-assets-directory>` option validates the
 three named JPEG/GIF hashes and imports the supplied vector/PNG/GIF companions.
