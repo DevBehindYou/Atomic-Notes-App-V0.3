@@ -85,7 +85,8 @@ Future<NotesBloc> _open(
 }
 
 void main() {
-  testWidgets('mascot alone opens status without starting sync', (tester) async {
+  testWidgets('mascot alone opens status without starting sync',
+      (tester) async {
     final source = _source();
     await _open(tester, source);
     expect(find.byKey(const ValueKey('mascot-sync-status')), findsNothing);
@@ -618,6 +619,37 @@ void main() {
   });
 
   group('filter and search', () {
+    testWidgets('keyboard resizing keeps the search editor and input focus',
+        (tester) async {
+      await _open(tester, _source());
+      await tester.tap(find.byType(TextField));
+      await tester.pump();
+      final editor = tester.state<EditableTextState>(find.byType(EditableText));
+      expect(editor.widget.focusNode.hasFocus, isTrue);
+      expect(tester.testTextInput.isVisible, isTrue);
+      // A 500px logical IME makes the 900px-tall page cross the short-screen
+      // breakpoint, matching Android's actual resize while opening its keyboard.
+      tester.view.viewInsets = const FakeViewPadding(bottom: 1500);
+      addTearDown(tester.view.resetViewInsets);
+      await tester.pump();
+      await tester.pump();
+      expect(tester.state<EditableTextState>(find.byType(EditableText)),
+          same(editor));
+      expect(editor.widget.focusNode.hasFocus, isTrue);
+      expect(tester.testTextInput.isVisible, isTrue);
+      await tester.enterText(find.byType(TextField), 'rocket');
+      await tester.pump();
+      await tester.pump();
+      expect(find.byType(NotesBulder), findsOneWidget);
+      expect(find.text('IDEAS'), findsOneWidget);
+      tester.view.resetViewInsets();
+      await tester.pump();
+      expect(tester.state<EditableTextState>(find.byType(EditableText)),
+          same(editor));
+      expect(editor.widget.controller.text, 'rocket');
+      expect(editor.widget.focusNode.hasFocus, isTrue);
+    });
+
     testWidgets('the to-dos chip keeps only checklists', (tester) async {
       await _open(tester, _source());
       await tester.tap(find.text('TO-DOS'));
