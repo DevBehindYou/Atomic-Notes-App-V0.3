@@ -51,6 +51,9 @@ class _HomePageState extends State<HomePage>
   /// items). Runs entirely in memory on the already-decrypted notes, so it never
   /// touches the network and works offline.
   final TextEditingController _searchCtrl = TextEditingController();
+  // Keyboard resizing can move this header between fixed and scrolling layouts.
+  // Reparent its existing editor so focus and the platform input connection live on.
+  final GlobalKey _headerKey = GlobalKey(debugLabel: 'notes-header');
 
   late final Widget _body;
 
@@ -73,14 +76,18 @@ class _HomePageState extends State<HomePage>
     _body = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _Header(searchController: _searchCtrl, welcome: _welcome),
+        _Header(
+            key: _headerKey, searchController: _searchCtrl, welcome: _welcome),
         Expanded(child: _NotesGrid(controller: _controller)),
       ],
     );
     _scrollingBody = NestedScrollView(
       headerSliverBuilder: (context, _) => [
         SliverToBoxAdapter(
-          child: _Header(searchController: _searchCtrl, welcome: _welcome),
+          child: _Header(
+              key: _headerKey,
+              searchController: _searchCtrl,
+              welcome: _welcome),
         ),
       ],
       // No controller of its own: the grid scrolls through the NestedScrollView's.
@@ -175,7 +182,7 @@ class _HomePageState extends State<HomePage>
                 final fontSize = AppType.bodyMd.fontSize!;
                 final largeText =
                     MediaQuery.textScalerOf(context).scale(fontSize) >
-                    fontSize * 1.6;
+                        fontSize * 1.6;
                 // A fixed welcome/search header can crowd out enlarged note
                 // cards. Reuse the scrolling header so notes remain reachable
                 // immediately, as well as after the four-second collapse.
@@ -195,7 +202,8 @@ class _HomePageState extends State<HomePage>
 // ---- header ---------------------------------------------------------------
 
 class _Header extends StatelessWidget {
-  const _Header({required this.searchController, required this.welcome});
+  const _Header(
+      {super.key, required this.searchController, required this.welcome});
 
   final TextEditingController searchController;
   final Widget welcome;
@@ -337,79 +345,77 @@ class _WelcomeSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
-    animation: expansion,
-    builder: (_, child) {
-      final amount = Curves.easeOutCubic.transform(expansion.value);
-      return ExcludeSemantics(
-        excluding: amount == 0,
-        child: ClipRect(
-          key: const ValueKey('notes-welcome-section'),
-          child: Align(
-            alignment: Alignment.topLeft,
-            heightFactor: amount,
-            child: Opacity(
-              opacity: amount,
-              child: Transform.translate(
-                offset: Offset(0, -AppSpace.md * (1 - amount)),
-                child: child,
+        animation: expansion,
+        builder: (_, child) {
+          final amount = Curves.easeOutCubic.transform(expansion.value);
+          return ExcludeSemantics(
+            excluding: amount == 0,
+            child: ClipRect(
+              key: const ValueKey('notes-welcome-section'),
+              child: Align(
+                alignment: Alignment.topLeft,
+                heightFactor: amount,
+                child: Opacity(
+                  opacity: amount,
+                  child: Transform.translate(
+                    offset: Offset(0, -AppSpace.md * (1 - amount)),
+                    child: child,
+                  ),
+                ),
               ),
             ),
-          ),
+          );
+        },
+        child: ValueListenableBuilder<DateTime>(
+          valueListenable: time,
+          builder: (_, now, __) {
+            final greeting = now.hour < 12
+                ? 'Good morning'
+                : (now.hour < 17 ? 'Good afternoon' : 'Good evening');
+            final date = '${now.year.toString().padLeft(4, '0')}-'
+                '${now.month.toString().padLeft(2, '0')}-'
+                '${now.day.toString().padLeft(2, '0')}';
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                MonoLabel(
+                  '$greeting · $date',
+                  key: const ValueKey('notes-local-greeting'),
+                  color: AppColors.signal,
+                ),
+                const SizedBox(height: AppSpace.sm),
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    // Keep the complete welcome readable on narrow windows with
+                    // large text. Use an existing smaller display token; do not
+                    // clamp the user's scaler or truncate the greeting/counts.
+                    final narrowLargeText = constraints.maxWidth < 360 &&
+                        MediaQuery.textScalerOf(
+                              context,
+                            ).scale(AppType.headlineLg.fontSize!) >
+                            AppType.displayLg.fontSize!;
+                    return Text.rich(
+                      key: const ValueKey('notes-welcome-heading'),
+                      const TextSpan(
+                        children: [
+                          TextSpan(text: 'CLEAR HEAD. '),
+                          TextSpan(
+                            text: 'WRITE IT DOWN.',
+                            style: TextStyle(color: AppColors.signal),
+                          ),
+                        ],
+                      ),
+                      style: narrowLargeText ? AppType.cta : AppType.headlineLg,
+                      semanticsLabel: 'Clear head. Write it down.',
+                    );
+                  },
+                ),
+                const SizedBox(height: AppSpace.md),
+              ],
+            );
+          },
         ),
       );
-    },
-    child: ValueListenableBuilder<DateTime>(
-      valueListenable: time,
-      builder: (_, now, __) {
-        final greeting = now.hour < 12
-            ? 'Good morning'
-            : (now.hour < 17 ? 'Good afternoon' : 'Good evening');
-        final date =
-            '${now.year.toString().padLeft(4, '0')}-'
-            '${now.month.toString().padLeft(2, '0')}-'
-            '${now.day.toString().padLeft(2, '0')}';
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            MonoLabel(
-              '$greeting · $date',
-              key: const ValueKey('notes-local-greeting'),
-              color: AppColors.signal,
-            ),
-            const SizedBox(height: AppSpace.sm),
-            LayoutBuilder(
-              builder: (context, constraints) {
-                // Keep the complete welcome readable on narrow windows with
-                // large text. Use an existing smaller display token; do not
-                // clamp the user's scaler or truncate the greeting/counts.
-                final narrowLargeText =
-                    constraints.maxWidth < 360 &&
-                    MediaQuery.textScalerOf(
-                          context,
-                        ).scale(AppType.headlineLg.fontSize!) >
-                        AppType.displayLg.fontSize!;
-                return Text.rich(
-                  key: const ValueKey('notes-welcome-heading'),
-                  const TextSpan(
-                    children: [
-                      TextSpan(text: 'CLEAR HEAD. '),
-                      TextSpan(
-                        text: 'WRITE IT DOWN.',
-                        style: TextStyle(color: AppColors.signal),
-                      ),
-                    ],
-                  ),
-                  style: narrowLargeText ? AppType.cta : AppType.headlineLg,
-                  semanticsLabel: 'Clear head. Write it down.',
-                );
-              },
-            ),
-            const SizedBox(height: AppSpace.md),
-          ],
-        );
-      },
-    ),
-  );
 }
 
 /// The filter chips and the search box, hidden while notes are being selected.
@@ -774,17 +780,17 @@ class _NotesGrid extends StatelessWidget {
         final featured = notes.first.pinned ? notes.first : null;
         final remaining = featured == null ? notes : notes.skip(1).toList();
         Widget card(Note note, {bool featured = false}) => NotesBulder(
-          key: ValueKey(note.id),
-          note: note,
-          featured: featured,
-          selected: state.selected.contains(note.id),
-          selectionMode: state.selecting,
-          onTap: () => state.selecting
-              ? bloc.add(NoteSelectionToggled(note.id))
-              : _openEditor(context, note),
-          onLongPress: () => bloc.add(NoteSelectionToggled(note.id)),
-          onToggleItem: (i) => bloc.add(NoteItemToggled(note, i)),
-        );
+              key: ValueKey(note.id),
+              note: note,
+              featured: featured,
+              selected: state.selected.contains(note.id),
+              selectionMode: state.selecting,
+              onTap: () => state.selecting
+                  ? bloc.add(NoteSelectionToggled(note.id))
+                  : _openEditor(context, note),
+              onLongPress: () => bloc.add(NoteSelectionToggled(note.id)),
+              onToggleItem: (i) => bloc.add(NoteItemToggled(note, i)),
+            );
         return Scrollbar(
           radius: AppRadius.smRadius,
           thickness: 4,
@@ -852,7 +858,7 @@ class _EmptyState extends StatelessWidget {
               narrowed
                   ? 'No notes match this filter. Try another one.'
                   : 'Tap New note to start writing. You can switch to a '
-                        'checklist in the editor.',
+                      'checklist in the editor.',
               style: AppType.bodyMd.copyWith(color: AppColors.slateData),
             ),
           ],
