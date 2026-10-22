@@ -379,7 +379,8 @@ void main() {
         'a', 'atomic-disposable-client-a', descriptor['owner'] as String);
     final b = await device(
         'b', 'atomic-disposable-client-b', descriptor['owner'] as String);
-    final note = Note(id: newId(), title: 'Conflict fixture', body: 'Base');
+    final note = Note(id: newId(), title: 'Conflict fixture', body: 'Base',
+        important: true);
     await a.notes.save(note);
     await a.cubit.sync(uploadAll: false);
     outcomes['conflict_phase'] = 'base_uploaded';
@@ -388,10 +389,12 @@ void main() {
     expect(baseVersion, greaterThan(0));
     await b.cubit.sync(uploadAll: false);
     expect(b.notes.byId(note.id)!.serverVersion, baseVersion);
+    expect(b.notes.byId(note.id)!.important, isTrue);
     final offline = b.notes.byId(note.id)!;
     offline.body = 'Offline B';
     await b.notes.save(offline);
     note.body = 'Accepted A';
+    note.important = false;
     await a.notes.save(note);
     await a.cubit.sync(uploadAll: false);
     outcomes['first_client_edit'] =
@@ -420,6 +423,7 @@ void main() {
             : 'different';
     outcomes['conflict_phase'] = 'checking_remote_original_body';
     expect(b.notes.byId(note.id)!.body, 'Accepted A');
+    expect(b.notes.byId(note.id)!.important, isFalse);
     outcomes['conflict_phase'] = 'checking_remote_original_version';
     expect(b.notes.byId(note.id)!.serverVersion, acceptedVersion);
     outcomes['conflict_phase'] = 'checking_local_copy';
@@ -427,6 +431,7 @@ void main() {
         value.id != note.id &&
         value.title == 'Conflict fixture (conflict copy)');
     expect(copy.body, 'Offline B');
+    expect(copy.important, isTrue);
     expect(copy.dirty, isTrue);
     outcomes['conflict_phase'] = 'checking_no_stale_write';
     final refused = await diagnostic('/__fixture/state');
@@ -442,6 +447,7 @@ void main() {
     await a.cubit.sync(uploadAll: false);
     expect(a.notes.byId(note.id)!.body, 'Accepted A');
     expect(a.notes.byId(copy.id)!.body, 'Offline B');
+    expect(a.notes.byId(copy.id)!.important, isTrue);
     outcomes['conflict_phase'] = 'passed';
   });
 

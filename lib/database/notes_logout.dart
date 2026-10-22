@@ -65,7 +65,8 @@ extension SafeNotesLogout on NotesRepository {
             if (local.dirty) {
               final copy = Note(id: snapshot.conflictId, kind: local.kind,
                   title: '${local.title.length > 270 ? local.title.substring(0, 270) : local.title} (conflict copy)',
-                  body: local.body, items: local.items.map((item) => item.copy()).toList(), dirty: true);
+                  body: local.body, items: local.items.map((item) => item.copy()).toList(),
+                  important: local.important, dirty: true);
               final existing = _notes[copy.id];
               if (existing == null) {
                 _notes[copy.id] = copy;

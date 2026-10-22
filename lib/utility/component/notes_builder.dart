@@ -21,6 +21,13 @@ class NotesBulder extends StatelessWidget {
   /// Ticking a checklist row straight from the card.
   final void Function(int index) onToggleItem;
 
+  Color get _accent =>
+      note.important ? AppColors.importantTitle : AppColors.signal;
+  Color get _bodyColor =>
+      note.important ? AppColors.onImportantSurface : AppColors.onSurface;
+  Color get _metadataColor =>
+      note.important ? AppColors.onImportantSurface : AppColors.slateData;
+
   const NotesBulder({
     required this.note,
     required this.selected,
@@ -48,14 +55,18 @@ class NotesBulder extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.all(AppSpace.md - 2),
           decoration: BoxDecoration(
-            color: AppColors.surfaceLowest,
+            color: note.important
+                ? AppColors.importantSurface
+                : AppColors.surfaceLowest,
             borderRadius: AppRadius.std,
             border: Border.all(
               color: selected
-                  ? AppColors.signal
-                  : featured
-                      ? AppColors.ink
-                      : AppColors.outlineVariant,
+                  ? _accent
+                  : note.important
+                      ? AppColors.importantOutline
+                      : featured
+                          ? AppColors.ink
+                          : AppColors.outlineVariant,
               width: selected ? AppStroke.offset : AppStroke.rule,
             ),
             boxShadow: featured
@@ -71,13 +82,19 @@ class NotesBulder extends StatelessWidget {
               Row(
                 children: [
                   Expanded(
-                    child: MonoLabel(_dateLabel(note.updatedAt), small: true),
+                    child: MonoLabel(_dateLabel(note.updatedAt),
+                        small: true, color: _metadataColor),
                   ),
+                  if (note.important)
+                    Icon(Icons.label_important,
+                        size: 16,
+                        color: _accent,
+                        semanticLabel: 'Important note'),
                   if (note.pinned)
-                    const Icon(
+                    Icon(
                       Icons.push_pin,
                       size: 16,
-                      color: AppColors.signal,
+                      color: _accent,
                       semanticLabel: 'Pinned',
                     ),
                 ],
@@ -92,14 +109,18 @@ class NotesBulder extends StatelessWidget {
                       style:
                           (featured ? AppType.headlineMd : AppType.headlineSm)
                               .copyWith(
-                        color: untitled ? AppColors.outline : AppColors.ink,
+                        color: note.important
+                            ? AppColors.importantTitle
+                            : untitled
+                                ? AppColors.outline
+                                : AppColors.ink,
                       ),
                       maxLines: 2,
                     ),
                   ),
                   if (selectionMode) ...[
                     const SizedBox(width: AppSpace.sm),
-                    _Tick(on: selected),
+                    _Tick(on: selected, important: note.important),
                   ],
                 ],
               ),
@@ -113,7 +134,7 @@ class NotesBulder extends StatelessWidget {
                   note.body,
                   maxLines: featured ? 3 : 4,
                   overflow: TextOverflow.ellipsis,
-                  style: AppType.bodyMd,
+                  style: AppType.bodyMd.copyWith(color: _bodyColor),
                 ),
               ],
               if ((note.kind == NoteKind.todo || mixedChecklist) &&
@@ -122,7 +143,7 @@ class NotesBulder extends StatelessWidget {
                 MonoLabel(
                   '${tasks.where((line) => line.done).length} / ${tasks.length} DONE',
                   small: true,
-                  color: AppColors.signal,
+                  color: _accent,
                 ),
               ],
             ],
@@ -162,13 +183,17 @@ class NotesBulder extends StatelessWidget {
                       child: Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            _Tick(on: lines[i].done, small: true),
+                            _Tick(
+                                on: lines[i].done,
+                                small: true,
+                                important: note.important),
                             const SizedBox(width: AppSpace.sm),
                             Expanded(
                                 child: Text(lines[i].text,
                                     maxLines: 2,
                                     overflow: TextOverflow.ellipsis,
                                     style: AppType.bodySm.copyWith(
+                                        color: _bodyColor,
                                         decoration: lines[i].done
                                             ? TextDecoration.lineThrough
                                             : null))),
@@ -176,10 +201,11 @@ class NotesBulder extends StatelessWidget {
                   : Text(lines[i].text,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: AppType.bodyMd),
+                      style: AppType.bodyMd.copyWith(color: _bodyColor)),
             ),
           if (lines.length > 4)
-            MonoLabel('+${lines.length - 4} MORE', small: true),
+            MonoLabel('+${lines.length - 4} MORE',
+                small: true, color: _metadataColor),
         ],
       ),
     );
@@ -205,7 +231,10 @@ class NotesBulder extends StatelessWidget {
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _Tick(on: rows[i].done, small: true),
+                    _Tick(
+                        on: rows[i].done,
+                        small: true,
+                        important: note.important),
                     const SizedBox(width: AppSpace.sm),
                     Expanded(
                       child: Text(
@@ -215,9 +244,11 @@ class NotesBulder extends StatelessWidget {
                         style: AppType.bodySm.copyWith(
                           decoration:
                               rows[i].done ? TextDecoration.lineThrough : null,
-                          color: rows[i].done
-                              ? AppColors.outline
-                              : AppColors.onSurface,
+                          color: note.important
+                              ? AppColors.onImportantSurface
+                              : rows[i].done
+                                  ? AppColors.outline
+                                  : AppColors.onSurface,
                         ),
                       ),
                     ),
@@ -226,7 +257,8 @@ class NotesBulder extends StatelessWidget {
               ),
             ),
           if (note.items.length > rows.length)
-            MonoLabel('+${note.items.length - rows.length} MORE', small: true),
+            MonoLabel('+${note.items.length - rows.length} MORE',
+                small: true, color: _metadataColor),
         ],
       ),
     );
@@ -238,7 +270,8 @@ class NotesBulder extends StatelessWidget {
 class _Tick extends StatelessWidget {
   final bool on;
   final bool small;
-  const _Tick({required this.on, this.small = false});
+  final bool important;
+  const _Tick({required this.on, this.small = false, this.important = false});
 
   @override
   Widget build(BuildContext context) {
@@ -247,13 +280,23 @@ class _Tick extends StatelessWidget {
       height: s,
       width: s,
       decoration: BoxDecoration(
-        color: on ? AppColors.signal : Colors.transparent,
+        color: on
+            ? (important ? AppColors.importantTitle : AppColors.signal)
+            : Colors.transparent,
         border: Border.all(
-          color: on ? AppColors.signal : AppColors.outline,
+          color: important
+              ? AppColors.importantOutline
+              : on
+                  ? AppColors.signal
+                  : AppColors.outline,
           width: AppStroke.rule,
         ),
       ),
-      child: on ? Icon(Icons.check, size: s - 4, color: Colors.white) : null,
+      child: on
+          ? Icon(Icons.check,
+              size: s - 4,
+              color: important ? AppColors.importantSurface : Colors.white)
+          : null,
     );
   }
 }

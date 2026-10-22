@@ -42,7 +42,9 @@ void main() {
         await directory.delete(recursive: true);
       });
       await repository.start();
-      final original = Note.create()..body = 'Context\nConclusion';
+      final original = Note.create()
+        ..body = 'Context\nConclusion'
+        ..important = true;
       final document = NoteDocument.fromNote(original);
       document.insertChecklistAfter(0, caretOffset: 2);
       document.replaceText(1, 'Task');
@@ -57,6 +59,7 @@ void main() {
           : rawCache;
       final cached = Note.fromMap({...rawCache, ...cachedContent});
       expect(cached.body, note.body);
+      expect(cached.important, isTrue);
       expect(NoteDocument.isEncoded(cached), isTrue);
       expect(await repository.syncNow(instant: true), isTrue);
       final row = api.pushes
@@ -65,12 +68,14 @@ void main() {
       final content = encrypted
           ? await vault.decryptContent(row['payload'] as String)
           : row;
+      expect(row['important'], isTrue);
       if (encrypted) {
         expect(row['body'], isEmpty);
         expect(row['items'], isEmpty);
       }
       final pulled = Note.fromRemote({...row, ...content, 'version': 1});
       final restored = NoteDocument.fromNote(pulled);
+      expect(pulled.important, isTrue);
       expect(NoteDocument.isEncoded(pulled), isTrue);
       expect(restored.lines.map((line) => line.text),
           ['Context', 'Task', 'Conclusion']);

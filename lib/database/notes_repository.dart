@@ -941,7 +941,8 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
           final copy = Note(
               id: copyId,
               kind: local.kind, title: '${local.title.length > 270 ? local.title.substring(0, 270) : local.title} (conflict copy)',
-            body: local.body, items: local.items.map((i) => i.copy()).toList(), dirty: true);
+            body: local.body, items: local.items.map((i) => i.copy()).toList(),
+            important: local.important, dirty: true);
           _notes[copy.id] = copy;
           await _persist(copy.id);
           // The other version is fetched again below and replaces this one.

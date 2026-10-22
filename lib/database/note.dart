@@ -35,6 +35,7 @@ class Note {
   String body;
   List<TodoItem> items;
   bool pinned;
+  bool important;
 
   /// Tombstone. Deleting sets this rather than dropping the record: without a
   /// tombstone, a delete on one device can never reach another device, which
@@ -62,6 +63,7 @@ class Note {
     this.body = '',
     List<TodoItem>? items,
     this.pinned = false,
+    this.important = false,
     this.deleted = false,
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -100,7 +102,7 @@ class Note {
   }
 
   /// A short fingerprint of everything that is synced: kind, title, body, items,
-  /// pinned and deleted. Two notes with the same fingerprint hold the same thing.
+  /// pinned, important and deleted. Two notes with the same fingerprint hold the same thing.
   /// It is a change detector, not a security measure.
   String get contentSig {
     final text = jsonEncode([
@@ -110,6 +112,7 @@ class Note {
       items.map((i) => i.toMap()).toList(),
       pinned,
       deleted,
+      if (important) true,
     ]);
     // Two independent 32-bit hashes and the length, so an accidental match is not a realistic worry.
     var a = 0x811c9dc5;
@@ -126,7 +129,10 @@ class Note {
   /// for example after an edit that was undone, or a delete that was restored
   /// before it synced. Nothing is sent for such a note. Returns true if it did.
   bool settleDirty() {
-    if (dirty && serverVersion > 0 && syncedSig.isNotEmpty && contentSig == syncedSig) {
+    if (dirty &&
+        serverVersion > 0 &&
+        syncedSig.isNotEmpty &&
+        contentSig == syncedSig) {
       dirty = false;
       return true;
     }
@@ -150,6 +156,7 @@ class Note {
         'body': body,
         'items': items.map((i) => i.toMap()).toList(),
         'pinned': pinned,
+        if (important) 'important': true,
         'deleted': deleted,
         'createdAt': createdAt.toIso8601String(),
         'updatedAt': updatedAt.toIso8601String(),
@@ -168,6 +175,7 @@ class Note {
             .map(TodoItem.fromMap)
             .toList(),
         pinned: m['pinned'] == true,
+        important: m['important'] == true,
         deleted: m['deleted'] == true,
         createdAt: _parseDate(m['createdAt']),
         updatedAt: _parseDate(m['updatedAt']),
@@ -187,6 +195,7 @@ class Note {
         'body': body,
         'items': items.map((i) => i.toMap()).toList(),
         'pinned': pinned,
+        'important': important,
         'deleted': deleted,
         'created_at': createdAt.toIso8601String(),
       };
@@ -199,6 +208,7 @@ class Note {
       body: (m['body'] ?? '').toString(),
       items: _decodeItems(m['items']),
       pinned: m['pinned'] == true,
+      important: m['important'] == true,
       deleted: m['deleted'] == true,
       createdAt: _parseDate(m['created_at']),
       updatedAt: _parseDate(m['updated_at']),
@@ -232,6 +242,7 @@ class Note {
         body: body,
         items: items.map((i) => i.copy()).toList(),
         pinned: pinned,
+        important: important,
         deleted: deleted,
         createdAt: createdAt,
         updatedAt: updatedAt,
