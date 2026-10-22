@@ -12,6 +12,7 @@ import 'package:atomic_notes/theme/app_tokens.dart';
 import 'package:atomic_notes/theme/editorial.dart';
 import 'package:atomic_notes/utility/app_info.dart';
 import 'package:atomic_notes/utility/component/atomic_brand.dart';
+import 'package:atomic_notes/utility/component/atomic_splash_mark.dart';
 import 'package:atomic_notes/utility/component/logo_container.dart';
 import 'package:atomic_notes/utility/splash_route_resolver.dart';
 import 'package:flutter/material.dart';
@@ -151,16 +152,16 @@ class _SplashPageState extends State<SplashPage> {
 
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(
-      backgroundColor: AppColors.paper,
-      body: SafeArea(
+    return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      body: const SafeArea(
         child: Padding(
           padding: EdgeInsets.all(AppSpace.screenMargin),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Spacer(flex: 3),
-              LogoContainer(showTagline: true),
+              LogoContainer(showTagline: true, mark: AtomicSplashMark()),
               Spacer(flex: 4),
               // Boot status reads like a system readout rather than a
               // decorative spinner block.
