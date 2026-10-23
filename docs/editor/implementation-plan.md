@@ -4,13 +4,13 @@ Reference: user-supplied `02 · Note Editor-html.zip`, inspected as data, never 
 
 ## Design and scope
 
-- Keep paper #F4F5F1, ink #15171B, signal #3A2FF0, existing type families, current 24px note title, white important-card titles and accepted launcher/splash. Dark theme remains cancelled.
+- Keep paper #F4F5F1, ink #15171B, signal #3A2FF0, existing type families, white important-card titles and accepted launcher/splash. Latest owner refinement increases the note title from24px to32px; dark theme remains cancelled.
 - Compact back/breadcrumb/editor heading, pin and important actions. Keep Copy accessible. No decorative history button without history storage.
 - Show last saved edit time separately from draft status. Done commits through existing repository; no false autosave or cloud-save claims.
-- Tags: add/remove, trim and deduplicate, bounded count/length; persist with encrypted content. No invented folder hierarchy.
+- Tags: below the title and above the body, per the latest owner request; add/remove, trim and deduplicate, bounded count/length; persist with encrypted content. No invented folder hierarchy.
 - Selection styles: bold, italic, underline, strike, paragraph heading. H means Heading as requested, although the prototype labels it Highlight. Preserve native selection actions and keep styles independently toggleable. Provide 48px touch targets, selected semantics, keyboard-safe placement and overflow for narrow screens.
 - Round bottom actions: text line, checklist, image, dictation, delete; Done remains visible. Footer wraps/scrolls at narrow widths and large text instead of shrinking targets. Live visible words, ceiling reading time at 200 words/minute, completed/nonempty task count. No JSON/base64 in counts, preview, search or clipboard.
-- Images are bounded compressed JPEG blocks embedded in encrypted note content, not externally hosted. Picker cancellation/error preserves draft. Reject oversize notes before commit with an actionable message.
+- Images are bounded compressed JPEG blocks embedded in encrypted note content. Latest owner refinement adds an in-app optimization preview before insertion: JPEG quality 40–85%, maximum dimension 512/768/1024px without upscaling, prepared/output KB and dimensions, Cancel/Insert controls. The existing gallery adapter first prepares a metadata-free JPEG capped at 1024px and 60 KiB; this tool further optimizes that prepared image and cannot restore original detail. Preparation uses the per-image cap so users can reduce the result to the remaining aggregate note budget in the preview. Compression runs off the UI isolate, with one job in flight and the newest settings coalesced; stale results cannot replace newer settings. Both raw image and complete note budgets gate Insert. Picker or preview cancellation/error preserves the draft.
 - Dictation inserts at the current selection. Partial recognition replaces its own segment rather than accumulating duplicates. Explicit start/stop, cancel on lifecycle/route exit, permission only on use. The device speech service may process audio remotely; tell the user before first use. No audio file storage.
 - Delete uses the normal recycle-bin repository action after explicit confirmation, not clearing text and saving an empty note. Unsaved notes can be discarded locally.
 
@@ -28,6 +28,8 @@ Image aggregate ceiling 60 KiB, subject to actual full-note body, sealed ciphert
 2. Formatting agent: `editor/rich_text_controller.dart` and controller tests only. UTF-16 ranges, composing spans, edit transforms and paragraph-heading boundaries. Depends on public style model.
 3. Media agent: injectable gallery/JPEG and speech adapters, dependencies/lockfile, Android microphone/service manifest and adapter tests. No editor widget edits.
 4. Root: responsive editor integration, selection menu above native actions, tags, footer/read status, Home rendering/routing and integration tests. Review foundation then integrate UI in a focused dependent PR. No concurrent edits to owned files.
+
+The follow-up optimizer slice uses the media agent for the pure JPEG optimizer, preview sheet and focused tests; root owns title/tag placement and editor wiring. The storage reviewer independently checks image limits and asynchronous lifecycle handling, and recovers only the disposable local fixture from a fresh verified current device snapshot. Device acceptance depends on that restoration and an exact-source APK; it must not reuse an older note corpus over newer edits.
 
 Do not commit private device caches, old notes, credentials or original dirty mirrors. Work in the existing small C: checkout; no D: usage or duplicate full project copies.
 

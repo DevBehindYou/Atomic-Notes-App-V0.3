@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:atomic_notes/database/note.dart';
 import 'package:atomic_notes/database/note_document.dart';
 import 'package:atomic_notes/editor/editor_media.dart';
+import 'package:atomic_notes/editor/image_optimizer.dart';
 import 'package:atomic_notes/page/notes_editor_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -12,9 +13,11 @@ class _ImageInput implements EditorImageInput {
   String? result;
   bool fail = false;
   int calls = 0;
+  int? lastMaxBytes;
   @override
   Future<String?> pickJpeg({required int maxBytes}) async {
     calls++;
+    lastMaxBytes = maxBytes;
     expect(maxBytes, inInclusiveRange(1, 60 * 1024));
     if (fail) throw const EditorMediaException('Gallery unavailable');
     return result;
@@ -93,6 +96,23 @@ Future<void> _action(WidgetTester tester, String label) async {
   await tester.ensureVisible(button);
   await tester.pumpAndSettle();
   await tester.tap(button);
+  await tester.pump();
+  if (label == 'Add image' &&
+      find.byType(NoteImageOptimizer).evaluate().isNotEmpty) {
+    final progress = find.descendant(
+        of: find.byType(NoteImageOptimizer),
+        matching: find.byType(LinearProgressIndicator));
+    // Exercise the production compute isolate, which needs real event-loop
+    // time rather than only advancing Flutter's fake animation clock.
+    for (var attempt = 0;
+        attempt < 100 && progress.evaluate().isNotEmpty;
+        attempt++) {
+      await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 50)));
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(progress, findsNothing, reason: 'image optimization should finish');
+  }
   await tester.pumpAndSettle();
 }
 
@@ -103,6 +123,17 @@ Future<void> _startSpeech(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets('title stays above tags and uses the accepted 32px size',
+      (tester) async {
+    final original =
+        Note(id: 'title-tags', title: 'Project title', body: 'Body');
+    final document = NoteDocument.fromNote(original)..setTags(['planning']);
+    await _open(tester, document.toNote(original));
+    final title = find.byKey(const ValueKey('note-title'));
+    expect(tester.widget<TextField>(title).style!.fontSize, 32);
+    expect(tester.getRect(title).bottom,
+        lessThanOrEqualTo(tester.getRect(find.text('#planning')).top));
+  });
   testWidgets('image cancellation preserves text and saves no image block',
       (tester) async {
     final note = Note(id: 'photo-cancel', title: 'Project', body: 'Original');
@@ -129,6 +160,13 @@ void main() {
     await _open(tester, note, images: _ImageInput()..result = encoded);
     expect(find.text('4 WORDS'), findsOneWidget);
     await _action(tester, 'Add image');
+    expect(find.byType(NoteImageOptimizer), findsOneWidget);
+    final preview = tester.widget<Image>(find.byType(Image));
+    final optimized = base64Encode((preview.image as MemoryImage).bytes);
+    await tester.ensureVisible(find.text('Insert image'));
+    await tester.tap(find.text('Insert image'));
+    await tester.pumpAndSettle();
+    expect(find.byType(NoteImageOptimizer), findsNothing);
     expect(find.byType(Image), findsOneWidget);
     expect(find.text('4 WORDS'), findsOneWidget);
     expect(find.text('1 MIN READ'), findsOneWidget);
@@ -137,7 +175,7 @@ void main() {
     await tester.pumpAndSettle();
     final saved = NoteDocument.fromNote(note);
     expect(saved.isReadOnly, isFalse);
-    expect(saved.lines.where((l) => l.isImage).single.imageBase64, encoded);
+    expect(saved.lines.where((l) => l.isImage).single.imageBase64, optimized);
     expect(saved.lines.where((l) => !l.isImage).single.text, 'two plain words');
     await tester.tap(find.text('Open'));
     await tester.pumpAndSettle();
@@ -145,6 +183,59 @@ void main() {
     expect(find.text('4 WORDS'), findsOneWidget);
     expect(find.textContaining(encoded), findsNothing);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'canceling the optimizer preserves the draft without attaching an image',
+      (tester) async {
+    final note = Note(id: 'optimizer-cancel', body: 'Original');
+    final encoded =
+        base64Encode(image.encodeJpg(image.Image(width: 16, height: 12)));
+    await _open(tester, note, images: _ImageInput()..result = encoded);
+    await tester.enterText(_body, 'Edited draft remains');
+    await _action(tester, 'Add image');
+    expect(find.byType(NoteImageOptimizer), findsOneWidget);
+    expect(note.body, 'Original');
+    await tester.ensureVisible(find.text('Cancel'));
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(find.byType(NoteImageOptimizer), findsNothing);
+    expect(find.byType(Image), findsNothing);
+    expect(_controller(tester).text, 'Edited draft remains');
+    expect(note.body, 'Original');
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
+    expect(note.body, 'Edited draft remains');
+    expect(NoteDocument.fromNote(note).lines.where((l) => l.isImage), isEmpty);
+  });
+  testWidgets(
+      'picker preparation uses the full cap while sheet shows remaining image budget',
+      (tester) async {
+    final encoded =
+        base64Encode(image.encodeJpg(image.Image(width: 16, height: 12)));
+    final original =
+        Note(id: 'aggregate-image-budget', body: 'Keep existing image');
+    final document = NoteDocument.fromNote(original);
+    document.insertImageAfter(0, encoded);
+    final note = document.toNote(original);
+    final before = note.contentSig;
+    final remaining =
+        NoteContentBudget.maxImageBytes - base64Decode(encoded).length;
+    final input = _ImageInput()..result = encoded;
+    await _open(tester, note, images: input);
+    await _action(tester, 'Add image');
+    expect(input.lastMaxBytes, NoteContentBudget.maxImageBytes);
+    expect(find.byType(NoteImageOptimizer), findsOneWidget);
+    expect(
+        find.text(
+            'Available image budget: ${(remaining / 1024).toStringAsFixed(1)} KB'),
+        findsOneWidget);
+    await tester.ensureVisible(find.text('Cancel'));
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(note.contentSig, before);
+    expect(NoteDocument.fromNote(note).lines.where((line) => line.isImage),
+        hasLength(1));
   });
 
   testWidgets('image failure leaves unsaved draft editable', (tester) async {
