@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:atomic_notes/editor/editor_media.dart';
+import 'package:atomic_notes/editor/image_optimizer.dart';
 import 'package:atomic_notes/editor/rich_selection_toolbar.dart';
 import 'package:atomic_notes/editor/rich_text_controller.dart';
 import 'package:atomic_notes/database/note.dart';
@@ -402,7 +403,6 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
                                 ],
                               ),
                               const SizedBox(height: AppSpace.md),
-                              _tags(),
                               TextField(
                                 key: const ValueKey('note-title'),
                                 readOnly: _document.isReadOnly,
@@ -412,12 +412,13 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
                                     TextCapitalization.sentences,
                                 maxLines: null,
                                 style: AppType.displayLg.copyWith(
-                                  fontSize: AppType.displayLg.fontSize! / 2,
+                                  fontSize: AppType.displayLg.fontSize! * 2 / 3,
                                 ),
                                 cursorColor: AppColors.signal,
                                 decoration: _decoration('Title'),
                                 onChanged: (_) => setState(() {}),
                               ),
+                              _tags(),
                               const SizedBox(height: AppSpace.md),
                               for (var i = 0; i < _document.lines.length; i++)
                                 _lineRow(i),
@@ -666,7 +667,32 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
     }
     setState(() => _picking = true);
     try {
-      final image = await _imageInput.pickJpeg(maxBytes: remaining);
+      // Prepare within the per-image safety cap first. Let the preview controls
+      // reduce it to the remaining aggregate note budget before insertion.
+      final selected = await _imageInput.pickJpeg(
+          maxBytes: NoteContentBudget.maxImageBytes);
+      if (!mounted || selected == null) return;
+      String? validateImage(String base64) {
+        try {
+          final candidate = NoteDocument.fromNote(_snapshot());
+          candidate.insertImageAfter(
+              _activeLine.clamp(-1, candidate.lines.length - 1), base64);
+          return NoteContentBudget.errorFor(candidate.toNote(_snapshot()));
+        } on FormatException catch (error) {
+          return error.message;
+        }
+      }
+      final image = await showModalBottomSheet<String>(
+        context: context,
+        isScrollControlled: true,
+        useSafeArea: true,
+        backgroundColor: AppColors.paper,
+        builder: (_) => NoteImageOptimizer(
+          sourceBase64: selected,
+          maxBytes: remaining,
+          validate: validateImage,
+        ),
+      );
       if (!mounted || image == null) return;
       final candidate = NoteDocument.fromNote(_snapshot());
       final index = _activeLine.clamp(-1, candidate.lines.length - 1);
