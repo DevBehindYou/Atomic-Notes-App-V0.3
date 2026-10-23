@@ -22,6 +22,7 @@ class FakeSpeech extends SpeechToText {
   int canceled = 0;
   int listens = 0;
   Completer<void>? cancellation;
+  Completer<void>? listening;
   @override
   Future<bool> initialize(
       {SpeechErrorListener? onError,
@@ -51,6 +52,7 @@ class FakeSpeech extends SpeechToText {
     listens++;
     result = onResult;
     options = listenOptions;
+    await listening?.future;
   }
 
   @override
@@ -177,7 +179,8 @@ void main() {
     expect(speech.listens, 1,
         reason: 'new listen must wait for native cancellation');
     oldResult(SpeechRecognitionResult.init(
-        const [SpeechRecognitionWords('old', null, 1)], ResultType.finalResult));
+        const [SpeechRecognitionWords('old', null, 1)],
+        ResultType.finalResult));
     speech.status!(SpeechToText.doneStatus);
     speech.error!(SpeechRecognitionError('old cancel error', false));
     expect(events, isEmpty);
@@ -188,6 +191,46 @@ void main() {
     speech.words('new', finalResult: true);
     speech.status!(SpeechToText.doneStatus);
     expect(events, ['new', 'stopped']);
+  });
+  testWidgets('final before Stop needs no second final or done callback',
+      (tester) async {
+    final speech = FakeSpeech();
+    final input = PlatformEditorSpeechInput(speech: speech);
+    final errors = <String>[];
+    var stopped = 0;
+    final words = <String>[];
+    await input.start(
+        onResult: (text, _) => words.add(text),
+        onError: errors.add,
+        onStopped: () => stopped++);
+    speech.words('already complete', finalResult: true);
+    expect(stopped, 0);
+    await input.stop();
+    await tester.pump(const Duration(seconds: 4));
+    expect(errors, isEmpty);
+    expect(words, ['already complete']);
+    expect(stopped, 1);
+    expect(speech.canceled, 0);
+  });
+  test(
+      'completed result before listen resolves returns inactive without an error',
+      () async {
+    final speech = FakeSpeech()..listening = Completer<void>();
+    final input = PlatformEditorSpeechInput(speech: speech);
+    final events = <String>[];
+    final started = input.start(
+        onResult: (text, _) => events.add(text),
+        onError: fail,
+        onStopped: () => events.add('stopped'));
+    await Future<void>.delayed(Duration.zero);
+    expect(speech.listens, 1);
+    speech.words('fast complete', finalResult: true);
+    speech.status!(SpeechToText.doneStatus);
+    expect(events, ['fast complete', 'stopped']);
+    speech.listening!.complete();
+    expect(await started, isFalse,
+        reason:
+            'False means no longer active, not necessarily permission failure');
   });
   test('stop done before any partial still accepts the delayed final result',
       () async {

@@ -17,6 +17,9 @@ class EditorMediaException implements Exception {
 abstract class EditorSpeechInput {
   /// Results replace the previous partial result for this listening session.
   /// The caller owns inserting that segment at the original cursor position.
+  /// Returns whether the session is still active after platform startup. A fast
+  /// successful session can deliver its final result and onStopped first, then
+  /// return false; callers must not treat that as a permission failure.
   Future<bool> start({
     required void Function(String words, bool finalResult) onResult,
     required void Function(String message) onError,
@@ -194,6 +197,7 @@ class PlatformEditorSpeechInput implements EditorSpeechInput {
         if (!_active || generation != _generation) return;
         await _speech.stop();
       });
+      if (_active && generation == _generation && _sawFinal) _finish();
     } catch (_) {
       if (!_active || generation != _generation) return;
       _onError?.call(
