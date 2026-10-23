@@ -40,10 +40,10 @@ class AppColors {
   /// On an Ink background.
   static const Color onInk = Color(0xFFF0F1EB);
 
-  /// Fixed important-card palette: title contrast is 10.49:1 on black.
+  /// Fixed important-card palette: title contrast is 21:1 on black.
   static const Color importantSurface = Color(0xFF000000);
   static const Color onImportantSurface = Color(0xFFF0F1EB);
-  static const Color importantTitle = Color(0xFFB8B3D9);
+  static const Color importantTitle = Color(0xFFFFFFFF);
   static const Color importantOutline = Color(0xFFA4A6AF);
 
   // ---- Lines ------------------------------------------------------------
