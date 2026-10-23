@@ -73,6 +73,9 @@ dependencies:
 
   # Opens https links (notification buttons, the support page) in the phone's browser.
   url_launcher: ^6.3.2
+  image_picker: ^1.2.4
+  speech_to_text: ^7.5.0
+  image: ^4.12.0
 
 
 
