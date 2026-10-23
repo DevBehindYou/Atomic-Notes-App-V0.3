@@ -522,6 +522,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   @override
   Future<void> save(Note note) => _trackNoteMutation(() async {
     _assertWritable(note.id);
+    if (NoteDocument.hasRichContent(note)) NoteContentBudget.validate(note);
     note.touch();
     // Saved without a real change (or edited back to what the cloud holds): nothing to upload.
     note.settleDirty();

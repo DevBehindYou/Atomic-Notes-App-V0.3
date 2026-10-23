@@ -33,6 +33,7 @@ class NotesBloc extends Bloc<NotesEvent, NotesState> {
     on<NoteSelectionAllToggled>(_onSelectionAllToggled);
     on<NotesDeleteSelected>(_onDeleteSelected);
     on<NoteSaved>(_onNoteSaved);
+    on<NoteDeleted>(_onNoteDeleted);
     on<NoteItemToggled>(_onItemToggled,
         transformer: (events, mapper) => events.asyncExpand(mapper));
     on<NotesSyncRequested>(_onSyncRequested);
@@ -68,8 +69,10 @@ class NotesBloc extends Bloc<NotesEvent, NotesState> {
         : all
             .where((n) =>
                 n.title.toLowerCase().contains(q) ||
-                n.body.toLowerCase().contains(q) ||
-                n.items.any((it) => it.text.toLowerCase().contains(q)))
+                NoteDocument.fromNote(n).plainText.toLowerCase().contains(q) ||
+                NoteDocument.fromNote(n)
+                    .tags
+                    .any((tag) => tag.toLowerCase().contains(q)))
             .toList();
     // Drop selections for notes that vanished under us (deleted on another device, or pulled in
     // as a tombstone). The same set is kept when nothing was dropped.
@@ -165,13 +168,24 @@ class NotesBloc extends Bloc<NotesEvent, NotesState> {
   Future<void> _onNoteSaved(NoteSaved event, Emitter<NotesState> emit) =>
       _source.save(event.note);
 
+  Future<void> _onNoteDeleted(
+      NoteDeleted event, Emitter<NotesState> emit) async {
+    if (_source.byId(event.id) == null) return;
+    await _source.deleteNotes([event.id]);
+    emit(_currentSnapshot(state).copyWith(
+      selected: state.selected.where((id) => id != event.id).toSet(),
+      notice: _notice('Note moved to the Recycle Bin', 1500),
+    ));
+  }
+
   Future<void> _onItemToggled(
       NoteItemToggled event, Emitter<NotesState> emit) async {
     final current = _source.byId(event.note.id);
     if (current == null || current.deleted) return;
     if (current.kind == NoteKind.text) {
       final document = NoteDocument.fromNote(current);
-      if (event.index < 0 ||
+      if (document.isReadOnly ||
+          event.index < 0 ||
           event.index >= document.lines.length ||
           !document.lines[event.index].isChecklist) {
         return;

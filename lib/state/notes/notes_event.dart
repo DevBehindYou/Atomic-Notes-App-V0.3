@@ -44,6 +44,12 @@ final class NoteSaved extends NotesEvent {
   final Note note;
 }
 
+/// Moves one existing note to the Recycle Bin through the repository.
+final class NoteDeleted extends NotesEvent {
+  const NoteDeleted(this.id);
+  final String id;
+}
+
 /// Ticks or unticks one checklist row straight from a card.
 final class NoteItemToggled extends NotesEvent {
   const NoteItemToggled(this.note, this.index);
