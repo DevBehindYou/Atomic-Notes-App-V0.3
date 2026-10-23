@@ -43,7 +43,8 @@ class NotesBulder extends StatelessWidget {
   Widget build(BuildContext context) {
     final bool untitled = note.title.trim().isEmpty;
     final document = NoteDocument.fromNote(note);
-    final mixedChecklist = note.kind == NoteKind.text && document.hasChecklist;
+    final mixedChecklist = note.kind == NoteKind.text &&
+        (document.hasChecklist || NoteDocument.hasRichContent(note));
     final tasks = document.lines.where((line) => line.isChecklist).toList();
 
     return Padding(
@@ -146,6 +147,13 @@ class NotesBulder extends StatelessWidget {
                   color: _accent,
                 ),
               ],
+              if (document.tags.isNotEmpty) ...[
+                const SizedBox(height: AppSpace.sm),
+                Text(document.tags.map((tag) => '#$tag').join('  '),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppType.labelMono.copyWith(color: _metadataColor)),
+              ],
             ],
           ),
         ),
@@ -176,32 +184,39 @@ class NotesBulder extends StatelessWidget {
           for (var i = 0; i < lines.length && i < 4; i++)
             Padding(
               padding: const EdgeInsets.only(bottom: 6),
-              child: lines[i].isChecklist
-                  ? GestureDetector(
-                      onTap: selectionMode ? null : () => onToggleItem(i),
-                      behavior: HitTestBehavior.opaque,
-                      child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            _Tick(
-                                on: lines[i].done,
-                                small: true,
-                                important: note.important),
-                            const SizedBox(width: AppSpace.sm),
-                            Expanded(
-                                child: Text(lines[i].text,
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: AppType.bodySm.copyWith(
-                                        color: _bodyColor,
-                                        decoration: lines[i].done
-                                            ? TextDecoration.lineThrough
-                                            : null))),
-                          ]))
-                  : Text(lines[i].text,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: AppType.bodyMd.copyWith(color: _bodyColor)),
+              child: lines[i].isImage
+                  ? Row(children: [
+                      Icon(Icons.image_outlined, size: 20, color: _bodyColor),
+                      const SizedBox(width: AppSpace.sm),
+                      Text('Image',
+                          style: AppType.bodySm.copyWith(color: _bodyColor)),
+                    ])
+                  : lines[i].isChecklist
+                      ? GestureDetector(
+                          onTap: selectionMode ? null : () => onToggleItem(i),
+                          behavior: HitTestBehavior.opaque,
+                          child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                _Tick(
+                                    on: lines[i].done,
+                                    small: true,
+                                    important: note.important),
+                                const SizedBox(width: AppSpace.sm),
+                                Expanded(
+                                    child: Text(lines[i].text,
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: AppType.bodySm.copyWith(
+                                            color: _bodyColor,
+                                            decoration: lines[i].done
+                                                ? TextDecoration.lineThrough
+                                                : null))),
+                              ]))
+                      : Text(lines[i].text,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: AppType.bodyMd.copyWith(color: _bodyColor)),
             ),
           if (lines.length > 4)
             MonoLabel('+${lines.length - 4} MORE',

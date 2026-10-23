@@ -732,7 +732,12 @@ Future<void> _openEditor(BuildContext context, Note note) async {
   final saved = await showDialog<bool>(
     context: context,
     barrierDismissible: false,
-    builder: (_) => NotesCreaterPage(note: draft),
+    builder: (_) => NotesCreaterPage(
+      note: draft,
+      onDelete: bloc.state.notes.any((n) => n.id == note.id)
+          ? () => bloc.add(NoteDeleted(note.id))
+          : null,
+    ),
   );
   if (saved != true || !context.mounted || bloc.isClosed) return;
   if (draft.isEmpty) {
