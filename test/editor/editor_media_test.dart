@@ -177,7 +177,7 @@ void main() {
     expect(speech.listens, 1,
         reason: 'new listen must wait for native cancellation');
     oldResult(SpeechRecognitionResult.init(
-        [const SpeechRecognitionWords('old', null, 1)], ResultType.finalResult));
+        const [SpeechRecognitionWords('old', null, 1)], ResultType.finalResult));
     speech.status!(SpeechToText.doneStatus);
     speech.error!(SpeechRecognitionError('old cancel error', false));
     expect(events, isEmpty);
