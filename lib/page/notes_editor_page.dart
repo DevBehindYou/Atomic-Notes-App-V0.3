@@ -745,6 +745,8 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
     _speechSelection = controller.selection;
     _speechTarget = controller;
     final session = ++_speechSession;
+    var ended = false;
+    var received = false;
     setState(() => _starting = true);
     try {
       final ready = await _speechInput.start(
@@ -761,6 +763,7 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
             return;
           }
           if (words.trim().isEmpty) return;
+          received = true;
           final prefix = _speechBefore.isNotEmpty &&
                   !RegExp(r'\s$').hasMatch(_speechBefore)
               ? ' '
@@ -785,6 +788,7 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
           }
         },
         onStopped: () {
+          ended = true;
           if (mounted && session == _speechSession) {
             setState(() => _listening = false);
           }
@@ -796,9 +800,9 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
       }
       setState(() {
         _starting = false;
-        _listening = ready;
+        _listening = ready && !ended;
       });
-      if (!ready) {
+      if (!ready && !received && !ended) {
         _message(
             'Speech recognition is unavailable or microphone access was denied. You can keep typing.');
       }

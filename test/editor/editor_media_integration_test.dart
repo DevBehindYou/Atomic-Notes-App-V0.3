@@ -24,6 +24,7 @@ class _ImageInput implements EditorImageInput {
 /// Intentionally emits even after cancellation to verify the UI session guard.
 class _SpeechInput implements EditorSpeechInput {
   int starts = 0, cancels = 0, stops = 0;
+  bool completeDuringStart = false;
   void Function(String, bool)? result;
   void Function()? stopped;
   @override
@@ -34,6 +35,11 @@ class _SpeechInput implements EditorSpeechInput {
     starts++;
     result = onResult;
     stopped = onStopped;
+    if (completeDuringStart) {
+      onResult('fast final', true);
+      onStopped();
+      return false;
+    }
     return true;
   }
 
@@ -214,6 +220,28 @@ void main() {
     await tester.pump();
     expect(_controller(tester).text, 'Manually edited text');
     expect(find.byTooltip('Dictate text'), findsOneWidget);
+  });
+
+  testWidgets(
+      'a final result before start resolves is saved without an unavailable toast',
+      (tester) async {
+    final input = _SpeechInput()..completeDuringStart = true;
+    final note = Note(id: 'fast-final', body: 'Before');
+    await _open(tester, note, speech: input);
+    await _startSpeech(tester);
+    expect(input.starts, 1);
+    expect(_controller(tester).text, 'Before fast final');
+    expect(note.body, 'Before');
+    expect(find.byTooltip('Dictate text'), findsOneWidget);
+    expect(find.byTooltip('Stop dictation'), findsNothing);
+    expect(find.text('LISTENING…'), findsNothing);
+    expect(
+        find.textContaining('Speech recognition is unavailable'), findsNothing);
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
+    expect(note.body, 'Before fast final');
+    expect(find.byType(NotesCreaterPage), findsNothing);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets(
