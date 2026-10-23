@@ -73,9 +73,12 @@
       "background": "#FFFFFF",
       "artworkColor": "#4B238C",
       "orbitStrokeWidth": 24,
-      "sourceOrbitStrokeWidth": 11
+      "sourceOrbitStrokeWidth": 11,
+      "artworkScaleRelativeToPrevious": 0.6666666666666666,
+      "adaptiveArtworkRadiusDp": 22.0,
+      "rasterArtworkRadiusRatio": 0.28
     },
-    "measuredImportantArtworkMaxRadiusDp": 32.978,
+    "measuredImportantArtworkMaxRadiusDp": 22.001,
     "nativeSplashCanvasDp": 288,
     "nativeSplashSafeDiameterDp": 192,
     "nativeSplashArtworkDiameterDp": 176,
@@ -109,8 +112,8 @@
     },
     {
       "path": "new-atomic-icons/android/adaptive-foreground.png",
-      "bytes": 40209,
-      "sha256": "5665907e6493f03734618bc27e102d99fda547546b05627b749a86413b92b43c",
+      "bytes": 27517,
+      "sha256": "d16f419f2f2ccea5a667944cd8b17840ff008d2c5af406311fd35f5237846fca",
       "width": 432,
       "height": 432,
       "mode": "RGBA",
@@ -122,8 +125,8 @@
     },
     {
       "path": "new-atomic-icons/android/adaptive-monochrome.png",
-      "bytes": 19643,
-      "sha256": "ba0024493b9c9a2cf17eef4225e5253bb6d2bcaf1245e9028705acf70efdc9cd",
+      "bytes": 12567,
+      "sha256": "248965d38346dd2c363b05ee42eb76f1829ce943edc54c669f43af7599e2d187",
       "width": 432,
       "height": 432,
       "mode": "RGBA",
@@ -135,8 +138,8 @@
     },
     {
       "path": "new-atomic-icons/android/google-play-512.png",
-      "bytes": 62079,
-      "sha256": "73e0a88311fd003cc997417229978150e73ee45fc336da9834365e97ef193d01",
+      "bytes": 42728,
+      "sha256": "b12a8d7c9bac6f5259f0217811fd7e4ade649e4843f3176245d8a38e24708375",
       "width": 512,
       "height": 512,
       "mode": "RGBA",
@@ -148,8 +151,8 @@
     },
     {
       "path": "new-atomic-icons/android/launcher-source-1024.png",
-      "bytes": 127566,
-      "sha256": "66981ad42ca0716d54f81c9a419412459618ad665d3bf134d41f1914c39ad2a7",
+      "bytes": 89634,
+      "sha256": "565fd413db7c8119c932824595d19bfcfbbaf0bceec24ad451187e914b7171dc",
       "width": 1024,
       "height": 1024,
       "mode": "RGBA",
@@ -161,8 +164,8 @@
     },
     {
       "path": "new-atomic-icons/android/legacy/launcher-144.png",
-      "bytes": 15186,
-      "sha256": "79bf5887b6b482eddb6e836984190777a688c738428ca0e6a5bae0bb41bc8559",
+      "bytes": 8623,
+      "sha256": "051f66206b56931d5c22dae8e954aac3248853ebc68c6bd8893b6a4aceb1b68e",
       "width": 144,
       "height": 144,
       "mode": "RGBA",
@@ -174,8 +177,8 @@
     },
     {
       "path": "new-atomic-icons/android/legacy/launcher-192.png",
-      "bytes": 21445,
-      "sha256": "a8f958986181d1661fbd33ad9682b5c820256e4310eb964c31f26067ddfb2409",
+      "bytes": 13970,
+      "sha256": "f60348897cd19a6792bdc4b79f47510df7ff3772798adee21152eb941e5e9568",
       "width": 192,
       "height": 192,
       "mode": "RGBA",
@@ -187,8 +190,8 @@
     },
     {
       "path": "new-atomic-icons/android/legacy/launcher-48.png",
-      "bytes": 3143,
-      "sha256": "f11a133133419d58f92389ae015442e0f3b20518933ed82538b7bdb2ee03607b",
+      "bytes": 1895,
+      "sha256": "15c6a0bbdd1f7fd6584728c12c0906eb90832f302520c7fe76fdeccbb71cb25e",
       "width": 48,
       "height": 48,
       "mode": "RGBA",
@@ -200,8 +203,8 @@
     },
     {
       "path": "new-atomic-icons/android/legacy/launcher-72.png",
-      "bytes": 5693,
-      "sha256": "93bd70423eaf61fbb2dabd97ab4a012d6ea6cd46816d612f6122ba5598b5a813",
+      "bytes": 3246,
+      "sha256": "c0d956a77aa5e9cb1c7b2db0d62203118a7b4680abc9090bf3a7eb2a64c6a3b3",
       "width": 72,
       "height": 72,
       "mode": "RGBA",
@@ -213,8 +216,8 @@
     },
     {
       "path": "new-atomic-icons/android/legacy/launcher-96.png",
-      "bytes": 8273,
-      "sha256": "0adb852d558dcc70b297c6cc3b50e683bc87c87fb4d7b2c205ba613df65fe0bc",
+      "bytes": 4814,
+      "sha256": "f74dcacca2c8d4c8cf91a802f249051ba4901f6cf17276c95743c02c045f98d5",
       "width": 96,
       "height": 96,
       "mode": "RGBA",
@@ -227,12 +230,12 @@
     {
       "path": "new-atomic-icons/android/native/drawable/atomic_launcher_foreground.xml",
       "bytes": 1519,
-      "sha256": "e8b275c385ec0fea40fed2eb3ec73023d1767c63d2d84052f06d5aec48848ba5"
+      "sha256": "95de78caf2b91eda85a31df71410d061cc5882b46cb30a4d82292ef88aa5df88"
     },
     {
       "path": "new-atomic-icons/android/native/drawable/atomic_launcher_monochrome.xml",
       "bytes": 1482,
-      "sha256": "68dff555b868f76b5ecdbf5a3946749ac1e7a11637965592813b70cbedd920c0"
+      "sha256": "7fd400daa4e3408ec3071669b5dd17e32a9cfbbcc86afac6bd29188796497e04"
     },
     {
       "path": "new-atomic-icons/android/native/drawable/atomic_notification.xml",
@@ -457,8 +460,8 @@
     },
     {
       "path": "new-atomic-icons/previews/android-masks-safe-zones.png",
-      "bytes": 178918,
-      "sha256": "22d99ecd50836cae107b439537310dbff26e064b3e90337c9c9f3aaf311603ed",
+      "bytes": 141036,
+      "sha256": "c128353b1f2cccaedae0a95f0af40c88791dc4c30c4e518d9df6a9f3803d9b97",
       "width": 1200,
       "height": 660,
       "mode": "RGB",

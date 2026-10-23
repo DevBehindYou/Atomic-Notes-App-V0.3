@@ -28,6 +28,9 @@ SVG = "http://www.w3.org/2000/svg"
 PAPER, INK, SIGNAL = "#F4F5F1", "#15171B", "#3A2FF0"
 VARIANTS = ("on-light", "on-dark", "mono-ink", "mono-white")
 LAUNCHER_STROKE = 24  # Launcher-only weight; supplied companion/splash remain 11.
+LAUNCHER_ARTWORK_SCALE = 2 / 3  # Relative to the previous white/purple launcher.
+LAUNCHER_ADAPTIVE_RADIUS = 33 * LAUNCHER_ARTWORK_SCALE
+LAUNCHER_RASTER_RADIUS_RATIO = .28  # Previous .42 radius, scaled by 2/3.
 LAUNCHER_WHITE, LAUNCHER_PURPLE = "#FFFFFF", "#4B238C"
 SOURCE_HASHES = {
     "atomic-icon.jpg": "3114c97ad9fe8ce43d5760e9399be135c0a0a1608b528e3aab6f4155bfa546e9",
@@ -217,12 +220,13 @@ def build() -> None:
     for name, expected in SOURCE_HASHES.items():
         if sha(ASSETS / name) != expected:
             raise ValueError("Named source hash differs: " + name)
-    # 108 dp canvas, radius 33 dp: all primitives fit the central 66 dp circle.
+    # 108 dp canvas, radius 22 dp: artwork is two-thirds of its former size.
+    # The Android safe circle stays 66 dp; only the complete artwork scales.
     # Monochrome is deliberately its own even-odd single-color vector.
-    library_and_native("drawable/atomic_launcher_foreground.xml", vector("launcher-white-purple", 108, 33, 108, LAUNCHER_STROKE))
-    library_and_native("drawable/atomic_launcher_monochrome.xml", vector("themed-white", 108, 33, 108, LAUNCHER_STROKE))
-    foreground = raster("launcher-white-purple", 432, 132, stroke=LAUNCHER_STROKE)
-    monochrome = raster("themed-white", 432, 132, stroke=LAUNCHER_STROKE)
+    library_and_native("drawable/atomic_launcher_foreground.xml", vector("launcher-white-purple", 108, LAUNCHER_ADAPTIVE_RADIUS, 108, LAUNCHER_STROKE))
+    library_and_native("drawable/atomic_launcher_monochrome.xml", vector("themed-white", 108, LAUNCHER_ADAPTIVE_RADIUS, 108, LAUNCHER_STROKE))
+    foreground = raster("launcher-white-purple", 432, LAUNCHER_ADAPTIVE_RADIUS*4, stroke=LAUNCHER_STROKE)
+    monochrome = raster("themed-white", 432, LAUNCHER_ADAPTIVE_RADIUS*4, stroke=LAUNCHER_STROKE)
     save_png(LIB / "android/adaptive-foreground.png", foreground)
     save_png(LIB / "android/adaptive-monochrome.png", monochrome)
     write(LIB / "android/adaptive-background.svg", f'<svg xmlns="{SVG}" width="108" height="108" viewBox="0 0 108 108"><path fill="{LAUNCHER_WHITE}" d="M0 0h108v108H0z"/></svg>\n')
@@ -234,13 +238,13 @@ def build() -> None:
     for name in ("launcher_icon", "ic_launcher"):
         library_and_native("mipmap-anydpi-v26/" + name + ".xml", adaptive)
     for density, size in (("mdpi",48),("hdpi",72),("xhdpi",96),("xxhdpi",144),("xxxhdpi",192)):
-        image = raster("launcher-white-purple", size, size * .42, LAUNCHER_WHITE, LAUNCHER_STROKE)
+        image = raster("launcher-white-purple", size, size * LAUNCHER_RASTER_RADIUS_RATIO, LAUNCHER_WHITE, LAUNCHER_STROKE)
         save_png(LIB / "android/legacy" / f"launcher-{size}.png", image)
         for name in ("launcher_icon", "ic_launcher"):
             save_png(RES / ("mipmap-" + density) / (name + ".png"), image)
     # Store icon is opaque RGBA (32-bit), square, no hand-drawn outer rounding.
-    save_png(LIB / "android/google-play-512.png", raster("launcher-white-purple", 512, 512*.42, LAUNCHER_WHITE, LAUNCHER_STROKE))
-    save_png(LIB / "android/launcher-source-1024.png", raster("launcher-white-purple", 1024, 1024*.42, LAUNCHER_WHITE, LAUNCHER_STROKE))
+    save_png(LIB / "android/google-play-512.png", raster("launcher-white-purple", 512, 512*LAUNCHER_RASTER_RADIUS_RATIO, LAUNCHER_WHITE, LAUNCHER_STROKE))
+    save_png(LIB / "android/launcher-source-1024.png", raster("launcher-white-purple", 1024, 1024*LAUNCHER_RASTER_RADIUS_RATIO, LAUNCHER_WHITE, LAUNCHER_STROKE))
     for variant in ("on-light", "on-dark"):
         save_png(LIB / "splash" / f"atomic-splash-{variant}.png", raster(variant, 576, 176))
     # Native Android 12+: static vector, 288 dp canvas; 176 dp artwork fits its
@@ -300,7 +304,8 @@ def preview() -> None:
         bg=INK if i in (2,4) else LAUNCHER_WHITE
         # Android masks the 72 dp visible viewport of the 108 dp layer canvas;
         # the remaining 18 dp on each edge is reserved for parallax effects.
-        layer=raster("mono-white" if i==4 else "mono-ink" if i==3 else "on-dark" if i==2 else "launcher-white-purple",324,99,bg,15 if i==2 else LAUNCHER_STROKE)
+        radius=99 if i==2 else LAUNCHER_ADAPTIVE_RADIUS*3
+        layer=raster("mono-white" if i==4 else "mono-ink" if i==3 else "on-dark" if i==2 else "launcher-white-purple",324,radius,bg,15 if i==2 else LAUNCHER_STROKE)
         icon=layer.crop((54,54,270,270))
         mask=Image.new("L",(216,216)); md=ImageDraw.Draw(mask)
         if i==1: md.rounded_rectangle((0,0,215,215),radius=48,fill=255)
@@ -309,7 +314,7 @@ def preview() -> None:
         board.paste(flattened.convert("RGB"),(x,55),mask)
         draw.text((x,24),label,fill=INK)
     # Exact 108 dp / 66 dp adaptive and 288 dp / 192 dp native splash bounds.
-    adaptive=raster("launcher-white-purple",324,99,LAUNCHER_WHITE,LAUNCHER_STROKE)
+    adaptive=raster("launcher-white-purple",324,LAUNCHER_ADAPTIVE_RADIUS*3,LAUNCHER_WHITE,LAUNCHER_STROKE)
     board.paste(adaptive.convert("RGB"),(44,305))
     draw.rectangle((44,305,367,628),outline="#555555",width=1)
     draw.ellipse((107,368,305,566),outline="#CE4A4A",width=2)
@@ -319,10 +324,10 @@ def preview() -> None:
     board.paste(splash.convert("RGB"),(440,320))
     draw.ellipse((488,368,680,560),outline="#CE4A4A",width=2)
     draw.text((440,285),"Native splash: red circle = central 192 / 288 dp",fill=INK)
-    draw.text((800,330),"Launcher: white / purple; stroke 24",fill=INK)
+    draw.text((800,330),"Launcher: white / purple; 2/3 artwork",fill=INK)
     draw.text((800,356),"Actual launcher sizes: 48 px / 32 px",fill=INK)
     for i,size in enumerate((48,32)):
-        layer=raster("launcher-white-purple",size*6,size*6*33/108,LAUNCHER_WHITE,LAUNCHER_STROKE)
+        layer=raster("launcher-white-purple",size*6,size*6*LAUNCHER_ADAPTIVE_RADIUS/108,LAUNCHER_WHITE,LAUNCHER_STROKE)
         visible=layer.crop((size,size,size*5,size*5)).resize((size,size),Image.Resampling.LANCZOS)
         mask=Image.new("L",(size,size)); ImageDraw.Draw(mask).ellipse((0,0,size-1,size-1),fill=255)
         board.paste(visible.convert("RGB"),(800+i*85,395),mask)
@@ -354,6 +359,7 @@ def verify(provenance: dict) -> dict:
     alpha=foreground.getchannel("A")
     max_radius=max(math.hypot(x+0.5-216,y+0.5-216) for y in range(432) for x in range(432) if alpha.getpixel((x,y))>=128)
     assert max_radius <= 133, "Adaptive artwork outside central safe circle"
+    assert abs(max_radius-LAUNCHER_ADAPTIVE_RADIUS*4) <= 1, "Launcher artwork scale differs"
     monochrome=Image.open(LIB/"android/adaptive-monochrome.png").convert("RGBA")
     assert all(r==g==b==255 for r,g,b,a in list(monochrome.get_flattened_data()) if a), "Colored monochrome layer"
     store=Image.open(LIB/"android/google-play-512.png")
@@ -372,7 +378,8 @@ def verify(provenance: dict) -> dict:
             "visualBoundary":"Companion is a symmetric reconstruction, not pixel-identical JPEG extraction. On-dark intentionally substitutes Paper for Ink to preserve contrast.",
             "colors":{"paper":PAPER,"ink":INK,"signal":SIGNAL},
             "sources":provenance,"android":{"adaptiveCanvasDp":108,"adaptiveSafeDiameterDp":66,
-            "launcher":{"variant":"white-purple","background":LAUNCHER_WHITE,"artworkColor":LAUNCHER_PURPLE,"orbitStrokeWidth":LAUNCHER_STROKE,"sourceOrbitStrokeWidth":11},
+            "launcher":{"variant":"white-purple","background":LAUNCHER_WHITE,"artworkColor":LAUNCHER_PURPLE,"orbitStrokeWidth":LAUNCHER_STROKE,"sourceOrbitStrokeWidth":11,
+            "artworkScaleRelativeToPrevious":LAUNCHER_ARTWORK_SCALE,"adaptiveArtworkRadiusDp":LAUNCHER_ADAPTIVE_RADIUS,"rasterArtworkRadiusRatio":LAUNCHER_RASTER_RADIUS_RATIO},
             "measuredImportantArtworkMaxRadiusDp":round(max_radius/4,3),"nativeSplashCanvasDp":288,
             "nativeSplashSafeDiameterDp":192,"nativeSplashArtworkDiameterDp":176,
             "legacyPixels":[48,72,96,144,192],"play":{"pixels":512,"mode":"RGBA","maxBytes":1048576},

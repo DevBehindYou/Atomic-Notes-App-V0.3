@@ -35,8 +35,12 @@ rounded outer corners. The Play PNG is below 1 MiB.
 
 The launcher and Play artwork use a white background (`#FFFFFF`) and dark-purple
 atomic lines, electrons and nucleus (`#4B238C`). Launcher orbit strokes are 24
-source units instead of the supplied 11 for small-size legibility. Ellipse geometry, electrons,
-nucleus and adaptive scale are unchanged. Both colored and themed launcher
+source units instead of the supplied 11 for small-size legibility. The complete
+launcher artwork, including its strokes, is scaled to **two-thirds of its previous
+size** within the same tile. Adaptive artwork radius is now 22 dp (previously
+33 dp); legacy, Play and 1024 px source artwork radius is 28% of canvas width
+(previously 42%). Ellipse geometry, electrons and nucleus keep their proportions.
+Both colored and themed launcher
 orbits use that weight. The supplied SVG/PNG companions, in-app logos and native
 splash retain their original strokes. `manifest.json` records this launcher-only
 derivation. The mask preview includes actual 48 px and 32 px circular icons.
@@ -67,7 +71,7 @@ python tool/test_verify_branding_assets.py
 
 The standard-library verifier emits only fixed outcome codes, parses bounded PNG
 chunks with CRC and decompression limits, and checks actual RGBA alpha coverage,
-native references and library hashes. Its fourteen controls include the valid
+native references and library hashes. Its nineteen controls include the valid
 library and deliberate in-memory corruption of safe zones, monochrome colors,
 store opacity, dimensions, CRC, source hashes and native aliases; oversized
 decodes, path escapes and private exception text are also rejected. No source
@@ -75,6 +79,10 @@ asset is mutated by those controls. Exact decoded GIF first-frame identity is
 verified by the local generation tool; CI checks the committed hashes, dimensions
 and alpha of those PNG fallbacks. Three controls reject a dark launcher
 background, incorrect purple, or thinner launcher orbit weight.
+The artwork-size check measures raster coverage independently of hashes and
+manifest metadata. Four controls reject the previous full-size adaptive vector,
+adaptive raster, legacy raster and Play icon; a positive control checks the new
+22 dp radius. Android still controls the launcher's outer tile size.
 
 The one-time `--import-source <existing-assets-directory>` option validates the
 three named JPEG/GIF hashes and imports the supplied vector/PNG/GIF companions.

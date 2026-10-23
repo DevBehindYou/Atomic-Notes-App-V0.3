@@ -154,7 +154,7 @@ def adaptive_layers() -> None:
         assert root.get(A+"width")=="108dp" and root.get(A+"height")=="108dp"
         group=root.find("group")
         assert group is not None and group.get(A+"translateX")=="54" and group.get(A+"translateY")=="54"
-        assert abs(float(group.get(A+"scaleX","0"))*362-33)<.00001
+        assert abs(float(group.get(A+"scaleX","0"))*362-22)<.00001
         assert group.get(A+"scaleX")==group.get(A+"scaleY")
     mono=ET.fromstring(bounded(RES/"drawable/atomic_launcher_monochrome.xml"))
     colors={node.get(A+key) for node in mono.iter() for key in ("fillColor","strokeColor") if node.get(A+key) is not None}
@@ -172,7 +172,7 @@ def android_launcher() -> None:
         for name in ("launcher_icon","ic_launcher"):
             width,height,pixels,_=png(RES/("mipmap-"+density)/(name+".png"))
             assert (width,height)==(size,size) and set(pixels[3::4])=={255}
-        assert bounded(RES/("mipmap-"+density)/"launcher_icon.png")==bounded(LIB/"android/legacy"/("launcher-"+str(size)+".png"))
+            assert bounded(RES/("mipmap-"+density)/(name+".png"))==bounded(LIB/"android/legacy"/("launcher-"+str(size)+".png"))
     manifest=ET.fromstring(bounded(ROOT/"android/app/src/main/AndroidManifest.xml"))
     assert manifest.find("application").get(A+"icon")=="@mipmap/launcher_icon"
 
@@ -227,6 +227,22 @@ def white_purple_launcher_style() -> None:
     opaque={foreground[i:i+3] for i in range(0,len(foreground),4) if foreground[i+3]==255}
     assert b"\x4b\x23\x8c" in opaque and b"\xff\xff\xff" in opaque
     assert b"\x3a\x2f\xf0" not in opaque and b"\xf4\xf5\xf1" not in opaque
+    # Measure actual artwork independently of generated hashes and metadata.
+    # Alpha identifies transparent artwork; opaque tiles use solid purple cores.
+    paths=[LIB/"android"/name for name in ("adaptive-foreground.png", "adaptive-monochrome.png",
+                                         "google-play-512.png", "launcher-source-1024.png")]
+    paths.extend(sorted((LIB/"android/legacy").glob("launcher-*.png")))
+    for path in paths:
+        size,height,pixels,_=png(path)
+        assert size==height
+        transparent="adaptive-" in path.name
+        radii=[]
+        for i in range(0,len(pixels),4):
+            if pixels[i+3]>=128 and (transparent or all(abs(pixels[i+j]-color)<=32 for j,color in enumerate((75,35,140)))):
+                pixel=i//4
+                radii.append(math.hypot(pixel%size+.5-size/2,pixel//size+.5-size/2))
+        expected=88 if transparent else size*.28
+        assert radii and abs(max(radii)-expected)<=1.5
 
 
 def mascots() -> None:
