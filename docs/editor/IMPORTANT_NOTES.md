@@ -2,11 +2,11 @@
 
 The editor's **Mark important** control sits beside Pin. It changes only the
 draft until Done or Save. Discard retains the original note. Important cards
-have a black surface, purple-gray title, light content and a labelled importance
+have a black surface, white title, light content and a labelled importance
 icon; pinning, ordering and mixed text/checklist editing remain independent.
 
-The fixed card palette uses `#000000` background, `#B8B3D9` title, `#F0F1EB`
-content and `#A4A6AF` outline. The purple-gray title has 10.49:1 contrast against
+The fixed card palette uses `#000000` background, `#FFFFFF` title, `#F0F1EB`
+content and `#A4A6AF` outline. The white title has 21:1 contrast against
 black. Tests require 4.5:1 text and 3:1 outline contrast.
 
 Importance survives local Hive maps, copies, ordinary and logout conflict
