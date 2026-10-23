@@ -107,23 +107,35 @@ class NoteDocument {
     _lines.removeAt(index);
   }
 
-  Note toNote(Note original) {
+  Note toNote(Note original, {bool removeEmptyLines = false}) {
     final result = original.copy();
-    if (!hasChanges) return result;
+    final lines = removeEmptyLines
+        ? _lines.where((line) => line.text.trim().isNotEmpty).toList()
+        : _lines;
+    final removedEmpty = lines.length != _lines.length;
+    if (!hasChanges && !removedEmpty) return result;
+    // Cleanup alone must not recode an otherwise untouched legacy checklist.
+    if (!hasChanges && _sourceKind == NoteKind.todo) {
+      result.items =
+          result.items.where((item) => item.text.trim().isNotEmpty).toList();
+      if (result.body.trim().isEmpty) result.body = '';
+      return result;
+    }
     if (_sourceKind == NoteKind.todo &&
         original.body.isEmpty &&
-        _lines.every((line) => line.isChecklist)) {
+        lines.every((line) => line.isChecklist)) {
       result.kind = NoteKind.todo;
       result.items = [
-        for (final line in _lines) TodoItem(text: line.text, done: line.done),
+        for (final line in lines) TodoItem(text: line.text, done: line.done),
       ];
       return result;
     }
     result.kind = NoteKind.text;
-    result.body = hasChecklist
-        ? _lines.map(_encode).join('\n')
-        : _lines.map((line) => line.text).join('\n');
-    result.items = hasChecklist ? [TodoItem(text: formatMarker)] : [];
+    final hasSavedChecklist = lines.any((line) => line.isChecklist);
+    result.body = hasSavedChecklist
+        ? lines.map(_encode).join('\n')
+        : lines.map((line) => line.text).join('\n');
+    result.items = hasSavedChecklist ? [TodoItem(text: formatMarker)] : [];
     return result;
   }
 

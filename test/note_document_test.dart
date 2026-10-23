@@ -3,6 +3,44 @@ import 'package:atomic_notes/database/note_document.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('save cleanup preserves legacy body, duplicate tasks and draft state',
+      () {
+    final note = Note(
+        id: 'legacy-cleanup',
+        kind: NoteKind.todo,
+        body: 'First\n\n  Second  ',
+        pinned: true,
+        important: true,
+        items: [
+          TodoItem(text: ' \t ', done: true),
+          TodoItem(text: 'Same', done: true),
+          TodoItem(text: 'Same')
+        ]);
+    final before = note.contentSig;
+    final document = NoteDocument.fromNote(note);
+    final saved = document.toNote(note, removeEmptyLines: true);
+    expect(saved.kind, NoteKind.todo);
+    expect(saved.body, note.body);
+    expect(saved.items.map((item) => item.text), ['Same', 'Same']);
+    expect(saved.items.map((item) => item.done), [true, false]);
+    expect(saved.pinned && saved.important, isTrue);
+    expect(note.contentSig, before);
+    expect(document.hasChanges, isFalse);
+    expect(document.lines, hasLength(4));
+  });
+  test('saving only empty mixed blocks removes the format discriminator', () {
+    final note = Note(
+        id: 'empty-mixed',
+        body: '- [x] \n \t ',
+        items: [TodoItem(text: NoteDocument.formatMarker)]);
+    final document = NoteDocument.fromNote(note);
+    final saved = document.toNote(note, removeEmptyLines: true);
+    expect(saved.body, isEmpty);
+    expect(saved.items, isEmpty);
+    expect(NoteDocument.isEncoded(saved), isFalse);
+    expect(document.lines, hasLength(2));
+    expect(note.body, '- [x] \n \t ');
+  });
   test('legacy literal Markdown stays plain text until explicit insertion', () {
     final note = Note(id: 'legacy', body: '- [ ] literal\n- [x] example');
     final document = NoteDocument.fromNote(note);

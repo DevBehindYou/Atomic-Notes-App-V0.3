@@ -143,7 +143,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(note.kind, NoteKind.text);
     expect(NoteDocument.isEncoded(note), isTrue);
-    expect(note.body, '- [x] Same\nContext\n- [ ] \n- [ ] Same');
+    expect(note.body, '- [x] Same\nContext\n- [ ] Same');
   });
 
   testWidgets('editor_copy_blank_row_does_not_mutate_draft', (tester) async {
@@ -180,7 +180,7 @@ void main() {
     await tester.enterText(field('note-item-2'), 'Edited last');
     await tester.tap(find.text('Done'));
     await tester.pumpAndSettle();
-    expect(note.items.map((item) => item.text), ['First', '', 'Edited last']);
+    expect(note.items.map((item) => item.text), ['First', 'Edited last']);
     expect(note.items.last.done, isTrue);
   });
 
@@ -215,18 +215,66 @@ void main() {
     expect(note.toMap(), before);
   });
 
-  testWidgets('unchanged legacy checklist Done retains body and blank items',
+  testWidgets('legacy checklist Done drops blank items and retains body',
       (tester) async {
     final note = Note(
         id: 'existing',
         kind: NoteKind.todo,
         body: 'Legacy\nbody',
         items: [TodoItem(text: ''), TodoItem(text: 'Same', done: true)]);
-    final before = note.contentSig;
     await openEditor(tester, note);
     await tester.tap(find.text('Done'));
     await tester.pumpAndSettle();
-    expect(note.contentSig, before);
+    expect(note.kind, NoteKind.todo);
+    expect(note.body, 'Legacy\nbody');
+    expect(note.items.map((item) => item.text), ['Same']);
+    expect(note.items.single.done, isTrue);
+  });
+
+  testWidgets('Done removes empty blocks from repeated toolbar switches',
+      (tester) async {
+    final note = Note(id: 'toolbar-sequence', body: 'Opening context');
+    await openEditor(tester, note);
+    await tester.tap(field('note-body'));
+    for (final action in [
+      'Add checklist line',
+      'Add text line',
+      'Add checklist line',
+      'Add text line',
+    ]) {
+      await tester.tap(find.byTooltip(action));
+      await tester.pumpAndSettle();
+    }
+    await tester.enterText(field('note-text-4'), 'After four toolbar taps');
+    expect(find.byType(Checkbox), findsNWidgets(2));
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
+    expect(note.body, 'Opening context\nAfter four toolbar taps');
+    expect(note.items, isEmpty);
+    await openEditor(tester, note);
+    expect(find.byType(Checkbox), findsNothing);
+    expect(find.byType(TextField), findsNWidgets(2));
+  });
+
+  testWidgets(
+      'dialog Save removes whitespace blocks but preserves paragraph spacing',
+      (tester) async {
+    final note = Note(id: 'whitespace', body: 'First\n\n  Second  ');
+    await openEditor(tester, note);
+    await tester.enterText(field('note-body'), 'First\n\n  Second  ');
+    await tester.tap(find.byTooltip('Add checklist line'));
+    await tester.pumpAndSettle();
+    await tester.enterText(field('note-item-1'), ' \t ');
+    await tester.tap(find.byType(Checkbox));
+    await tester.tap(find.byTooltip('Add text line'));
+    await tester.pumpAndSettle();
+    await tester.enterText(field('note-text-2'), '  ');
+    await tester.tap(find.byTooltip('Back to notes'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    expect(note.body, 'First\n\n  Second  ');
+    expect(note.items, isEmpty);
   });
 
   testWidgets('editor_small_keyboard_large_text', (tester) async {

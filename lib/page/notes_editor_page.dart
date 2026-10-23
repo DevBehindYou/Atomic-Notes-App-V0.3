@@ -62,8 +62,8 @@ class _NotesCreaterPageState extends State<NotesCreaterPage> {
     super.dispose();
   }
 
-  Note _snapshot() {
-    final result = _document.toNote(_draft);
+  Note _snapshot({bool removeEmptyLines = false}) {
+    final result = _document.toNote(_draft, removeEmptyLines: removeEmptyLines);
     result.title = _title.text;
     return result;
   }
@@ -74,7 +74,7 @@ class _NotesCreaterPageState extends State<NotesCreaterPage> {
     if (_closing) return;
     _closing = true;
     if (save) {
-      final edited = _snapshot();
+      final edited = _snapshot(removeEmptyLines: true);
       // Leave sync versions, dirty state and timestamps to the repository.
       widget.note
         ..title = edited.title
@@ -259,7 +259,8 @@ class _NotesCreaterPageState extends State<NotesCreaterPage> {
                                 () => _draft.important = !_draft.important,
                               ),
                               tooltip: _draft.important
-                                  ? 'Unmark important' : 'Mark important',
+                                  ? 'Unmark important'
+                                  : 'Mark important',
                               isSelected: _draft.important,
                               color: AppColors.signal,
                               icon: const Icon(Icons.label_important_outline),
