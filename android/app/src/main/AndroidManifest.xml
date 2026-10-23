@@ -5,6 +5,8 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <!-- Dictation starts only from the editor microphone action. No audio is saved. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <application
         android:label="Atomic"
         android:name="${applicationName}"
@@ -39,6 +41,9 @@
     <!-- Android 11+ package visibility: lets url_launcher find a browser for https links
          (notification buttons and the support page). -->
     <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
         <intent>
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="https" />
