@@ -34,6 +34,51 @@ def valid_library() -> None:
     assert proof["outcome"]=="pass" and proof["phase"]=="complete"
 
 
+def launcher_is_two_thirds() -> None:
+    for name in ("atomic_launcher_foreground", "atomic_launcher_monochrome"):
+        root=verifier.ET.fromstring(verifier.bounded(verifier.RES/"drawable"/(name+".xml")))
+        assert abs(float(root.find("group").get(verifier.A+"scaleX"))*362-22)<.00001
+    for relative in ("android/adaptive-foreground.png", "android/adaptive-monochrome.png"):
+        size,_,pixels,_=verifier.png(verifier.LIB/relative)
+        radii=[verifier.math.hypot(i//4%size+.5-size/2,i//4//size+.5-size/2)
+               for i in range(0,len(pixels),4) if pixels[i+3]>=128]
+        assert 87<=max(radii)<=89
+
+
+def old_full_size_vector() -> None:
+    path=verifier.RES/"drawable/atomic_launcher_foreground.xml"
+    root=verifier.ET.fromstring(verifier.bounded(path))
+    scale=root.find("group").get(verifier.A+"scaleX").encode()
+    substitution(path,verifier.bounded(path).replace(scale,b"0.091160221"),"adaptive_layers")
+
+
+def old_full_size_raster(relative: str) -> None:
+    path=verifier.LIB/relative
+    width,height,raw,_=verifier.png(path)
+    # Recreate a 150% centered version in memory with no Pillow dependency.
+    pixels=bytearray(len(raw))
+    for y in range(height):
+        source_y=int((y+.5-height/2)/1.5+height/2)
+        for x in range(width):
+            source_x=int((x+.5-width/2)/1.5+width/2)
+            source=(source_y*width+source_x)*4
+            target=(y*width+x)*4
+            pixels[target:target+4]=raw[source:source+4]
+    substitution(path,png(width,height,pixels),"white_purple_launcher_style")
+
+
+def old_full_size_adaptive() -> None:
+    old_full_size_raster("android/adaptive-foreground.png")
+
+
+def old_full_size_legacy() -> None:
+    old_full_size_raster("android/legacy/launcher-48.png")
+
+
+def old_full_size_store() -> None:
+    old_full_size_raster("android/google-play-512.png")
+
+
 def png_crc_corruption() -> None:
     path=verifier.LIB/"android/google-play-512.png"
     data=bytearray(verifier.bounded(path)); data[40]^=1
@@ -125,10 +170,11 @@ def manifest_path_escape() -> None:
 
 
 def main() -> None:
-    controls=(valid_library,png_crc_corruption,adaptive_outside_safe_zone,colored_monochrome,
+    controls=(valid_library,launcher_is_two_thirds,png_crc_corruption,adaptive_outside_safe_zone,colored_monochrome,
               transparent_store,wrong_legacy_size,native_monochrome_alias,source_asset_tamper,
               raw_exception_hidden,decode_bound,manifest_path_escape,
-              wrong_launcher_background,thin_launcher_orbits,wrong_launcher_purple)
+              wrong_launcher_background,thin_launcher_orbits,wrong_launcher_purple,
+              old_full_size_vector,old_full_size_adaptive,old_full_size_legacy,old_full_size_store)
     outcomes={}
     for control in controls:
         try:
