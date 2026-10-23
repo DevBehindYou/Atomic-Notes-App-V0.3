@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:math';
+import 'note_document.dart';
 
 /// A note.
 ///
@@ -78,15 +79,30 @@ class Note {
       Note(id: newId(), kind: kind, dirty: true);
 
   /// True when the note holds nothing worth keeping.
-  bool get isEmpty =>
-      title.trim().isEmpty &&
-      body.trim().isEmpty &&
-      items.every((i) => i.text.trim().isEmpty);
+  bool get isEmpty {
+    if (NoteDocument.hasRichContent(this)) {
+      final document = NoteDocument.fromNote(this);
+      return !document.isReadOnly &&
+          title.trim().isEmpty &&
+          document.tags.isEmpty &&
+          document.lines
+              .every((line) => !line.isImage && line.text.trim().isEmpty);
+    }
+    return title.trim().isEmpty &&
+        body.trim().isEmpty &&
+        items.every((i) => i.text.trim().isEmpty);
+  }
 
-  int get doneCount => items.where((i) => i.done).length;
+  int get doneCount => NoteDocument.fromNote(this)
+      .lines
+      .where((line) => line.isChecklist && line.done)
+      .length;
 
   /// One-line preview for the card.
   String get preview {
+    if (NoteDocument.hasRichContent(this)) {
+      return NoteDocument.fromNote(this).plainText;
+    }
     if (kind == NoteKind.todo) {
       return items
           .where((i) => i.text.trim().isNotEmpty)
