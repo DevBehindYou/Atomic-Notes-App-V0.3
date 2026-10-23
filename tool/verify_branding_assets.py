@@ -27,7 +27,7 @@ SOURCES={
     "Atomic Icons/dotgrid-blink-transparent.gif":"208a81c983c0060f4a16252e9fabf97353c272269f639c2c0134cdac6f119377",
 }
 CASE_CODES=("source_assets","library_integrity","adaptive_layers","android_launcher",
-            "native_splash","store_icon","mascots","notification","dark_launcher_style")
+            "native_splash","store_icon","mascots","notification","white_purple_launcher_style")
 MAX_FILE=8*1024*1024
 MAX_DECODED=16*1024*1024
 
@@ -202,24 +202,31 @@ def store_icon() -> None:
     assert (width,height)==(512,512) and len(bounded(path))<1024*1024 and srgb and set(pixels[3::4])=={255}
 
 
-def dark_launcher_style() -> None:
-    # Pin visible intent independently of generated hashes: the original dark
-    # palette, a modest orbit weight increase, and the actual baked background.
-    ink=b"\x15\x17\x1b\xff"
+def white_purple_launcher_style() -> None:
+    # Pin current visible intent independently of generated hashes and manifest.
+    white=b"\xff\xff\xff\xff"
     for relative in ("android/google-play-512.png", "android/launcher-source-1024.png",
                      "android/legacy/launcher-48.png"):
         _,_,pixels,_=png(LIB/relative)
-        assert pixels[:4]==ink
+        assert pixels[:4]==white
     colors=ET.fromstring(bounded(RES/"values/ic_launcher_background.xml"))
-    assert colors.find("color").text=="#15171B"
+    assert colors.find("color").text=="#FFFFFF"
     config=bounded(ROOT/"pubspec.yaml").decode("utf-8")
-    assert 'adaptive_icon_background: "#15171B"' in config
+    assert 'adaptive_icon_background: "#FFFFFF"' in config
     for name in ("atomic_launcher_foreground", "atomic_launcher_monochrome"):
         root=ET.fromstring(bounded(RES/"drawable"/(name+".xml")))
         orbits=[node for node in root.iter("path") if node.get(A+"strokeWidth")]
-        assert len(orbits)==3 and all(node.get(A+"strokeWidth")=="15" for node in orbits)
+        assert len(orbits)==3 and all(node.get(A+"strokeWidth")=="24" for node in orbits)
         if name=="atomic_launcher_foreground":
-            assert [node.get(A+"strokeColor") for node in orbits]==["#3A2FF0","#3A2FF0","#F4F5F1"]
+            assert [node.get(A+"strokeColor") for node in orbits]==["#4B238C"]*3
+            fills=[node.get(A+"fillColor") for node in root.iter("path") if not node.get(A+"strokeWidth")]
+            assert fills==["#4B238C"]*4+["#FFFFFF"]
+    _,_,foreground,_=png(LIB/"android/adaptive-foreground.png")
+    # Check solid raster interiors as well as native vector colors; AA boundary
+    # pixels may blend purple into the white nucleus, so do not ban those blends.
+    opaque={foreground[i:i+3] for i in range(0,len(foreground),4) if foreground[i+3]==255}
+    assert b"\x4b\x23\x8c" in opaque and b"\xff\xff\xff" in opaque
+    assert b"\x3a\x2f\xf0" not in opaque and b"\xf4\xf5\xf1" not in opaque
 
 
 def mascots() -> None:

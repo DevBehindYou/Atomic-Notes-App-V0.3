@@ -98,7 +98,7 @@ flutter_launcher_icons:
   ios: false
   image_path: "assets/atomic-icon.jpg"
   image_path_android: "assets/new-atomic-icons/android/launcher-source-1024.png"
-  adaptive_icon_background: "#15171B"
+  adaptive_icon_background: "#FFFFFF"
   adaptive_icon_foreground: "assets/new-atomic-icons/android/adaptive-foreground.png"
   adaptive_icon_foreground_inset: 0
   adaptive_icon_monochrome: "assets/new-atomic-icons/android/adaptive-monochrome.png"

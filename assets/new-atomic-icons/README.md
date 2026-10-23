@@ -20,7 +20,7 @@ clean derivatives; it is not represented as a signature of generated output.
 | `android/native/` | Exact copies of generated Android resources committed under `android/app/src/main/res` |
 | `android/notification/` | Prepared 24/36/48/72/96 px white-alpha small-icon variants |
 | `splash/` | Transparent light/dark raster splash logos |
-| `gif/` | Optional original transparent 4-second rotating-logo GIFs; library-only, not native splash or automatically bundled |
+| `gif/` | Unchanged supplied transparent 4-second Atomic GIFs, bundled for the Flutter splash; native Android splash stays static |
 | `previews/` | Light/dark, circular/rounded/themed and safe-zone inspection sheet; not bundled |
 
 Android is the configured app release platform. iOS, macOS, Windows, Linux and
@@ -33,9 +33,9 @@ has one white color and a transparent even-odd nucleus hole; it never reuses the
 colored foreground. Legacy icons and the opaque 32-bit Play PNG have no manually
 rounded outer corners. The Play PNG is below 1 MiB.
 
-The launcher and Play artwork use the existing on-dark companion palette on Ink
-(`#15171B`). Launcher orbit strokes are 15 source units instead of the supplied
-11, a 36% weight increase for small-size legibility. Ellipse geometry, electrons,
+The launcher and Play artwork use a white background (`#FFFFFF`) and dark-purple
+atomic lines, electrons and nucleus (`#4B238C`). Launcher orbit strokes are 24
+source units instead of the supplied 11 for small-size legibility. Ellipse geometry, electrons,
 nucleus and adaptive scale are unchanged. Both colored and themed launcher
 orbits use that weight. The supplied SVG/PNG companions, in-app logos and native
 splash retain their original strokes. `manifest.json` records this launcher-only
@@ -45,9 +45,11 @@ Android 12+ uses a **static VectorDrawable** on a 288 dp canvas with artwork ins
 the central 192 dp circle. Earlier Android versions show the same light/dark
 vector and background through the existing launch theme. There is no GIF in a
 native splash resource, additional animation wait, new dependency or keep-on-screen
-handler. Animated mascots belong to the post-launch Flutter UI. The notification
-resource is prepared for future use; the app currently has no native notification
-channel, and this migration does not add one.
+handler. The Atomic icon GIF appears on the existing Flutter splash without
+delaying routing. Reduced motion, hidden routes and background lifecycle use
+exact first-frame PNGs. Animated mascots belong to the post-launch Flutter UI.
+The notification resource is prepared for future use; the app currently has no
+native notification channel, and this migration does not add one.
 
 Regenerate with an existing Python/Pillow environment:
 
@@ -65,14 +67,14 @@ python tool/test_verify_branding_assets.py
 
 The standard-library verifier emits only fixed outcome codes, parses bounded PNG
 chunks with CRC and decompression limits, and checks actual RGBA alpha coverage,
-native references and library hashes. Its eleven controls include the valid
+native references and library hashes. Its fourteen controls include the valid
 library and deliberate in-memory corruption of safe zones, monochrome colors,
 store opacity, dimensions, CRC, source hashes and native aliases; oversized
 decodes, path escapes and private exception text are also rejected. No source
 asset is mutated by those controls. Exact decoded GIF first-frame identity is
 verified by the local generation tool; CI checks the committed hashes, dimensions
-and alpha of those PNG fallbacks. Two additional controls reject restoring the
-light launcher background or original thin launcher orbit weight.
+and alpha of those PNG fallbacks. Three controls reject a dark launcher
+background, incorrect purple, or thinner launcher orbit weight.
 
 The one-time `--import-source <existing-assets-directory>` option validates the
 three named JPEG/GIF hashes and imports the supplied vector/PNG/GIF companions.

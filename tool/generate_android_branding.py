@@ -27,7 +27,8 @@ ANDROID = "http://schemas.android.com/apk/res/android"
 SVG = "http://www.w3.org/2000/svg"
 PAPER, INK, SIGNAL = "#F4F5F1", "#15171B", "#3A2FF0"
 VARIANTS = ("on-light", "on-dark", "mono-ink", "mono-white")
-LAUNCHER_STROKE = 15  # Supplied companion is 11; keep splash/runtime sources unchanged.
+LAUNCHER_STROKE = 24  # Launcher-only weight; supplied companion/splash remain 11.
+LAUNCHER_WHITE, LAUNCHER_PURPLE = "#FFFFFF", "#4B238C"
 SOURCE_HASHES = {
     "atomic-icon.jpg": "3114c97ad9fe8ce43d5760e9399be135c0a0a1608b528e3aab6f4155bfa546e9",
     "Atomic Icons/devbehindyou-worker.gif": "e5993ff1ada52aa281a720d0307d53a7cffccc48839cfccca142041b8783c96a",
@@ -87,12 +88,14 @@ def import_sources(source: Path) -> dict:
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(original, destination)
         provenance["new-atomic-icons/gif/" + name] = {
-            "sha256": sha(original), "operation": "unchanged optional library copy; not native splash",
+            "sha256": sha(original), "operation": "unchanged supplied copy; bundled Flutter splash; not native splash",
         }
     return provenance
 
 
 def palette(variant: str) -> tuple[list[str], list[str], str, str | None]:
+    if variant == "launcher-white-purple":
+        return [LAUNCHER_PURPLE]*3, [LAUNCHER_PURPLE]*3, LAUNCHER_PURPLE, LAUNCHER_WHITE
     if variant == "on-light":
         return [SIGNAL, SIGNAL, INK], [SIGNAL, INK, SIGNAL], INK, PAPER
     if variant == "on-dark":
@@ -216,14 +219,14 @@ def build() -> None:
             raise ValueError("Named source hash differs: " + name)
     # 108 dp canvas, radius 33 dp: all primitives fit the central 66 dp circle.
     # Monochrome is deliberately its own even-odd single-color vector.
-    library_and_native("drawable/atomic_launcher_foreground.xml", vector("on-dark", 108, 33, 108, LAUNCHER_STROKE))
+    library_and_native("drawable/atomic_launcher_foreground.xml", vector("launcher-white-purple", 108, 33, 108, LAUNCHER_STROKE))
     library_and_native("drawable/atomic_launcher_monochrome.xml", vector("themed-white", 108, 33, 108, LAUNCHER_STROKE))
-    foreground = raster("on-dark", 432, 132, stroke=LAUNCHER_STROKE)
+    foreground = raster("launcher-white-purple", 432, 132, stroke=LAUNCHER_STROKE)
     monochrome = raster("themed-white", 432, 132, stroke=LAUNCHER_STROKE)
     save_png(LIB / "android/adaptive-foreground.png", foreground)
     save_png(LIB / "android/adaptive-monochrome.png", monochrome)
-    write(LIB / "android/adaptive-background.svg", f'<svg xmlns="{SVG}" width="108" height="108" viewBox="0 0 108 108"><path fill="{INK}" d="M0 0h108v108H0z"/></svg>\n')
-    library_and_native("values/ic_launcher_background.xml", '<?xml version="1.0" encoding="utf-8"?>\n<resources><color name="ic_launcher_background">'+INK+'</color></resources>\n')
+    write(LIB / "android/adaptive-background.svg", f'<svg xmlns="{SVG}" width="108" height="108" viewBox="0 0 108 108"><path fill="{LAUNCHER_WHITE}" d="M0 0h108v108H0z"/></svg>\n')
+    library_and_native("values/ic_launcher_background.xml", '<?xml version="1.0" encoding="utf-8"?>\n<resources><color name="ic_launcher_background">'+LAUNCHER_WHITE+'</color></resources>\n')
     adaptive = (f'<?xml version="1.0" encoding="utf-8"?>\n<adaptive-icon xmlns:android="{ANDROID}">\n'
                 '    <background android:drawable="@color/ic_launcher_background"/>\n'
                 '    <foreground android:drawable="@drawable/atomic_launcher_foreground"/>\n'
@@ -231,13 +234,13 @@ def build() -> None:
     for name in ("launcher_icon", "ic_launcher"):
         library_and_native("mipmap-anydpi-v26/" + name + ".xml", adaptive)
     for density, size in (("mdpi",48),("hdpi",72),("xhdpi",96),("xxhdpi",144),("xxxhdpi",192)):
-        image = raster("on-dark", size, size * .42, INK, LAUNCHER_STROKE)
+        image = raster("launcher-white-purple", size, size * .42, LAUNCHER_WHITE, LAUNCHER_STROKE)
         save_png(LIB / "android/legacy" / f"launcher-{size}.png", image)
         for name in ("launcher_icon", "ic_launcher"):
             save_png(RES / ("mipmap-" + density) / (name + ".png"), image)
     # Store icon is opaque RGBA (32-bit), square, no hand-drawn outer rounding.
-    save_png(LIB / "android/google-play-512.png", raster("on-dark", 512, 512*.42, INK, LAUNCHER_STROKE))
-    save_png(LIB / "android/launcher-source-1024.png", raster("on-dark", 1024, 1024*.42, INK, LAUNCHER_STROKE))
+    save_png(LIB / "android/google-play-512.png", raster("launcher-white-purple", 512, 512*.42, LAUNCHER_WHITE, LAUNCHER_STROKE))
+    save_png(LIB / "android/launcher-source-1024.png", raster("launcher-white-purple", 1024, 1024*.42, LAUNCHER_WHITE, LAUNCHER_STROKE))
     for variant in ("on-light", "on-dark"):
         save_png(LIB / "splash" / f"atomic-splash-{variant}.png", raster(variant, 576, 176))
     # Native Android 12+: static vector, 288 dp canvas; 176 dp artwork fits its
@@ -291,14 +294,13 @@ def build() -> None:
 def preview() -> None:
     board = Image.new("RGB", (1200,660), "#DFE2DC")
     draw=ImageDraw.Draw(board)
-    labels=("Circle / Ink", "Rounded / Ink", "Previous / Paper", "Themed / light", "Themed / dark")
+    labels=("Circle / White-purple", "Rounded / White-purple", "Previous / Dark", "Themed / light", "Themed / dark")
     for i,label in enumerate(labels):
         x=30+i*235
-        dark=i in (0,1,4)
-        bg=INK if dark else PAPER
+        bg=INK if i in (2,4) else LAUNCHER_WHITE
         # Android masks the 72 dp visible viewport of the 108 dp layer canvas;
         # the remaining 18 dp on each edge is reserved for parallax effects.
-        layer=raster("mono-white" if i==4 else "mono-ink" if i==3 else "on-dark" if dark else "on-light",324,99,bg,11 if i==2 else LAUNCHER_STROKE)
+        layer=raster("mono-white" if i==4 else "mono-ink" if i==3 else "on-dark" if i==2 else "launcher-white-purple",324,99,bg,15 if i==2 else LAUNCHER_STROKE)
         icon=layer.crop((54,54,270,270))
         mask=Image.new("L",(216,216)); md=ImageDraw.Draw(mask)
         if i==1: md.rounded_rectangle((0,0,215,215),radius=48,fill=255)
@@ -307,7 +309,7 @@ def preview() -> None:
         board.paste(flattened.convert("RGB"),(x,55),mask)
         draw.text((x,24),label,fill=INK)
     # Exact 108 dp / 66 dp adaptive and 288 dp / 192 dp native splash bounds.
-    adaptive=raster("on-dark",324,99,INK,LAUNCHER_STROKE)
+    adaptive=raster("launcher-white-purple",324,99,LAUNCHER_WHITE,LAUNCHER_STROKE)
     board.paste(adaptive.convert("RGB"),(44,305))
     draw.rectangle((44,305,367,628),outline="#555555",width=1)
     draw.ellipse((107,368,305,566),outline="#CE4A4A",width=2)
@@ -317,10 +319,10 @@ def preview() -> None:
     board.paste(splash.convert("RGB"),(440,320))
     draw.ellipse((488,368,680,560),outline="#CE4A4A",width=2)
     draw.text((440,285),"Native splash: red circle = central 192 / 288 dp",fill=INK)
-    draw.text((800,330),"Launcher: dark palette; stroke 11 -> 15",fill=INK)
+    draw.text((800,330),"Launcher: white / purple; stroke 24",fill=INK)
     draw.text((800,356),"Actual launcher sizes: 48 px / 32 px",fill=INK)
     for i,size in enumerate((48,32)):
-        layer=raster("on-dark",size*6,size*6*33/108,INK,LAUNCHER_STROKE)
+        layer=raster("launcher-white-purple",size*6,size*6*33/108,LAUNCHER_WHITE,LAUNCHER_STROKE)
         visible=layer.crop((size,size,size*5,size*5)).resize((size,size),Image.Resampling.LANCZOS)
         mask=Image.new("L",(size,size)); ImageDraw.Draw(mask).ellipse((0,0,size-1,size-1),fill=255)
         board.paste(visible.convert("RGB"),(800+i*85,395),mask)
@@ -370,12 +372,12 @@ def verify(provenance: dict) -> dict:
             "visualBoundary":"Companion is a symmetric reconstruction, not pixel-identical JPEG extraction. On-dark intentionally substitutes Paper for Ink to preserve contrast.",
             "colors":{"paper":PAPER,"ink":INK,"signal":SIGNAL},
             "sources":provenance,"android":{"adaptiveCanvasDp":108,"adaptiveSafeDiameterDp":66,
-            "launcher":{"variant":"on-dark","background":INK,"orbitStrokeWidth":LAUNCHER_STROKE,"sourceOrbitStrokeWidth":11},
+            "launcher":{"variant":"white-purple","background":LAUNCHER_WHITE,"artworkColor":LAUNCHER_PURPLE,"orbitStrokeWidth":LAUNCHER_STROKE,"sourceOrbitStrokeWidth":11},
             "measuredImportantArtworkMaxRadiusDp":round(max_radius/4,3),"nativeSplashCanvasDp":288,
             "nativeSplashSafeDiameterDp":192,"nativeSplashArtworkDiameterDp":176,
             "legacyPixels":[48,72,96,144,192],"play":{"pixels":512,"mode":"RGBA","maxBytes":1048576},
             "notification":"prepared simplified white-alpha resource; app currently has no native notification channel",
-            "animation":"Native splash static vector. Optional supplied transparent GIFs are library-only; no startup hold."},
+            "animation":"Native splash static vector. Supplied transparent GIFs animate the Flutter splash with exact first-frame reduced-motion fallbacks; no added startup hold."},
             "unverifiedPlatforms":["ios","macos","windows","linux","web"],"files":checked}
 
 

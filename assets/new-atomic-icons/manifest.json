@@ -58,20 +58,21 @@
     },
     "new-atomic-icons/gif/atomic-spin-on-light.gif": {
       "sha256": "f69699310495b8e5cba138ea57b978f927f60b464deb5ab4f99e51bb1d475b28",
-      "operation": "unchanged optional library copy; not native splash"
+      "operation": "unchanged supplied copy; bundled Flutter splash; not native splash"
     },
     "new-atomic-icons/gif/atomic-spin-on-dark.gif": {
       "sha256": "37be0cbe56f1d787a4c72ee8fbe9c203116a76be70a10b051569f1b732f91cfe",
-      "operation": "unchanged optional library copy; not native splash"
+      "operation": "unchanged supplied copy; bundled Flutter splash; not native splash"
     }
   },
   "android": {
     "adaptiveCanvasDp": 108,
     "adaptiveSafeDiameterDp": 66,
     "launcher": {
-      "variant": "on-dark",
-      "background": "#15171B",
-      "orbitStrokeWidth": 15,
+      "variant": "white-purple",
+      "background": "#FFFFFF",
+      "artworkColor": "#4B238C",
+      "orbitStrokeWidth": 24,
       "sourceOrbitStrokeWidth": 11
     },
     "measuredImportantArtworkMaxRadiusDp": 32.978,
@@ -91,7 +92,7 @@
       "maxBytes": 1048576
     },
     "notification": "prepared simplified white-alpha resource; app currently has no native notification channel",
-    "animation": "Native splash static vector. Optional supplied transparent GIFs are library-only; no startup hold."
+    "animation": "Native splash static vector. Supplied transparent GIFs animate the Flutter splash with exact first-frame reduced-motion fallbacks; no added startup hold."
   },
   "unverifiedPlatforms": [
     "ios",
@@ -104,12 +105,12 @@
     {
       "path": "new-atomic-icons/android/adaptive-background.svg",
       "bytes": 136,
-      "sha256": "6b11c4d4540a2fb79e71f3984e8f1ed5e54730725136fcfb93c15b9942b64a9b"
+      "sha256": "e70cc42e59b6265fd74540a46a5f0d09ac3ebb9f213bce2eb5d2a32ef93e1021"
     },
     {
       "path": "new-atomic-icons/android/adaptive-foreground.png",
-      "bytes": 41145,
-      "sha256": "d15380fc775d05f77137150fb79429a98b87939d6dc343f2a703862bebb811ec",
+      "bytes": 40209,
+      "sha256": "5665907e6493f03734618bc27e102d99fda547546b05627b749a86413b92b43c",
       "width": 432,
       "height": 432,
       "mode": "RGBA",
@@ -121,8 +122,8 @@
     },
     {
       "path": "new-atomic-icons/android/adaptive-monochrome.png",
-      "bytes": 18639,
-      "sha256": "c659cf744d933118c95b2b41de787d3dc1113adf4009c6d9da529bc169f18b80",
+      "bytes": 19643,
+      "sha256": "ba0024493b9c9a2cf17eef4225e5253bb6d2bcaf1245e9028705acf70efdc9cd",
       "width": 432,
       "height": 432,
       "mode": "RGBA",
@@ -134,8 +135,8 @@
     },
     {
       "path": "new-atomic-icons/android/google-play-512.png",
-      "bytes": 64894,
-      "sha256": "97bfe5cc135a75f2e6453419d60dc411c7f7b7a01b52e3f73254c166a159d504",
+      "bytes": 62079,
+      "sha256": "73e0a88311fd003cc997417229978150e73ee45fc336da9834365e97ef193d01",
       "width": 512,
       "height": 512,
       "mode": "RGBA",
@@ -147,8 +148,8 @@
     },
     {
       "path": "new-atomic-icons/android/launcher-source-1024.png",
-      "bytes": 134374,
-      "sha256": "484222ca76e475aa790ff7f2963517e128de1cef3b54759a711075befe0b9a0a",
+      "bytes": 127566,
+      "sha256": "66981ad42ca0716d54f81c9a419412459618ad665d3bf134d41f1914c39ad2a7",
       "width": 1024,
       "height": 1024,
       "mode": "RGBA",
@@ -160,8 +161,8 @@
     },
     {
       "path": "new-atomic-icons/android/legacy/launcher-144.png",
-      "bytes": 14841,
-      "sha256": "afd2561e4b4a553221b154f7124646e05f2743703e3e1615d78a2465e1d8cfee",
+      "bytes": 15186,
+      "sha256": "79bf5887b6b482eddb6e836984190777a688c738428ca0e6a5bae0bb41bc8559",
       "width": 144,
       "height": 144,
       "mode": "RGBA",
@@ -173,8 +174,8 @@
     },
     {
       "path": "new-atomic-icons/android/legacy/launcher-192.png",
-      "bytes": 21206,
-      "sha256": "edb8e8858e5cc286227482cc150ba0a97c23dabc0596209611088ad93671f7b7",
+      "bytes": 21445,
+      "sha256": "a8f958986181d1661fbd33ad9682b5c820256e4310eb964c31f26067ddfb2409",
       "width": 192,
       "height": 192,
       "mode": "RGBA",
@@ -186,8 +187,8 @@
     },
     {
       "path": "new-atomic-icons/android/legacy/launcher-48.png",
-      "bytes": 3386,
-      "sha256": "ad3d53f8ae8be48ee0ba5285d11331ebbd59277459e98e6dfbf283c350896084",
+      "bytes": 3143,
+      "sha256": "f11a133133419d58f92389ae015442e0f3b20518933ed82538b7bdb2ee03607b",
       "width": 48,
       "height": 48,
       "mode": "RGBA",
@@ -199,8 +200,8 @@
     },
     {
       "path": "new-atomic-icons/android/legacy/launcher-72.png",
-      "bytes": 5800,
-      "sha256": "477957c814c45f655e284d7e67fcae70a01529b47c30e2c42630697ade0a3456",
+      "bytes": 5693,
+      "sha256": "93bd70423eaf61fbb2dabd97ab4a012d6ea6cd46816d612f6122ba5598b5a813",
       "width": 72,
       "height": 72,
       "mode": "RGBA",
@@ -212,8 +213,8 @@
     },
     {
       "path": "new-atomic-icons/android/legacy/launcher-96.png",
-      "bytes": 8692,
-      "sha256": "32b54aed48364b7f0d656644b99bdf82e8e0f401e988f0adc8697f389e0c63a6",
+      "bytes": 8273,
+      "sha256": "0adb852d558dcc70b297c6cc3b50e683bc87c87fb4d7b2c205ba613df65fe0bc",
       "width": 96,
       "height": 96,
       "mode": "RGBA",
@@ -226,12 +227,12 @@
     {
       "path": "new-atomic-icons/android/native/drawable/atomic_launcher_foreground.xml",
       "bytes": 1519,
-      "sha256": "adf2a24afc070c39263acabf65c855db264c28766622282b4ef0ebcac6de3ce4"
+      "sha256": "e8b275c385ec0fea40fed2eb3ec73023d1767c63d2d84052f06d5aec48848ba5"
     },
     {
       "path": "new-atomic-icons/android/native/drawable/atomic_launcher_monochrome.xml",
       "bytes": 1482,
-      "sha256": "9779d4f4954f3414239c034a3bd15ffb509eeea447158ce9742aa5b6dbd7b7fd"
+      "sha256": "68dff555b868f76b5ecdbf5a3946749ac1e7a11637965592813b70cbedd920c0"
     },
     {
       "path": "new-atomic-icons/android/native/drawable/atomic_notification.xml",
@@ -276,7 +277,7 @@
     {
       "path": "new-atomic-icons/android/native/values/ic_launcher_background.xml",
       "bytes": 115,
-      "sha256": "5a0ab0914932d7f261f49f4183cbbb9a6aaca0bc8cc74adef8b51117b6cb8349"
+      "sha256": "ae5dae7dd497dea65d7b7a9dad5a4e7d4a30ea34abb2b0fe043e98b4d2fc8153"
     },
     {
       "path": "new-atomic-icons/android/native/values-night/atomic_brand_colors.xml",
@@ -456,8 +457,8 @@
     },
     {
       "path": "new-atomic-icons/previews/android-masks-safe-zones.png",
-      "bytes": 168902,
-      "sha256": "916e574768c79e54ea663644dbd14e4c9a34f3723b6900e690ece0f7066c8c25",
+      "bytes": 178918,
+      "sha256": "22d99ecd50836cae107b439537310dbff26e064b3e90337c9c9f3aaf311603ed",
       "width": 1200,
       "height": 660,
       "mode": "RGB",
