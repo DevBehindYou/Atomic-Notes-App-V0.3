@@ -220,7 +220,7 @@ class PlatformEditorSpeechInput implements EditorSpeechInput {
 
 abstract class EditorImageInput {
   /// Returns only re-encoded JPEG bytes as base64; cancellation returns null.
-  /// New attachments contain at most 23,999 raw bytes and respect maxBytes.
+  /// New attachments contain at most 60,000 raw bytes and respect maxBytes.
   Future<String?> pickJpeg({required int maxBytes});
 }
 
@@ -230,9 +230,9 @@ class PlatformEditorImageInput implements EditorImageInput {
         _isAndroid = isAndroid ??
             (!kIsWeb && defaultTargetPlatform == TargetPlatform.android);
 
-  // Strictly below 24,000 raw JPEG bytes. Wire base64/encryption adds overhead;
+  // At most 60,000 raw JPEG bytes. Wire base64/encryption adds overhead;
   // the editor separately checks aggregate and complete-note wire budgets.
-  static const maxImageBytes = 23999;
+  static const maxImageBytes = 60000;
   static const _maxSourceBytes = 8 * 1024 * 1024;
   final ImagePicker _picker;
   final bool _isAndroid;
@@ -264,7 +264,8 @@ class PlatformEditorImageInput implements EditorImageInput {
         source: ImageSource.gallery,
         maxWidth: 1024,
         maxHeight: 1024,
-        imageQuality: 70,
+        // Avoid discarding source detail before the bounded optimizer runs.
+        imageQuality: 100,
         requestFullMetadata: false,
       );
       if (file == null) return null;
@@ -335,13 +336,13 @@ String _compressImage((Uint8List, int) request) {
   for (final dimension in {longest, 768, 512, 384, 256, 192, 128}) {
     if (dimension > longest) continue;
     final candidate = _resizeWithin(clean, dimension);
-    for (final quality in [70, 55, 40]) {
+    for (final quality in [85, 75, 65, 50, 40]) {
       final jpeg = image.encodeJpg(candidate, quality: quality);
       if (jpeg.length <= maxBytes) return base64Encode(jpeg);
     }
   }
   throw const EditorMediaException(
-      'This image could not fit under 24 KB and the note’s remaining image space. Choose a smaller image or remove another image.');
+      'This image could not fit within 60 KB and the note’s remaining image space. Choose a smaller image or remove another image.');
 }
 
 image.Image _resizeWithin(image.Image source, int maxDimension) {

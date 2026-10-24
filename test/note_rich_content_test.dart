@@ -241,27 +241,32 @@ void main() {
       expect(() => doc.insertImageAfter(0, invalid), throwsFormatException);
       expect(doc.lines, hasLength(1));
     }
-    final large = _jpeg(padding: 32 * 1024);
+    final large = _jpeg(padding: NoteImageContent.maxBytes - 14);
     doc.insertImageAfter(0, large);
-    expect(() => doc.insertImageAfter(1, large), throwsFormatException);
-    expect(doc.lines, hasLength(2));
+    doc.insertImageAfter(1, large);
+    expect(() => doc.insertImageAfter(2, large), throwsFormatException);
+    expect(doc.lines, hasLength(3));
   });
 
   test(
       'budget checks UTF8 encryption expansion and complete row rather than text alone',
       () {
     expect(
-        NoteContentBudget.errorFor(Note.create()..body = 'x' * 131072), isNull);
-    expect(NoteContentBudget.errorFor(Note.create()..body = 'x' * 131073),
+        NoteContentBudget.errorFor(
+            Note.create()..body = 'x' * NoteContentBudget.maxBodyLength),
+        isNull);
+    expect(
+        NoteContentBudget.errorFor(
+            Note.create()..body = 'x' * (NoteContentBudget.maxBodyLength + 1)),
         isNotNull);
     // Within UTF-16 body length, but three UTF-8 bytes each overflow sealed payload.
-    expect(NoteContentBudget.errorFor(Note.create()..body = '\u20ac' * 50000),
+    expect(NoteContentBudget.errorFor(Note.create()..body = '\u20ac' * 100000),
         isNotNull);
     expect(NoteContentBudget.errorFor(Note.create()..title = 'x' * 301),
         isNotNull);
     // Checklist content also counts toward the sealed and wire budgets.
     final todo = Note.create(kind: NoteKind.todo)
-      ..items = [TodoItem(text: 'x' * 150000)];
+      ..items = [TodoItem(text: 'x' * 300000)];
     expect(NoteContentBudget.errorFor(todo), isNotNull);
   });
 }

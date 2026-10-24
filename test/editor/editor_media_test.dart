@@ -74,6 +74,7 @@ class FakePicker extends ImagePicker {
   XFile? file;
   LostDataResponse lost = LostDataResponse.empty();
   int picks = 0;
+  int? requestedQuality;
   @override
   Future<LostDataResponse> retrieveLostData() async => lost;
   @override
@@ -87,7 +88,7 @@ class FakePicker extends ImagePicker {
     expect(source, ImageSource.gallery);
     expect(maxWidth, 1024);
     expect(maxHeight, 1024);
-    expect(imageQuality, lessThanOrEqualTo(70));
+    requestedQuality = imageQuality;
     expect(requestFullMetadata, isFalse);
     picks++;
     return file;
@@ -284,6 +285,13 @@ void main() {
     expect(stopped, 1);
     expect(errors.single, contains('permission'));
   });
+  test('picker preserves native image quality before bounded optimization',
+      () async {
+    final picker = FakePicker();
+    await PlatformEditorImageInput(picker: picker, isAndroid: false)
+        .pickJpeg(maxBytes: 60000);
+    expect(picker.requestedQuality, 100);
+  });
   test('picker cancel keeps draft unchanged', () async {
     expect(
         await PlatformEditorImageInput(picker: FakePicker(), isAndroid: true)
@@ -314,7 +322,7 @@ void main() {
     expect(decoded.height, lessThanOrEqualTo(1024));
     expect(decoded.exif.isEmpty, isTrue);
   });
-  test('new high-entropy images automatically downsize below 24000 bytes',
+  test('60KB images retain more detail than the former 24KB allowance',
       () async {
     final pixels = image.Image(width: 512, height: 384);
     final random = Random(724);
@@ -326,13 +334,50 @@ void main() {
     }
     final picker = FakePicker()
       ..file = XFile.fromData(Uint8List.fromList(image.encodePng(pixels)));
-    // Even callers carrying the legacy 60 KiB budget cannot bypass the new cap.
+    // A larger caller allowance cannot bypass the 60,000-byte image cap.
     final encoded =
         await PlatformEditorImageInput(picker: picker, isAndroid: false)
             .pickJpeg(maxBytes: 60 * 1024);
     final bytes = base64Decode(encoded!);
     final decoded = image.decodeJpg(bytes)!;
-    expect(bytes.length, lessThan(24000));
+    expect(bytes.length, inInclusiveRange(24000, 60000));
+    final limited =
+        await PlatformEditorImageInput(picker: picker, isAndroid: false)
+            .pickJpeg(maxBytes: 23999);
+    final limitedBytes = base64Decode(limited!);
+    final limitedImage = image.decodeJpg(limitedBytes)!;
+    expect(limitedBytes.length, lessThan(24000));
+    expect(bytes.length, greaterThan(limitedBytes.length));
+    expect(decoded.width * decoded.height,
+        greaterThanOrEqualTo(limitedImage.width * limitedImage.height),
+        reason: 'the larger allowance must not lower image resolution');
+    if (decoded.width == limitedImage.width &&
+        decoded.height == limitedImage.height) {
+      final reference = image.copyResize(pixels,
+          width: decoded.width,
+          height: decoded.height,
+          interpolation: image.Interpolation.average);
+      double error(image.Image actual) {
+        var squared = 0.0;
+        for (var y = 0; y < actual.height; y++) {
+          for (var x = 0; x < actual.width; x++) {
+            final expected = reference.getPixel(x, y);
+            final got = actual.getPixel(x, y);
+            for (final delta in [
+              expected.r - got.r,
+              expected.g - got.g,
+              expected.b - got.b
+            ]) {
+              squared += delta * delta;
+            }
+          }
+        }
+        return squared;
+      }
+
+      expect(error(decoded), lessThan(error(limitedImage)),
+          reason: 'at equal resolution the larger image retains color detail');
+    }
     expect(decoded.width, lessThan(512),
         reason: 'noise requires dimension reduction');
     expect((decoded.width / decoded.height - 4 / 3).abs(), lessThan(.01));
@@ -344,7 +389,7 @@ void main() {
           image.encodePng(image.Image(width: 24, height: 16))));
     final encoded =
         await PlatformEditorImageInput(picker: picker, isAndroid: false)
-            .pickJpeg(maxBytes: 23999);
+            .pickJpeg(maxBytes: 60000);
     final decoded = image.decodeJpg(base64Decode(encoded!))!;
     expect([decoded.width, decoded.height], [24, 16]);
   });

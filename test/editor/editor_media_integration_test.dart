@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:math';
 
 import 'package:atomic_notes/database/note.dart';
 import 'package:atomic_notes/database/note_document.dart';
@@ -19,7 +18,7 @@ class _ImageInput implements EditorImageInput {
   Future<String?> pickJpeg({required int maxBytes}) async {
     calls++;
     lastMaxBytes = maxBytes;
-    expect(maxBytes, inInclusiveRange(1, 23999));
+    expect(maxBytes, inInclusiveRange(1, 60000));
     if (fail) throw const EditorMediaException('Gallery unavailable');
     return result;
   }
@@ -40,18 +39,6 @@ class _GalleryPicker extends ImagePicker {
     calls++;
     return file;
   }
-}
-
-String _legacyLargeJpeg() {
-  final pixels = image.Image(width: 160, height: 160);
-  final random = Random(112);
-  for (var y = 0; y < pixels.height; y++) {
-    for (var x = 0; x < pixels.width; x++) {
-      pixels.setPixelRgb(
-          x, y, random.nextInt(256), random.nextInt(256), random.nextInt(256));
-    }
-  }
-  return base64Encode(image.encodeJpg(pixels, quality: 90));
 }
 
 String _jpegWithExactBytes(int size) {
@@ -298,7 +285,7 @@ void main() {
     expect(images, hasLength(3));
     for (final block in images) {
       final bytes = base64Decode(block.imageBase64!);
-      expect(bytes.length, lessThan(24000));
+      expect(bytes.length, lessThanOrEqualTo(60000));
       expect(image.decodeJpg(bytes), isNotNull);
     }
   });
@@ -379,7 +366,7 @@ void main() {
     final doc = NoteDocument.fromNote(note);
     final bytes = base64Decode(
         doc.lines.where((line) => line.isImage).single.imageBase64!);
-    expect(bytes.length, inInclusiveRange(1, 23999));
+    expect(bytes.length, inInclusiveRange(1, 60000));
     final decoded = image.decodeJpg(bytes)!;
     expect([decoded.width, decoded.height], [128, 96]);
     expect(
@@ -409,18 +396,19 @@ void main() {
       (tester) async {
     final encoded =
         base64Encode(image.encodeJpg(image.Image(width: 16, height: 12)));
-    final legacy = _legacyLargeJpeg();
-    expect(base64Decode(legacy).length, greaterThan(23999));
+    final legacy = _jpegWithExactBytes(NoteImageContent.maxBytes);
+    expect(base64Decode(legacy).length, greaterThan(60000));
     expect(base64Decode(legacy).length, lessThanOrEqualTo(60 * 1024));
     final original =
         Note(id: 'aggregate-image-budget', body: 'Keep existing image');
     final document = NoteDocument.fromNote(original);
     document.insertImageAfter(0, legacy);
+    document.insertImageAfter(1, legacy);
     final note = document.toNote(original);
     final before = note.contentSig;
     final remaining =
-        NoteContentBudget.maxImageBytes - base64Decode(legacy).length;
-    expect(remaining, lessThan(23999));
+        NoteContentBudget.maxImageBytes - 2 * base64Decode(legacy).length;
+    expect(remaining, lessThan(60000));
     final input = _ImageInput()..result = encoded;
     await _open(tester, note, images: input);
     await tester.tap(find.text('Done'));
@@ -432,16 +420,17 @@ void main() {
     await _action(tester, 'Add image');
     expect(input.lastMaxBytes, remaining);
     expect(find.text('Optimize image'), findsNothing);
-    expect(find.byType(Image), findsNWidgets(2));
+    // The editor builds rows lazily; the saved projection proves all images.
+    expect(find.byType(Image), findsWidgets);
     await tester.tap(find.text('Done'));
     await tester.pumpAndSettle();
     final images = NoteDocument.fromNote(note)
         .lines
         .where((line) => line.isImage)
         .toList();
-    expect(images, hasLength(2));
-    expect(images.first.imageBase64, legacy);
-    expect(images.last.imageBase64, encoded);
+    expect(images, hasLength(3));
+    expect(images.where((line) => line.imageBase64 == legacy), hasLength(2));
+    expect(images.where((line) => line.imageBase64 == encoded), hasLength(1));
   });
 
   testWidgets('image failure leaves unsaved draft editable', (tester) async {
@@ -462,15 +451,34 @@ void main() {
     expect(note.body, 'Keep this draft and edit');
   });
 
-  testWidgets('an adapter result at 24000 bytes is rejected without draft loss',
+  testWidgets('a 60000-byte image is accepted without saving the draft early',
+      (tester) async {
+    final note = Note(id: 'image-at-60kb-limit', body: 'Keep this text');
+    final encoded = _jpegWithExactBytes(60000);
+    final input = _ImageInput()..result = encoded;
+    await _open(tester, note, images: input);
+    await _action(tester, 'Add image');
+    expect(input.lastMaxBytes, 60000);
+    expect(find.byType(Image), findsOneWidget);
+    expect(note.body, 'Keep this text');
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
+    final saved = NoteDocument.fromNote(note);
+    expect(saved.imageBytes, 60000);
+    expect(
+        saved.lines.singleWhere((line) => line.isImage).imageBase64, encoded);
+  });
+
+  testWidgets(
+      'an adapter result above 60000 bytes is rejected without draft loss',
       (tester) async {
     final note = Note(id: 'exact-image-boundary', body: 'Original');
-    final input = _ImageInput()..result = _jpegWithExactBytes(24000);
+    final input = _ImageInput()..result = _jpegWithExactBytes(60001);
     await _open(tester, note, images: input);
     await tester.enterText(_body, 'Keep my latest draft');
     await _action(tester, 'Add image');
     expect(find.byType(Image), findsNothing);
-    expect(find.textContaining('under 24 KB'), findsWidgets);
+    expect(find.textContaining('within 60 KB'), findsWidgets);
     expect(_controller(tester).text, 'Keep my latest draft');
     expect(note.body, 'Original');
     await tester.pump(const Duration(seconds: 4));
@@ -481,12 +489,12 @@ void main() {
     expect(NoteDocument.fromNote(note).imageBytes, 0);
   });
 
-  testWidgets('a sub-24KB image still respects the complete note sync budget',
+  testWidgets('a 60KB image still respects the complete note sync budget',
       (tester) async {
-    final original = 'x' * 100000;
+    final original = 'x' * (NoteContentBudget.maxBodyLength - 10000);
     final note = Note(id: 'complete-note-image-limit', body: original);
     expect(NoteContentBudget.errorFor(note), isNull);
-    final input = _ImageInput()..result = _jpegWithExactBytes(23999);
+    final input = _ImageInput()..result = _jpegWithExactBytes(60000);
     await _open(tester, note, images: input);
     await _action(tester, 'Add image');
     expect(find.byType(Image), findsNothing);

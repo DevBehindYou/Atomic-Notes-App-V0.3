@@ -766,7 +766,7 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
       }
       if (NoteImageContent.decode(image).length > maxBytes) {
         _message(
-            'The image must fit under 24 KB and the remaining note image space. Your draft is still here.');
+            'The image must fit within 60 KB and the remaining note image space. Your draft is still here.');
         return;
       }
       final candidate = NoteDocument.fromNote(_snapshot());

@@ -53,11 +53,28 @@ void main() {
       final task = document.insertChecklistAfter(0);
       document.replaceText(task, 'Ship safely');
       document.setDone(task, true);
-      document.insertImageAfter(
-          task,
-          base64Encode(
-              [0xff, 0xd8, 0xff, 0xc0, 0, 8, 8, 0, 1, 0, 1, 1, 0xff, 0xd9]));
+      final jpeg = base64Encode([
+        0xff,
+        0xd8,
+        0xff,
+        0xc0,
+        0,
+        8,
+        8,
+        0,
+        1,
+        0,
+        1,
+        1,
+        ...List<int>.filled(60000 - 14, 0),
+        0xff,
+        0xd9,
+      ]);
+      for (var index = 0; index < 3; index++) {
+        document.insertImageAfter(document.lines.length - 1, jpeg);
+      }
       final note = document.toNote(original);
+      expect(NoteContentBudget.errorFor(note), isNull);
       await repository.save(note);
       expect(repository.visible(filter: NoteFilter.todos).single.id, note.id);
       expect(repository.count, 1);
@@ -89,6 +106,8 @@ void main() {
       expect(reopened.lines.first.styles.single.flags, NoteTextStyle.heading);
       expect(reopened.lines[1].done, isTrue);
       expect(reopened.lines.last.isImage, isTrue);
+      expect(reopened.imageCount, 3);
+      expect(reopened.imageBytes, 180000);
       expect(pulled.contentSig, note.contentSig);
       expect(pulled.dirty, isFalse);
       // A failed unsupported edit cannot change the current in-memory record.
