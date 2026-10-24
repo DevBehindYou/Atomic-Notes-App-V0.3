@@ -1,5 +1,6 @@
 import 'dart:collection';
 import 'dart:convert';
+import 'package:characters/characters.dart';
 import 'note.dart';
 import 'note_rich_content.dart';
 export 'note_rich_content.dart';
@@ -60,6 +61,8 @@ class NoteDocument {
   // body by the vault. It opts in explicitly; legacy prose is never parsed.
   static const formatMarker = 'atomic-notes:task-lines:v1';
   static const richFormatMarker = 'atomic-notes:rich-document:v2';
+  static const maxTagsPerNote = 5;
+  static const maxTagCharacters = 15;
 
   // An insertion rule, not a decoder/save bound: older notes may contain more
   // images and must remain editable without losing existing content.
@@ -219,7 +222,10 @@ class NoteDocument {
     for (final raw in input) {
       final tag = raw.trim();
       if (tag.isEmpty) continue;
-      if (tag.length > 40 || tag.contains(RegExp(r'[\r\n\u0000-\u001f]'))) {
+      // Read old tags up to their original 40 UTF-16 units, as well as new
+      // tags with up to 15 complete visible characters (including emoji).
+      if ((tag.length > 40 && tag.characters.length > maxTagCharacters) ||
+          tag.contains(RegExp(r'[\r\n\u0000-\u001f]'))) {
         throw const FormatException(
             'Tags must be single lines of 40 characters or less');
       }
@@ -234,6 +240,15 @@ class NoteDocument {
   void setTags(List<String> value) {
     _assertEditable();
     final checked = _checkedTags(value);
+    final additions = checked.where((tag) => !_tags.contains(tag)).toList();
+    if (additions.isNotEmpty && checked.length > maxTagsPerNote) {
+      throw const FormatException('Use up to 5 tags per note');
+    }
+    if (additions.any((tag) => tag.characters.length > maxTagCharacters)) {
+      throw const FormatException('Tags must be 15 characters or less');
+    }
+    // Retained legacy tags are never truncated. Removal is always possible,
+    // including while the remaining old tags still exceed the new limits.
     _tags
       ..clear()
       ..addAll(checked);

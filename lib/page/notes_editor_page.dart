@@ -688,7 +688,10 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
             Tooltip(
                 message: 'Add tag',
                 child: TextButton.icon(
-                    onPressed: _document.tags.length < 12 ? _addTag : null,
+                    onPressed:
+                        _document.tags.length < NoteDocument.maxTagsPerNote
+                            ? _addTag
+                            : null,
                     style:
                         TextButton.styleFrom(minimumSize: const Size(48, 48)),
                     icon: const Icon(Icons.add, size: 16),
@@ -706,12 +709,13 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
                   key: const ValueKey('note-tag-input'),
                   controller: controller,
                   autofocus: true,
-                  maxLength: 40,
+                  maxLength: NoteDocument.maxTagCharacters,
                   maxLines: 1,
                   style: AppType.bodyLg,
                   cursorColor: AppColors.signal,
                   decoration: const InputDecoration(
                       hintText: 'For example, morning',
+                      helperText: '15 characters maximum',
                       border: OutlineInputBorder(),
                       focusedBorder: OutlineInputBorder(
                           borderSide: BorderSide(
