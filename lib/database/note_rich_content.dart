@@ -48,13 +48,15 @@ class NoteStyleRun {
 
 /// JPEGs are embedded, never fetched by URL. Bounds also limit decode memory.
 abstract final class NoteImageContent {
+  // Keep the existing 60 KiB decoder allowance for saved legacy JPEGs.
+  // New attachments use the picker's decimal 60,000-byte cap.
   static const maxBytes = 60 * 1024;
   static const maxDimension = 4096;
   static const maxPixels = 4 * 1024 * 1024;
 
   static Uint8List decode(String value) {
     if (value.length > ((maxBytes + 2) ~/ 3) * 4) {
-      throw const FormatException('Images must total 60 KB or less');
+      throw const FormatException('This image exceeds the supported size');
     }
     final bytes = base64Decode(value);
     if (base64Encode(bytes) != value ||
@@ -115,10 +117,12 @@ abstract final class NoteImageContent {
 /// Preflight both cloud representations so enabling the vault remains possible.
 /// No encryption or storage is performed here.
 abstract final class NoteContentBudget {
-  static const maxImageBytes = NoteImageContent.maxBytes;
-  static const maxBodyLength = 131072;
-  static const maxPayloadLength = 196608;
-  static const maxWireBytes = 250000;
+  // Three new images at 60,000 bytes each. Match the Server note bounds;
+  // request/batch limits remain separately enforced by the sync layer.
+  static const maxImageBytes = 180000;
+  static const maxBodyLength = 262144;
+  static const maxPayloadLength = 393216;
+  static const maxWireBytes = 400000;
 
   static String? errorFor(Note note) {
     if (note.title.length > 300) return 'Keep the title within 300 characters';
@@ -128,7 +132,7 @@ abstract final class NoteContentBudget {
     final document = NoteDocument.fromNote(note);
     if (document.isReadOnly) return 'This note format cannot be edited';
     if (document.imageBytes > maxImageBytes) {
-      return 'Images must total 60 KB or less';
+      return 'Images must total 180 KB or less';
     }
     final items =
         note.items.map((i) => {'text': i.text, 'done': i.done}).toList();

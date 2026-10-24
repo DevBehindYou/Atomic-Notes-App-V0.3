@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:atomic_notes/api/atomic_notes_api.dart';
 import 'package:atomic_notes/database/note.dart';
+import 'package:atomic_notes/database/note_document.dart';
 import 'package:atomic_notes/database/notes_repository.dart';
 import 'package:atomic_notes/database/notes_source.dart' show WipeOutcome;
 import 'package:atomic_notes/database/sync_status.dart';
@@ -1440,7 +1441,7 @@ void main() {
     final client = await device(
         'oversized-cipher', 'atomic-disposable-encrypted', uid,
         vault: vault, deviceTransport: capture);
-    final largeBody = List.filled(60000, '雪').join();
+    final largeBody = List.filled(100000, '雪').join();
     final note =
         Note(id: newId(), title: 'Oversized cipher fixture', body: largeBody);
     await client.notes.save(note);
@@ -1455,7 +1456,7 @@ void main() {
     expect(capture.bodies, hasLength(1));
     final envelope = jsonDecode(capture.bodies.single) as Map;
     expect(((envelope['rows'] as List).single as Map)['payload'].length,
-        greaterThan(196608));
+        greaterThan(NoteContentBudget.maxPayloadLength));
     final box = Hive.box('device-oversized-cipher');
     outcomes['oversized_cipher_phase'] = 'invalid_request_cleared';
     expect(box.get('__pending_sync_operation'), isNull);

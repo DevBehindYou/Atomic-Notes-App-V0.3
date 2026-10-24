@@ -1,5 +1,9 @@
 # Automatic note images under 24 KB
 
+**Historical policy:** the owner's later quality request supersedes the 24 KB
+cap with [60 KB per image](IMAGES_60KB_2026-10-24.md). The automatic, no-prompt
+insertion flow remains; the limits and quality settings below record the earlier release.
+
 The 2026-10-24 user request supersedes the manual image optimizer. Selecting a
 new gallery image automatically prepares and inserts it into the isolated draft.
 There is no quality sheet, settings step, or attachment confirmation. Done still

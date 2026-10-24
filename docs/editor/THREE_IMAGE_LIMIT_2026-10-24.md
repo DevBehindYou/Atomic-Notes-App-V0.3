@@ -3,9 +3,10 @@
 New image additions share one limit of **three images total per note**, regardless
 of the source format. The existing gallery pipeline supports JPEG and PNG input
 and stores automatically optimized JPEG bytes. Source formats do not create
-separate allowances. New images remain strictly below 24,000 raw bytes each;
-the existing 60 KiB aggregate and full-note sync bounds also apply, so large
-images can exhaust the byte budget before the count reaches three.
+separate allowances. The owner's later quality update raises new images to at
+most 60,000 raw bytes each, with a 180,000-byte aggregate budget. Complete-note
+plaintext/encrypted sync bounds still apply; see
+[the current 60 KB implementation](IMAGES_60KB_2026-10-24.md).
 
 ## Behavior and compatibility
 

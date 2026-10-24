@@ -32,18 +32,24 @@ style/image, or oversized body projects to `Unsupported note format` and is
 read-only. The original body/items remain intact; every document mutator refuses
 and `toNote` returns an unchanged copy. Repository saves reject such content.
 
-`NoteContentBudget` checks title 300 UTF-16 units, body 131072 units, encrypted
-payload 196608 characters, and full parsed row 250000 UTF-8 JSON bytes, including
+`NoteContentBudget` checks title 300 UTF-16 units, body 262144 units, encrypted
+payload 393216 characters, and full parsed row 400000 UTF-8 JSON bytes, including
 the Server's additional `encV` refinement field. It checks both plaintext and
 future encrypted representations. Ciphertext length is
 `4 * ceil((UTF8(JSON({title,body,items})).length + 28) / 3)` for nonce/MAC overhead.
 
-Embedded JPEGs total at most 60 KiB. Header validation requires JPEG start/end
+New image additions are limited to three per note, each at most 60,000 raw JPEG
+bytes, with a 180,000-byte aggregate budget. The legacy per-image decoder still
+accepts up to 60 KiB, preserving old saved bytes. Header validation requires JPEG start/end
 markers, a supported frame header, dimensions at most 4096 on either axis, and at
 most 4194304 pixels. Header validation does not replace the platform image
 decoder: imports are decoded/re-encoded before insertion, and rendering handles
 decode failures safely. No async attachment upload, orphan cleanup, or media
 cache is involved. Speech recognition inserts ordinary text; audio is not stored.
+
+Deploy the matching larger Server note bounds before releasing the 60 KB client.
+The request/batch limits and ten-note pull pagination remain unchanged. See
+[the 60 KB implementation](IMAGES_60KB_2026-10-24.md) for rollout and verification.
 
 This format preserves old notes, but older released applications cannot render
 or safely edit rich v2 content. No new Server minimum-client gate is introduced

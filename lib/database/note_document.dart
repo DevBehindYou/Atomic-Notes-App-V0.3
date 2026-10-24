@@ -251,7 +251,7 @@ class NoteDocument {
     }
     final bytes = NoteImageContent.decode(base64);
     if (imageBytes + bytes.length > NoteContentBudget.maxImageBytes) {
-      throw const FormatException('Images must total 60 KB or less');
+      throw const FormatException('Images must total 180 KB or less');
     }
     return _insertAfter(index, NoteLine.image(base64), null);
   }
