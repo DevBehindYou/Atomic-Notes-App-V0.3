@@ -27,16 +27,19 @@ class _ImageInput implements EditorImageInput {
 
 class _GalleryPicker extends ImagePicker {
   _GalleryPicker(this.file);
-  final XFile file;
+  XFile file;
+  int calls = 0;
   @override
   Future<XFile?> pickImage(
-          {required ImageSource source,
-          double? maxWidth,
-          double? maxHeight,
-          int? imageQuality,
-          CameraDevice preferredCameraDevice = CameraDevice.rear,
-          bool requestFullMetadata = true}) async =>
-      file;
+      {required ImageSource source,
+      double? maxWidth,
+      double? maxHeight,
+      int? imageQuality,
+      CameraDevice preferredCameraDevice = CameraDevice.rear,
+      bool requestFullMetadata = true}) async {
+    calls++;
+    return file;
+  }
 }
 
 String _legacyLargeJpeg() {
@@ -165,7 +168,139 @@ Future<void> _startSpeech(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
+Note _savedImages(int count, String encoded) => Note(
+      id: 'saved-images-$count',
+      title: 'Images',
+      body: jsonEncode({
+        'v': 2,
+        'tags': <String>[],
+        'blocks': [
+          {
+            'text': 'Keep this prose',
+            'checklist': false,
+            'done': false,
+            'styles': []
+          },
+          for (var i = 0; i < count; i++)
+            {
+              'text': '',
+              'checklist': false,
+              'done': false,
+              'styles': [],
+              'image': encoded
+            },
+        ],
+      }),
+      items: [TodoItem(text: NoteDocument.richFormatMarker)],
+    );
+
+Future<void> _dismissMessage(WidgetTester tester) async {
+  await tester.pump(const Duration(seconds: 4));
+  await tester.pumpAndSettle();
+}
+
+Future<void> _removeFirstImage(WidgetTester tester) async {
+  final button = find.widgetWithText(TextButton, 'Remove image').first;
+  await tester.ensureVisible(button);
+  await tester.pumpAndSettle();
+  await tester.tap(button);
+  await tester.pumpAndSettle();
+}
+
 void main() {
+  testWidgets('third image is accepted and fourth never opens the picker',
+      (tester) async {
+    final encoded =
+        base64Encode(image.encodeJpg(image.Image(width: 16, height: 12)));
+    final note = _savedImages(2, encoded);
+    final input = _ImageInput()..result = encoded;
+    await _open(tester, note, images: input);
+    await tester.enterText(_body, 'Latest unsaved prose');
+    await _action(tester, 'Add image');
+    expect(input.calls, 1);
+    await _action(tester, 'Add image');
+    expect(input.calls, 1);
+    expect(find.textContaining('3 images per note'), findsWidgets);
+    expect(_controller(tester).text, 'Latest unsaved prose');
+    await _dismissMessage(tester);
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
+    expect(NoteDocument.fromNote(note).lines.where((line) => line.isImage),
+        hasLength(3));
+    await tester.tap(find.text('Open'));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets(
+      'legacy four images survive save and block additions until below three',
+      (tester) async {
+    final encoded =
+        base64Encode(image.encodeJpg(image.Image(width: 16, height: 12)));
+    final note = _savedImages(4, encoded);
+    final before = note.toMap();
+    final input = _ImageInput()..result = encoded;
+    await _open(tester, note, images: input);
+    expect(NoteDocument.fromNote(note).lines.where((line) => line.isImage),
+        hasLength(4));
+    await _action(tester, 'Add image');
+    expect(input.calls, 0);
+    expect(find.textContaining('3 images per note'), findsWidgets);
+    await _dismissMessage(tester);
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
+    expect(note.toMap(), before);
+    await tester.tap(find.text('Open'));
+    await tester.pumpAndSettle();
+    await _removeFirstImage(tester);
+    await _action(tester, 'Add image');
+    expect(input.calls, 0, reason: 'three remaining images still fill the cap');
+    await _dismissMessage(tester);
+    await _removeFirstImage(tester);
+    await _action(tester, 'Add image');
+    expect(input.calls, 1);
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
+    final saved = NoteDocument.fromNote(note);
+    expect(saved.lines.where((line) => line.isImage), hasLength(3));
+    expect(
+        saved.lines
+            .where((line) => line.isImage)
+            .every((line) => line.imageBase64 == encoded),
+        isTrue);
+    expect(saved.lines.first.text, 'Keep this prose');
+  });
+
+  testWidgets('JPEG and PNG selections share one three-image limit',
+      (tester) async {
+    final pixels = image.Image(width: 16, height: 12);
+    final png = XFile.fromData(image.encodePng(pixels), mimeType: 'image/png');
+    final jpeg =
+        XFile.fromData(image.encodeJpg(pixels), mimeType: 'image/jpeg');
+    final picker = _GalleryPicker(png);
+    final input = PlatformEditorImageInput(picker: picker, isAndroid: false);
+    final note = Note(id: 'mixed-source-formats', body: 'Keep prose');
+    await _open(tester, note, images: input);
+    for (final source in [png, jpeg, png]) {
+      picker.file = source;
+      await _action(tester, 'Add image');
+    }
+    expect(picker.calls, 3);
+    await _action(tester, 'Add image');
+    expect(picker.calls, 3);
+    expect(find.textContaining('3 images per note'), findsWidgets);
+    await _dismissMessage(tester);
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
+    final images =
+        NoteDocument.fromNote(note).lines.where((line) => line.isImage);
+    expect(images, hasLength(3));
+    for (final block in images) {
+      final bytes = base64Decode(block.imageBase64!);
+      expect(bytes.length, lessThan(24000));
+      expect(image.decodeJpg(bytes), isNotNull);
+    }
+  });
+
   testWidgets('title stays above tags and uses the accepted 32px size',
       (tester) async {
     final original =
