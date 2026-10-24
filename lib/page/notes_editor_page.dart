@@ -671,6 +671,10 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
 
   Future<void> _pickImage() async {
     if (_picking || _document.isReadOnly) return;
+    if (_document.imageCount >= NoteDocument.maxImagesPerNote) {
+      _message(NoteDocument.imageLimitMessage);
+      return;
+    }
     _cancelSpeech();
     final remaining = NoteContentBudget.maxImageBytes - _document.imageBytes;
     if (remaining <= 0) {
@@ -683,6 +687,10 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
           remaining.clamp(1, PlatformEditorImageInput.maxImageBytes);
       final image = await _imageInput.pickJpeg(maxBytes: maxBytes);
       if (!mounted || image == null) return;
+      if (_document.imageCount >= NoteDocument.maxImagesPerNote) {
+        _message(NoteDocument.imageLimitMessage);
+        return;
+      }
       if (NoteImageContent.decode(image).length > maxBytes) {
         _message(
             'The image must fit under 24 KB and the remaining note image space. Your draft is still here.');
