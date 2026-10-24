@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:atomic_notes/editor/editor_media.dart';
 import 'package:atomic_notes/editor/editor_popup.dart';
-import 'package:atomic_notes/editor/image_optimizer.dart';
 import 'package:atomic_notes/editor/rich_selection_toolbar.dart';
 import 'package:atomic_notes/editor/rich_text_controller.dart';
 import 'package:atomic_notes/database/note.dart';
@@ -674,40 +673,21 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
     if (_picking || _document.isReadOnly) return;
     _cancelSpeech();
     final remaining = NoteContentBudget.maxImageBytes - _document.imageBytes;
-    if (remaining < 1024) {
+    if (remaining <= 0) {
       _message('Image space is full. Remove an image first.');
       return;
     }
     setState(() => _picking = true);
     try {
-      // Prepare within the per-image safety cap first. Let the preview controls
-      // reduce it to the remaining aggregate note budget before insertion.
-      final selected =
-          await _imageInput.pickJpeg(maxBytes: NoteContentBudget.maxImageBytes);
-      if (!mounted || selected == null) return;
-      String? validateImage(String base64) {
-        try {
-          final candidate = NoteDocument.fromNote(_snapshot());
-          candidate.insertImageAfter(
-              _activeLine.clamp(-1, candidate.lines.length - 1), base64);
-          return NoteContentBudget.errorFor(candidate.toNote(_snapshot()));
-        } on FormatException catch (error) {
-          return error.message;
-        }
-      }
-
-      final image = await showModalBottomSheet<String>(
-        context: context,
-        isScrollControlled: true,
-        useSafeArea: true,
-        backgroundColor: AppColors.paper,
-        builder: (_) => NoteImageOptimizer(
-          sourceBase64: selected,
-          maxBytes: remaining,
-          validate: validateImage,
-        ),
-      );
+      final maxBytes =
+          remaining.clamp(1, PlatformEditorImageInput.maxImageBytes);
+      final image = await _imageInput.pickJpeg(maxBytes: maxBytes);
       if (!mounted || image == null) return;
+      if (NoteImageContent.decode(image).length > maxBytes) {
+        _message(
+            'The image must fit under 24 KB and the remaining note image space. Your draft is still here.');
+        return;
+      }
       final candidate = NoteDocument.fromNote(_snapshot());
       final index = _activeLine.clamp(-1, candidate.lines.length - 1);
       candidate.insertImageAfter(index, image);

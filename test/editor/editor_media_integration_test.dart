@@ -1,13 +1,14 @@
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:atomic_notes/database/note.dart';
 import 'package:atomic_notes/database/note_document.dart';
 import 'package:atomic_notes/editor/editor_media.dart';
-import 'package:atomic_notes/editor/image_optimizer.dart';
 import 'package:atomic_notes/page/notes_editor_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as image;
+import 'package:image_picker/image_picker.dart';
 
 class _ImageInput implements EditorImageInput {
   String? result;
@@ -18,10 +19,52 @@ class _ImageInput implements EditorImageInput {
   Future<String?> pickJpeg({required int maxBytes}) async {
     calls++;
     lastMaxBytes = maxBytes;
-    expect(maxBytes, inInclusiveRange(1, 60 * 1024));
+    expect(maxBytes, inInclusiveRange(1, 23999));
     if (fail) throw const EditorMediaException('Gallery unavailable');
     return result;
   }
+}
+
+class _GalleryPicker extends ImagePicker {
+  _GalleryPicker(this.file);
+  final XFile file;
+  @override
+  Future<XFile?> pickImage(
+          {required ImageSource source,
+          double? maxWidth,
+          double? maxHeight,
+          int? imageQuality,
+          CameraDevice preferredCameraDevice = CameraDevice.rear,
+          bool requestFullMetadata = true}) async =>
+      file;
+}
+
+String _legacyLargeJpeg() {
+  final pixels = image.Image(width: 160, height: 160);
+  final random = Random(112);
+  for (var y = 0; y < pixels.height; y++) {
+    for (var x = 0; x < pixels.width; x++) {
+      pixels.setPixelRgb(
+          x, y, random.nextInt(256), random.nextInt(256), random.nextInt(256));
+    }
+  }
+  return base64Encode(image.encodeJpg(pixels, quality: 90));
+}
+
+String _jpegWithExactBytes(int size) {
+  final jpeg = image.encodeJpg(image.Image(width: 16, height: 12));
+  final padding = size - jpeg.length - 4;
+  assert(padding >= 0 && padding < 65533);
+  final segmentLength = padding + 2;
+  return base64Encode([
+    ...jpeg.take(2),
+    0xff,
+    0xfe,
+    segmentLength >> 8,
+    segmentLength & 255,
+    ...List<int>.filled(padding, 0),
+    ...jpeg.skip(2),
+  ]);
 }
 
 /// Intentionally emits even after cancellation to verify the UI session guard.
@@ -67,7 +110,7 @@ TextEditingController _controller(WidgetTester tester) =>
 Future<void> _open(
   WidgetTester tester,
   Note note, {
-  _ImageInput? images,
+  EditorImageInput? images,
   _SpeechInput? speech,
   VoidCallback? onDelete,
 }) async {
@@ -97,21 +140,21 @@ Future<void> _action(WidgetTester tester, String label) async {
   await tester.pumpAndSettle();
   await tester.tap(button);
   await tester.pump();
-  if (label == 'Add image' &&
-      find.byType(NoteImageOptimizer).evaluate().isNotEmpty) {
-    final progress = find.descendant(
-        of: find.byType(NoteImageOptimizer),
-        matching: find.byType(LinearProgressIndicator));
+  if (label == 'Add image') {
+    bool preparing() =>
+        tester
+            .widget<FilledButton>(find.widgetWithText(FilledButton, 'Done'))
+            .onPressed ==
+        null;
     // Exercise the production compute isolate, which needs real event-loop
     // time rather than only advancing Flutter's fake animation clock.
-    for (var attempt = 0;
-        attempt < 100 && progress.evaluate().isNotEmpty;
-        attempt++) {
+    for (var attempt = 0; attempt < 100 && preparing(); attempt++) {
       await tester.runAsync(
           () => Future<void>.delayed(const Duration(milliseconds: 50)));
       await tester.pump(const Duration(milliseconds: 100));
     }
-    expect(progress, findsNothing, reason: 'image optimization should finish');
+    expect(preparing(), isFalse,
+        reason: 'automatic image optimization should finish');
   }
   await tester.pumpAndSettle();
 }
@@ -160,13 +203,8 @@ void main() {
     await _open(tester, note, images: _ImageInput()..result = encoded);
     expect(find.text('4 WORDS'), findsOneWidget);
     await _action(tester, 'Add image');
-    expect(find.byType(NoteImageOptimizer), findsOneWidget);
-    final preview = tester.widget<Image>(find.byType(Image));
-    final optimized = base64Encode((preview.image as MemoryImage).bytes);
-    await tester.ensureVisible(find.text('Insert image'));
-    await tester.tap(find.text('Insert image'));
-    await tester.pumpAndSettle();
-    expect(find.byType(NoteImageOptimizer), findsNothing);
+    expect(find.text('Optimize image'), findsNothing);
+    expect(find.text('Insert image'), findsNothing);
     expect(find.byType(Image), findsOneWidget);
     expect(find.text('4 WORDS'), findsOneWidget);
     expect(find.text('1 MIN READ'), findsOneWidget);
@@ -175,7 +213,7 @@ void main() {
     await tester.pumpAndSettle();
     final saved = NoteDocument.fromNote(note);
     expect(saved.isReadOnly, isFalse);
-    expect(saved.lines.where((l) => l.isImage).single.imageBase64, optimized);
+    expect(saved.lines.where((l) => l.isImage).single.imageBase64, encoded);
     expect(saved.lines.where((l) => !l.isImage).single.text, 'two plain words');
     await tester.tap(find.text('Open'));
     await tester.pumpAndSettle();
@@ -186,7 +224,33 @@ void main() {
   });
 
   testWidgets(
-      'canceling the optimizer preserves the draft without attaching an image',
+      'gallery selection optimizes in compute and inserts without a prompt',
+      (tester) async {
+    final source = image.encodePng(image.Image(width: 128, height: 96));
+    final input = PlatformEditorImageInput(
+        picker: _GalleryPicker(XFile.fromData(source, mimeType: 'image/png')),
+        isAndroid: false);
+    final note = Note(id: 'automatic-gallery', body: 'Retain prose');
+    await _open(tester, note, images: input);
+    await _action(tester, 'Add image');
+    expect(find.text('Optimize image'), findsNothing);
+    expect(find.text('Insert image'), findsNothing);
+    expect(find.byType(Image), findsOneWidget);
+    expect(note.body, 'Retain prose');
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
+    final doc = NoteDocument.fromNote(note);
+    final bytes = base64Decode(
+        doc.lines.where((line) => line.isImage).single.imageBase64!);
+    expect(bytes.length, inInclusiveRange(1, 23999));
+    final decoded = image.decodeJpg(bytes)!;
+    expect([decoded.width, decoded.height], [128, 96]);
+    expect(
+        doc.lines.where((line) => !line.isImage).single.text, 'Retain prose');
+  });
+
+  testWidgets(
+      'discarding after automatic insertion preserves the original note',
       (tester) async {
     final note = Note(id: 'optimizer-cancel', body: 'Original');
     final encoded =
@@ -194,48 +258,53 @@ void main() {
     await _open(tester, note, images: _ImageInput()..result = encoded);
     await tester.enterText(_body, 'Edited draft remains');
     await _action(tester, 'Add image');
-    expect(find.byType(NoteImageOptimizer), findsOneWidget);
+    expect(find.byType(Image), findsOneWidget);
     expect(note.body, 'Original');
-    await tester.ensureVisible(find.text('Cancel'));
-    await tester.tap(find.text('Cancel'));
+    await _action(tester, 'Back to notes');
+    await tester.tap(find.text('Discard'));
     await tester.pumpAndSettle();
-    expect(find.byType(NoteImageOptimizer), findsNothing);
-    expect(find.byType(Image), findsNothing);
-    expect(_controller(tester).text, 'Edited draft remains');
+    expect(find.byType(NotesCreaterPage), findsNothing);
     expect(note.body, 'Original');
-    await tester.tap(find.text('Done'));
-    await tester.pumpAndSettle();
-    expect(note.body, 'Edited draft remains');
     expect(NoteDocument.fromNote(note).lines.where((l) => l.isImage), isEmpty);
   });
   testWidgets(
-      'picker preparation uses the full cap while sheet shows remaining image budget',
+      'remaining aggregate budget gates new images without rewriting a larger legacy image',
       (tester) async {
     final encoded =
         base64Encode(image.encodeJpg(image.Image(width: 16, height: 12)));
+    final legacy = _legacyLargeJpeg();
+    expect(base64Decode(legacy).length, greaterThan(23999));
+    expect(base64Decode(legacy).length, lessThanOrEqualTo(60 * 1024));
     final original =
         Note(id: 'aggregate-image-budget', body: 'Keep existing image');
     final document = NoteDocument.fromNote(original);
-    document.insertImageAfter(0, encoded);
+    document.insertImageAfter(0, legacy);
     final note = document.toNote(original);
     final before = note.contentSig;
     final remaining =
-        NoteContentBudget.maxImageBytes - base64Decode(encoded).length;
+        NoteContentBudget.maxImageBytes - base64Decode(legacy).length;
+    expect(remaining, lessThan(23999));
     final input = _ImageInput()..result = encoded;
     await _open(tester, note, images: input);
-    await _action(tester, 'Add image');
-    expect(input.lastMaxBytes, NoteContentBudget.maxImageBytes);
-    expect(find.byType(NoteImageOptimizer), findsOneWidget);
-    expect(
-        find.text(
-            'Available image budget: ${(remaining / 1024).toStringAsFixed(1)} KB'),
-        findsOneWidget);
-    await tester.ensureVisible(find.text('Cancel'));
-    await tester.tap(find.text('Cancel'));
+    await tester.tap(find.text('Done'));
     await tester.pumpAndSettle();
-    expect(note.contentSig, before);
-    expect(NoteDocument.fromNote(note).lines.where((line) => line.isImage),
-        hasLength(1));
+    expect(note.contentSig, before,
+        reason: 'opening/saving must not recompress old images');
+    await tester.tap(find.text('Open'));
+    await tester.pumpAndSettle();
+    await _action(tester, 'Add image');
+    expect(input.lastMaxBytes, remaining);
+    expect(find.text('Optimize image'), findsNothing);
+    expect(find.byType(Image), findsNWidgets(2));
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
+    final images = NoteDocument.fromNote(note)
+        .lines
+        .where((line) => line.isImage)
+        .toList();
+    expect(images, hasLength(2));
+    expect(images.first.imageBase64, legacy);
+    expect(images.last.imageBase64, encoded);
   });
 
   testWidgets('image failure leaves unsaved draft editable', (tester) async {
@@ -254,6 +323,44 @@ void main() {
     await tester.tap(find.text('Done'));
     await tester.pumpAndSettle();
     expect(note.body, 'Keep this draft and edit');
+  });
+
+  testWidgets('an adapter result at 24000 bytes is rejected without draft loss',
+      (tester) async {
+    final note = Note(id: 'exact-image-boundary', body: 'Original');
+    final input = _ImageInput()..result = _jpegWithExactBytes(24000);
+    await _open(tester, note, images: input);
+    await tester.enterText(_body, 'Keep my latest draft');
+    await _action(tester, 'Add image');
+    expect(find.byType(Image), findsNothing);
+    expect(find.textContaining('under 24 KB'), findsWidgets);
+    expect(_controller(tester).text, 'Keep my latest draft');
+    expect(note.body, 'Original');
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
+    expect(note.body, 'Keep my latest draft');
+    expect(NoteDocument.fromNote(note).imageBytes, 0);
+  });
+
+  testWidgets('a sub-24KB image still respects the complete note sync budget',
+      (tester) async {
+    final original = 'x' * 100000;
+    final note = Note(id: 'complete-note-image-limit', body: original);
+    expect(NoteContentBudget.errorFor(note), isNull);
+    final input = _ImageInput()..result = _jpegWithExactBytes(23999);
+    await _open(tester, note, images: input);
+    await _action(tester, 'Add image');
+    expect(find.byType(Image), findsNothing);
+    expect(find.textContaining('sync size limit'), findsWidgets);
+    expect(_controller(tester).text, original);
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
+    expect(note.body, original);
+    expect(NoteDocument.fromNote(note).imageBytes, 0);
   });
 
   testWidgets('canceling speech disclosure never starts the microphone',

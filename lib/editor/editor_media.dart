@@ -220,6 +220,7 @@ class PlatformEditorSpeechInput implements EditorSpeechInput {
 
 abstract class EditorImageInput {
   /// Returns only re-encoded JPEG bytes as base64; cancellation returns null.
+  /// New attachments contain at most 23,999 raw bytes and respect maxBytes.
   Future<String?> pickJpeg({required int maxBytes});
 }
 
@@ -229,7 +230,9 @@ class PlatformEditorImageInput implements EditorImageInput {
         _isAndroid = isAndroid ??
             (!kIsWeb && defaultTargetPlatform == TargetPlatform.android);
 
-  static const maxImageBytes = 60 * 1024;
+  // Strictly below 24,000 raw JPEG bytes. Wire base64/encryption adds overhead;
+  // the editor separately checks aggregate and complete-note wire budgets.
+  static const maxImageBytes = 23999;
   static const _maxSourceBytes = 8 * 1024 * 1024;
   final ImagePicker _picker;
   final bool _isAndroid;
@@ -237,7 +240,7 @@ class PlatformEditorImageInput implements EditorImageInput {
 
   @override
   Future<String?> pickJpeg({required int maxBytes}) async {
-    if (maxBytes <= 0 || maxBytes > maxImageBytes) {
+    if (maxBytes <= 0) {
       throw const EditorMediaException(
           'This note has no room for another image.');
     }
@@ -275,7 +278,8 @@ class PlatformEditorImageInput implements EditorImageInput {
             'Choose a smaller image (under 8 MB).');
       }
       // All decoding, resizing and JPEG encoding runs off the UI isolate.
-      return await compute(_compressImage, (bytes, maxBytes));
+      return await compute(
+          _compressImage, (bytes, maxBytes.clamp(1, maxImageBytes)));
     } on EditorMediaException {
       rethrow;
     } catch (_) {
@@ -321,29 +325,31 @@ String _compressImage((Uint8List, int) request) {
     throw const EditorMediaException(
         'The image could not be read. Choose another image.');
   }
-  var resized = image.bakeOrientation(decoded);
-  if (resized.width > 1024 || resized.height > 1024) {
-    resized = image.copyResize(resized,
-        width: resized.width >= resized.height ? 1024 : null,
-        height: resized.height > resized.width ? 1024 : null);
-  }
+  final resized = _resizeWithin(image.bakeOrientation(decoded), 1024);
   // Composite onto white and create fresh pixels so EXIF/GPS, source filenames
   // and other metadata are never embedded in synced note content.
-  var clean = image.Image(width: resized.width, height: resized.height);
+  final clean = image.Image(width: resized.width, height: resized.height);
   image.fill(clean, color: image.ColorRgb8(255, 255, 255));
   image.compositeImage(clean, resized);
-  for (final quality in [70, 55, 40]) {
-    final jpeg = image.encodeJpg(clean, quality: quality);
-    if (jpeg.length <= maxBytes) return base64Encode(jpeg);
-  }
-  // One smaller fallback keeps photos useful on notes with a tighter budget.
-  clean = image.copyResize(clean,
-      width: clean.width >= clean.height ? 512 : null,
-      height: clean.height > clean.width ? 512 : null);
-  for (final quality in [55, 40]) {
-    final jpeg = image.encodeJpg(clean, quality: quality);
-    if (jpeg.length <= maxBytes) return base64Encode(jpeg);
+  final longest = clean.width >= clean.height ? clean.width : clean.height;
+  for (final dimension in {longest, 768, 512, 384, 256, 192, 128}) {
+    if (dimension > longest) continue;
+    final candidate = _resizeWithin(clean, dimension);
+    for (final quality in [70, 55, 40]) {
+      final jpeg = image.encodeJpg(candidate, quality: quality);
+      if (jpeg.length <= maxBytes) return base64Encode(jpeg);
+    }
   }
   throw const EditorMediaException(
-      'This image is too large for the note. Choose a simpler or smaller image.');
+      'This image could not fit under 24 KB and the note’s remaining image space. Choose a smaller image or remove another image.');
+}
+
+image.Image _resizeWithin(image.Image source, int maxDimension) {
+  final longest = source.width >= source.height ? source.width : source.height;
+  if (longest <= maxDimension) return source;
+  final scale = maxDimension / longest;
+  return image.copyResize(source,
+      width: (source.width * scale).round().clamp(1, source.width),
+      height: (source.height * scale).round().clamp(1, source.height),
+      interpolation: image.Interpolation.average);
 }
