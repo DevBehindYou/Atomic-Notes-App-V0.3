@@ -28,6 +28,7 @@ void main() {
   late CloudNotesCubit cubit;
   late Future<http.Response> Function(http.Request) push;
   late List<http.Request> requests;
+  late List<Map<String, dynamic>> pullRows;
   var sequence = 0;
   var refusePull = false;
 
@@ -68,6 +69,7 @@ void main() {
     sequence = 0;
     refusePull = false;
     requests = [];
+    pullRows = [];
     push = (request) async => jsonResponse({
           'ok': true,
           'results': accepted(request),
@@ -86,7 +88,7 @@ void main() {
                 status: 409);
           }
           return jsonResponse({
-            'rows': <dynamic>[],
+            'rows': pullRows,
             'nextCursor': sequence,
             'hasMore': false,
             'cursor': DateTime.utc(2026, 10, 4).toIso8601String(),
@@ -133,6 +135,140 @@ void main() {
 
   List<http.Request> getPushes() =>
       requests.where((request) => request.method == 'POST').toList();
+
+  void offerRemoteNote() {
+    final remote = Note(
+        id: 'remote-receive-fixture',
+        title: 'Other device',
+        body: 'Remote work');
+    pullRows = [
+      {...remote.toRemote('user-a'), 'version': 1, 'seq': 1},
+    ];
+    sequence = 1;
+  }
+
+  for (final instant in [false, true]) {
+    test(
+        'B01 legacy insufficient Energy blocks dirty+remote receive (instant=$instant)',
+        () async {
+      final note = await addNote('queued locally');
+      offerRemoteNote();
+      final entered = Completer<void>();
+      final release = Completer<void>();
+      push = (_) async {
+        entered.complete();
+        await release.future;
+        return jsonResponse({'error': 'insufficient_energy'}, status: 409);
+      };
+      final syncing = repository.syncWithReport(instant: instant);
+      await entered.future;
+      await repository.save(note..body = 'Newer local edit');
+      release.complete();
+      final report = await syncing;
+      expect(report.completed, isFalse);
+      expect(report.errorMessage, contains('Not enough Atomic Energy'));
+      expect(report.netCharge, isNull);
+      expect(repository.byId(note.id)!.body, 'Newer local edit');
+      expect(repository.byId(note.id)!.dirty, isTrue);
+      expect((box.get(note.id) as Map)['body'], 'Newer local edit');
+      expect((box.get(note.id) as Map)['dirty'], isTrue);
+      expect(box.get('__pending_sync_operation'), isNull);
+      expect(getPushes(), hasLength(1));
+      // Legacy baseline, not desired policy: B02 must change this expectation.
+      // The desired isNotNull assertion failed on both modes before recording it.
+      expect(repository.byId('remote-receive-fixture'), isNull);
+      expect(requests.where((request) => request.method == 'GET'), isEmpty);
+      expect(box.get('__sync_cursor__'), isNull);
+    });
+  }
+
+  test('B01 unknown HTTP write blocks pull and replays the frozen envelope',
+      () async {
+    final note = await addNote('queued before unknown write');
+    offerRemoteNote();
+    push = (_) async =>
+        jsonResponse({'error': 'provider_unavailable'}, status: 503);
+    final failed = await repository.syncWithReport();
+    final originalBody = getPushes().single.body;
+    final frozen = jsonEncode(box.get('__pending_sync_operation'));
+    expect(failed.completed, isFalse);
+    expect(failed.netCharge, isNull);
+    expect(box.get('__pending_sync_operation'), isA<Map>());
+    expect(requests.where((request) => request.method == 'GET'), isEmpty);
+    expect(repository.byId('remote-receive-fixture'), isNull);
+    expect(box.get('__sync_cursor__'), isNull);
+    await repository.save(note..body = 'Edit after unknown write');
+    final repeated = await repository.syncWithReport(instant: true);
+    expect(repeated.completed, isFalse);
+    expect(repeated.operations.single.recovered, isTrue);
+    expect(repeated.operations.single.instant, isFalse);
+    expect(getPushes().map((request) => request.body),
+        [originalBody, originalBody]);
+    expect(jsonEncode(box.get('__pending_sync_operation')), frozen);
+    expect((box.get(note.id) as Map)['body'], 'Edit after unknown write');
+    expect((box.get(note.id) as Map)['dirty'], isTrue);
+    expect(requests.where((request) => request.method == 'GET'), isEmpty);
+    expect(box.get('__sync_cursor__'), isNull);
+  });
+
+  test('B01 cooldown still receives remote work while a local edit waits',
+      () async {
+    final note = await addNote('waiting through cooldown');
+    offerRemoteNote();
+    push = (_) async => jsonResponse(
+        {'error': 'sync_cooldown', 'retry_after_seconds': 3600},
+        status: 429);
+    final report = await repository.syncWithReport();
+    expect(report.completed, isFalse);
+    expect(repository.byId('remote-receive-fixture')!.body, 'Remote work');
+    expect(repository.byId(note.id)!.dirty, isTrue);
+    expect((box.get(note.id) as Map)['dirty'], isTrue);
+    expect(box.get('__pending_sync_operation'), isNull);
+    expect(box.get('__sync_cursor__'), 1);
+    expect(repository.nextAutoSyncAt, isNotNull);
+    expect(getPushes(), hasLength(1));
+    expect(requests.where((request) => request.method == 'GET'), hasLength(1));
+    await repository.syncWithReport();
+    expect(getPushes(), hasLength(1),
+        reason: 'The closed standard window skips upload');
+    expect(requests.where((request) => request.method == 'GET'), hasLength(2));
+    expect(repository.pendingCount, 1);
+  });
+
+  for (final sameOwner in [false, true]) {
+    test(
+        'B01 late insufficient Energy cannot receive into a replacement session (sameOwner=$sameOwner)',
+        () async {
+      final note = await addNote('old session local work');
+      offerRemoteNote();
+      final entered = Completer<void>();
+      final release = Completer<void>();
+      push = (_) async {
+        entered.complete();
+        await release.future;
+        return jsonResponse({'error': 'insufficient_energy'}, status: 409);
+      };
+      final syncing = repository.syncWithReport();
+      await entered.future;
+      final frozen = jsonEncode(box.get('__pending_sync_operation'));
+      await storage.write(
+          key: 'atomic_api_session_token',
+          value: 'replacement-fixture-session');
+      await storage.write(
+          key: 'atomic_api_user_id', value: sameOwner ? 'user-a' : 'user-b');
+      await api.init();
+      release.complete();
+      final report = await syncing;
+      expect(report.activity, SyncAttemptActivity.retired);
+      expect(report.completed, isFalse);
+      expect(report.operations, isEmpty);
+      expect(requests.where((request) => request.method == 'GET'), isEmpty);
+      expect(jsonEncode(box.get('__pending_sync_operation')), frozen);
+      expect((box.get(note.id) as Map)['dirty'], isTrue);
+      expect(box.get('remote-receive-fixture'), isNull);
+      expect(box.get('__sync_cursor__'), isNull);
+    });
+  }
 
   test('HTTP 502 partial results reach Hive and the caller receipt together',
       () async {
