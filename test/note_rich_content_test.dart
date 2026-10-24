@@ -5,6 +5,20 @@ import 'package:atomic_notes/database/note_document.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('three image insertion cap is atomic and removal restores a slot', () {
+    final original = Note(id: 'three-image-model', body: 'Keep text');
+    final doc = NoteDocument.fromNote(original);
+    for (var i = 0; i < 3; i++) {
+      doc.insertImageAfter(doc.lines.length - 1, _jpeg());
+    }
+    final before = doc.toNote(original).toMap();
+    expect(() => doc.insertImageAfter(0, _jpeg()), throwsFormatException);
+    expect(doc.toNote(original).toMap(), before);
+    doc.removeAt(doc.lines.indexWhere((line) => line.isImage));
+    doc.insertImageAfter(doc.lines.length - 1, _jpeg());
+    expect(doc.lines.where((line) => line.isImage), hasLength(3));
+  });
+
   test('literal rich marker tasks remain legacy content outside an envelope',
       () {
     for (final note in [

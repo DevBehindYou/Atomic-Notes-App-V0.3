@@ -60,6 +60,12 @@ class NoteDocument {
   // body by the vault. It opts in explicitly; legacy prose is never parsed.
   static const formatMarker = 'atomic-notes:task-lines:v1';
   static const richFormatMarker = 'atomic-notes:rich-document:v2';
+
+  // An insertion rule, not a decoder/save bound: older notes may contain more
+  // images and must remain editable without losing existing content.
+  static const maxImagesPerNote = 3;
+  static const imageLimitMessage =
+      'Use up to 3 images per note. Remove an image first.';
   static const _richPrefix = 'atomic-notes:rich-document:';
   static bool hasRichContent(Note note) =>
       note.kind == NoteKind.text &&
@@ -183,6 +189,7 @@ class NoteDocument {
   List<String> get tags => UnmodifiableListView(_tags);
   String get plainText =>
       _lines.map((line) => line.isImage ? '[Image]' : line.text).join('\n');
+  int get imageCount => _lines.where((line) => line.isImage).length;
   int get imageBytes => _lines
       .where((line) => line.isImage)
       .fold(0, (sum, line) => sum + base64Decode(line.imageBase64!).length);
@@ -239,6 +246,9 @@ class NoteDocument {
 
   int insertImageAfter(int index, String base64) {
     _assertEditable();
+    if (imageCount >= maxImagesPerNote) {
+      throw const FormatException(imageLimitMessage);
+    }
     final bytes = NoteImageContent.decode(base64);
     if (imageBytes + bytes.length > NoteContentBudget.maxImageBytes) {
       throw const FormatException('Images must total 60 KB or less');
