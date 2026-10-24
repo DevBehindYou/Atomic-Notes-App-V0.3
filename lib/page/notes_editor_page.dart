@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:atomic_notes/editor/editor_media.dart';
+import 'package:atomic_notes/editor/editor_popup.dart';
 import 'package:atomic_notes/editor/image_optimizer.dart';
 import 'package:atomic_notes/editor/rich_selection_toolbar.dart';
 import 'package:atomic_notes/editor/rich_text_controller.dart';
@@ -182,21 +183,23 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
     _confirmingClose = true;
     final action = await showDialog<String>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Save your changes?'),
+      builder: (context) => EditorPopup(
+        title: 'Save your changes?',
         content: const Text('Choose Save to keep this draft, or keep editing.'),
         actions: [
-          TextButton(
+          EditorPopupButton(
+            label: 'Keep editing',
             onPressed: () => Navigator.pop(context, 'keep'),
-            child: const Text('Keep editing'),
           ),
-          TextButton(
+          EditorPopupButton(
+            label: 'Discard',
+            tone: EditorPopupActionTone.destructive,
             onPressed: () => Navigator.pop(context, 'discard'),
-            child: const Text('Discard'),
           ),
-          TextButton(
+          EditorPopupButton(
+            label: 'Save',
+            tone: EditorPopupActionTone.primary,
             onPressed: () => Navigator.pop(context, 'save'),
-            child: const Text('Save'),
           ),
         ],
       ),
@@ -625,24 +628,34 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
     final controller = TextEditingController();
     final tag = await showDialog<String>(
         context: context,
-        builder: (context) => AlertDialog(
-              title: const Text('Add tag'),
+        builder: (context) => EditorPopup(
+              title: 'Add tag',
               content: TextField(
                   key: const ValueKey('note-tag-input'),
                   controller: controller,
                   autofocus: true,
                   maxLength: 40,
                   maxLines: 1,
-                  decoration:
-                      const InputDecoration(hintText: 'For example, morning'),
+                  style: AppType.bodyLg,
+                  cursorColor: AppColors.signal,
+                  decoration: const InputDecoration(
+                      hintText: 'For example, morning',
+                      border: OutlineInputBorder(),
+                      focusedBorder: OutlineInputBorder(
+                          borderSide: BorderSide(
+                              color: AppColors.signal,
+                              width: AppStroke.hairline))),
                   onSubmitted: (value) => Navigator.pop(context, value)),
               actions: [
-                TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('Cancel')),
-                TextButton(
-                    onPressed: () => Navigator.pop(context, controller.text),
-                    child: const Text('Add')),
+                EditorPopupButton(
+                  label: 'Cancel',
+                  onPressed: () => Navigator.pop(context),
+                ),
+                EditorPopupButton(
+                  label: 'Add',
+                  tone: EditorPopupActionTone.primary,
+                  onPressed: () => Navigator.pop(context, controller.text),
+                ),
               ],
             ));
     // Let the outgoing dialog release its field before disposing its controller.
@@ -669,8 +682,8 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
     try {
       // Prepare within the per-image safety cap first. Let the preview controls
       // reduce it to the remaining aggregate note budget before insertion.
-      final selected = await _imageInput.pickJpeg(
-          maxBytes: NoteContentBudget.maxImageBytes);
+      final selected =
+          await _imageInput.pickJpeg(maxBytes: NoteContentBudget.maxImageBytes);
       if (!mounted || selected == null) return;
       String? validateImage(String base64) {
         try {
@@ -682,6 +695,7 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
           return error.message;
         }
       }
+
       final image = await showModalBottomSheet<String>(
         context: context,
         isScrollControlled: true,
@@ -740,17 +754,20 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
     if (!_speechExplained) {
       final accepted = await showDialog<bool>(
           context: context,
-          builder: (context) => AlertDialog(
-                title: const Text('Dictate into your note'),
+          builder: (context) => EditorPopup(
+                title: 'Dictate into your note',
                 content: const Text(
                     'Your device speech service converts speech into text and may send audio to its provider. Atomic Notes does not save an audio recording. Microphone access is requested only when you start.'),
                 actions: [
-                  TextButton(
-                      onPressed: () => Navigator.pop(context, false),
-                      child: const Text('Cancel')),
-                  TextButton(
-                      onPressed: () => Navigator.pop(context, true),
-                      child: const Text('Start dictation')),
+                  EditorPopupButton(
+                    label: 'Cancel',
+                    onPressed: () => Navigator.pop(context, false),
+                  ),
+                  EditorPopupButton(
+                    label: 'Start dictation',
+                    tone: EditorPopupActionTone.primary,
+                    onPressed: () => Navigator.pop(context, true),
+                  ),
                 ],
               ));
       if (!mounted || accepted != true) return;
@@ -845,19 +862,21 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
     final saved = widget.onDelete != null;
     final accepted = await showDialog<bool>(
         context: context,
-        builder: (context) => AlertDialog(
-              title: Text(
-                  saved ? 'Move note to Recycle Bin?' : 'Discard this note?'),
+        builder: (context) => EditorPopup(
+              title: saved ? 'Move note to Recycle Bin?' : 'Discard this note?',
               content: Text(saved
                   ? 'The saved note can be restored from the Recycle Bin. Unsaved changes will be discarded.'
                   : 'This unsaved draft will be discarded.'),
               actions: [
-                TextButton(
-                    onPressed: () => Navigator.pop(context, false),
-                    child: const Text('Cancel')),
-                TextButton(
-                    onPressed: () => Navigator.pop(context, true),
-                    child: Text(saved ? 'Move to Recycle Bin' : 'Discard')),
+                EditorPopupButton(
+                  label: 'Cancel',
+                  onPressed: () => Navigator.pop(context, false),
+                ),
+                EditorPopupButton(
+                  label: saved ? 'Move to Recycle Bin' : 'Discard',
+                  tone: EditorPopupActionTone.destructive,
+                  onPressed: () => Navigator.pop(context, true),
+                ),
               ],
             ));
     if (!mounted || accepted != true) return;

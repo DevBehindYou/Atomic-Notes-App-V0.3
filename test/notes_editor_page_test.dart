@@ -315,7 +315,7 @@ void main() {
     back.onPressed!();
     back.onPressed!();
     await tester.pumpAndSettle();
-    expect(find.byType(AlertDialog), findsOneWidget);
+    expect(find.text('Save your changes?'), findsOneWidget);
     await tester.tap(find.text('Discard'));
     await tester.pumpAndSettle();
     expect(find.byType(NotesCreaterPage), findsNothing);

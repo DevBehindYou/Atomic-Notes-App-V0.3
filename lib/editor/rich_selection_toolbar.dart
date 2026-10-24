@@ -83,45 +83,51 @@ class NoteFormatBar extends StatelessWidget {
           color: AppColors.ink,
           borderRadius: BorderRadius.circular(16),
           clipBehavior: Clip.antiAlias,
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              for (final (letter, label, flag) in _styles)
-                Semantics(
-                  toggled: controller.hasStyle(flag),
-                  child: IconButton(
-                    tooltip: label,
-                    isSelected: controller.hasStyle(flag),
-                    onPressed: () => controller.toggleStyle(flag),
-                    style: IconButton.styleFrom(
-                      minimumSize: const Size(48, 48),
-                      foregroundColor: AppColors.paper,
-                      backgroundColor: controller.hasStyle(flag)
-                          ? AppColors.signal
-                          : Colors.transparent,
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12)),
-                    ),
-                    icon: Text(letter,
-                        style: TextStyle(
-                          color: AppColors.paper,
-                          fontSize: 18,
-                          fontWeight: letter == 'B' || letter == 'H'
-                              ? FontWeight.bold
-                              : FontWeight.normal,
-                          fontStyle: letter == 'I'
-                              ? FontStyle.italic
-                              : FontStyle.normal,
-                          decorationColor: AppColors.paper,
-                          decoration: letter == 'U'
-                              ? TextDecoration.underline
-                              : letter == 'S'
-                                  ? TextDecoration.lineThrough
-                                  : null,
-                        )),
-                  ),
-                ),
-            ]),
+          child: Padding(
+            padding: const EdgeInsets.all(AppSpace.sm),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  spacing: AppSpace.xs,
+                  children: [
+                    for (final (letter, label, flag) in _styles)
+                      Semantics(
+                        toggled: controller.hasStyle(flag),
+                        child: IconButton(
+                          tooltip: label,
+                          isSelected: controller.hasStyle(flag),
+                          onPressed: () => controller.toggleStyle(flag),
+                          style: IconButton.styleFrom(
+                            minimumSize: const Size(48, 48),
+                            foregroundColor: AppColors.paper,
+                            backgroundColor: controller.hasStyle(flag)
+                                ? AppColors.signal
+                                : Colors.transparent,
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12)),
+                          ),
+                          icon: Text(letter,
+                              style: TextStyle(
+                                color: AppColors.paper,
+                                fontSize: 18,
+                                fontWeight: letter == 'B' || letter == 'H'
+                                    ? FontWeight.bold
+                                    : FontWeight.normal,
+                                fontStyle: letter == 'I'
+                                    ? FontStyle.italic
+                                    : FontStyle.normal,
+                                decorationColor: AppColors.paper,
+                                decoration: letter == 'U'
+                                    ? TextDecoration.underline
+                                    : letter == 'S'
+                                        ? TextDecoration.lineThrough
+                                        : null,
+                              )),
+                        ),
+                      ),
+                  ]),
+            ),
           ),
         ),
       );
