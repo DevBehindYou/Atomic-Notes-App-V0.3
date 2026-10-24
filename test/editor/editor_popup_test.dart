@@ -91,6 +91,33 @@ Future<void> _edit(WidgetTester tester, String text) async {
 }
 
 void main() {
+  testWidgets('tag popup allows 15 characters and disables adding after five',
+      (tester) async {
+    final original = Note(id: 'five-tag-popup', body: 'Body');
+    final document = NoteDocument.fromNote(original)
+      ..setTags(['one', 'two', 'three', 'four', 'five']);
+    await _open(tester, document.toNote(original));
+    expect(
+        tester
+            .widget<TextButton>(find.widgetWithText(TextButton, 'Tag'))
+            .onPressed,
+        isNull);
+    await tester.tap(find.byTooltip('Remove tag five'));
+    await tester.pumpAndSettle();
+    await _action(tester, 'Add tag');
+    final field = find.byKey(const ValueKey('note-tag-input'));
+    expect(tester.widget<TextField>(field).maxLength, 15);
+    await tester.enterText(field, '123456789012345');
+    await _tap(tester, 'Add');
+    expect(find.text('#123456789012345'), findsOneWidget);
+    expect(
+        tester
+            .widget<TextButton>(find.widgetWithText(TextButton, 'Tag'))
+            .onPressed,
+        isNull);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
       'save confirmation has a full-size primary action and saves only on Save',
       (tester) async {
