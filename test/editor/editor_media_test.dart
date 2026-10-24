@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:atomic_notes/editor/editor_media.dart';
@@ -313,13 +314,56 @@ void main() {
     expect(decoded.height, lessThanOrEqualTo(1024));
     expect(decoded.exif.isEmpty, isTrue);
   });
+  test('new high-entropy images automatically downsize below 24000 bytes',
+      () async {
+    final pixels = image.Image(width: 512, height: 384);
+    final random = Random(724);
+    for (var y = 0; y < pixels.height; y++) {
+      for (var x = 0; x < pixels.width; x++) {
+        pixels.setPixelRgb(x, y, random.nextInt(256), random.nextInt(256),
+            random.nextInt(256));
+      }
+    }
+    final picker = FakePicker()
+      ..file = XFile.fromData(Uint8List.fromList(image.encodePng(pixels)));
+    // Even callers carrying the legacy 60 KiB budget cannot bypass the new cap.
+    final encoded =
+        await PlatformEditorImageInput(picker: picker, isAndroid: false)
+            .pickJpeg(maxBytes: 60 * 1024);
+    final bytes = base64Decode(encoded!);
+    final decoded = image.decodeJpg(bytes)!;
+    expect(bytes.length, lessThan(24000));
+    expect(decoded.width, lessThan(512),
+        reason: 'noise requires dimension reduction');
+    expect((decoded.width / decoded.height - 4 / 3).abs(), lessThan(.01));
+    expect(decoded.exif.isEmpty, isTrue);
+  });
+  test('automatic optimization never enlarges a small source', () async {
+    final picker = FakePicker()
+      ..file = XFile.fromData(Uint8List.fromList(
+          image.encodePng(image.Image(width: 24, height: 16))));
+    final encoded =
+        await PlatformEditorImageInput(picker: picker, isAndroid: false)
+            .pickJpeg(maxBytes: 23999);
+    final decoded = image.decodeJpg(base64Decode(encoded!))!;
+    expect([decoded.width, decoded.height], [24, 16]);
+  });
+  test('an image that cannot fit the remaining budget fails clearly', () async {
+    final picker = FakePicker()
+      ..file = XFile.fromData(Uint8List.fromList(
+          image.encodePng(image.Image(width: 24, height: 16))));
+    await expectLater(
+        PlatformEditorImageInput(picker: picker, isAndroid: false)
+            .pickJpeg(maxBytes: 100),
+        throwsA(isA<EditorMediaException>()));
+  });
   test('invalid and oversized images fail without attaching data', () async {
     final picker = FakePicker()..file = XFile.fromData(Uint8List(10));
     final input = PlatformEditorImageInput(picker: picker, isAndroid: false);
     await expectLater(
         input.pickJpeg(maxBytes: 60000), throwsA(isA<EditorMediaException>()));
-    await expectLater(input.pickJpeg(maxBytes: 60 * 1024 + 1),
-        throwsA(isA<EditorMediaException>()));
+    await expectLater(
+        input.pickJpeg(maxBytes: 0), throwsA(isA<EditorMediaException>()));
     picker.file = XFile.fromData(Uint8List(8 * 1024 * 1024 + 1));
     await expectLater(
         input.pickJpeg(maxBytes: 60000), throwsA(isA<EditorMediaException>()));
