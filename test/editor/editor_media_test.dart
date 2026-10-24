@@ -4,6 +4,7 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:atomic_notes/editor/editor_media.dart';
+import 'package:flutter/services.dart' show PlatformException;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as image;
 import 'package:image_picker/image_picker.dart';
@@ -18,6 +19,7 @@ class FakeSpeech extends SpeechToText {
   SpeechErrorListener? error;
   SpeechListenOptions? options;
   Completer<bool>? initialization;
+  Object? initializationError;
   bool available = true;
   bool bluetoothDisabled = false;
   int canceled = 0;
@@ -34,6 +36,7 @@ class FakeSpeech extends SpeechToText {
     status = onStatus;
     error = onError;
     bluetoothDisabled = options!.contains(SpeechToText.androidNoBluetooth);
+    if (initializationError != null) throw initializationError!;
     return initialization == null ? available : initialization!.future;
   }
 
@@ -150,6 +153,32 @@ void main() {
         isFalse);
     expect(error, contains('permission'));
     expect(speech.result, isNull);
+  });
+  test(
+      'missing recognizer explains service setup and can retry after enabling it',
+      () async {
+    final speech = FakeSpeech()
+      ..initializationError = PlatformException(
+          code: 'recognizerNotAvailable', message: 'private platform detail');
+    final input = PlatformEditorSpeechInput(speech: speech);
+    final errors = <String>[];
+    final results = <String>[];
+    var stops = 0;
+    Future<bool> start() => input.start(
+        onResult: (words, _) => results.add(words),
+        onError: errors.add,
+        onStopped: () => stops++);
+    expect(await start(), isFalse);
+    expect(errors.single, contains('Install or enable'));
+    expect(errors.single, contains('speech-recognition service'));
+    expect(errors.single, isNot(contains('private platform detail')));
+    expect(speech.listens, 0);
+    expect(stops, 1);
+    speech.initializationError = null;
+    expect(await start(), isTrue);
+    speech.words('Retry works', finalResult: true);
+    expect(results, ['Retry works']);
+    await input.cancel();
   });
   test('stop accepts a final transcript before notifying stopped', () async {
     final speech = FakeSpeech();
