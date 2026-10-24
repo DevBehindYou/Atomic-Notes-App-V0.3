@@ -205,6 +205,8 @@ Future<void> _removeFirstImage(WidgetTester tester) async {
   await tester.pumpAndSettle();
   await tester.tap(button);
   await tester.pumpAndSettle();
+  await tester.tap(find.widgetWithText(FilledButton, 'Remove image'));
+  await tester.pumpAndSettle();
 }
 
 void main() {

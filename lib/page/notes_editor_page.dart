@@ -53,6 +53,7 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
   bool _allowPop = false;
   bool _closing = false;
   bool _confirmingClose = false;
+  bool _confirmingImageRemoval = false;
 
   @override
   void initState() {
@@ -251,6 +252,51 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
       if (index < _activeLine) _activeLine--;
       _activeLine = _activeLine.clamp(-1, _lines.length - 1);
     });
+  }
+
+  Future<void> _confirmRemoveImage(int index) async {
+    if (_document.isReadOnly ||
+        _closing ||
+        _confirmingImageRemoval ||
+        index < 0 ||
+        index >= _lines.length ||
+        !_document.lines[index].isImage) {
+      return;
+    }
+    // The modal decision is asynchronous. Retain the row identity so another
+    // row mutation cannot turn this index into a different image or text row.
+    final target = _lines[index];
+    _confirmingImageRemoval = true;
+    _cancelSpeech();
+    bool? remove;
+    try {
+      remove = await showDialog<bool>(
+        context: context,
+        builder: (context) => EditorPopup(
+          title: 'Remove image?',
+          content: const Text(
+              'Remove this image from the draft? Choose Done to save the change.'),
+          actions: [
+            EditorPopupButton(
+              label: 'Keep image',
+              onPressed: () => Navigator.pop(context, false),
+            ),
+            EditorPopupButton(
+              label: 'Remove image',
+              tone: EditorPopupActionTone.destructive,
+              onPressed: () => Navigator.pop(context, true),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      _confirmingImageRemoval = false;
+    }
+    if (!mounted || _closing || remove != true) return;
+    final currentIndex = _lines.indexOf(target);
+    if (currentIndex >= 0 && _document.lines[currentIndex].isImage) {
+      _removeLine(currentIndex);
+    }
   }
 
   Future<void> _copy() async {
@@ -524,7 +570,7 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
           ),
         ),
         TextButton.icon(
-            onPressed: () => _removeLine(index),
+            onPressed: () => _confirmRemoveImage(index),
             icon: const Icon(Icons.close),
             label: const Text('Remove image')),
       ]);
