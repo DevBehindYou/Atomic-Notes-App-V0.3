@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:atomic_notes/editor/editor_media.dart';
 import 'package:atomic_notes/editor/editor_popup.dart';
+import 'package:atomic_notes/editor/note_image_viewer.dart';
 import 'package:atomic_notes/editor/rich_selection_toolbar.dart';
 import 'package:atomic_notes/editor/rich_text_controller.dart';
 import 'package:atomic_notes/database/note.dart';
@@ -500,13 +501,28 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
     final line = _document.lines[index];
     if (line.isImage) {
       final data = line.imageBase64!;
+      final bytes = _images.putIfAbsent(data, () => base64Decode(data));
       return Column(key: ObjectKey(_lines[index]), children: [
-        Image.memory(_images.putIfAbsent(data, () => base64Decode(data)),
-            height: 220,
-            fit: BoxFit.contain,
-            semanticLabel: 'Note image',
-            errorBuilder: (_, __, ___) =>
-                const Text('Image could not be displayed')),
+        Semantics(
+          button: true,
+          label: 'View note image',
+          child: Tooltip(
+            message: 'View note image',
+            child: InkWell(
+              onTap: () => _viewImage(bytes),
+              borderRadius: AppRadius.std,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+                child: Image.memory(bytes,
+                    height: 220,
+                    fit: BoxFit.contain,
+                    semanticLabel: 'Note image',
+                    errorBuilder: (_, __, ___) =>
+                        const Text('Image could not be displayed')),
+              ),
+            ),
+          ),
+        ),
         TextButton.icon(
             onPressed: () => _removeLine(index),
             icon: const Icon(Icons.close),
@@ -564,6 +580,17 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
           icon: const Icon(Icons.close, size: 18),
         ),
       ],
+    );
+  }
+
+  Future<void> _viewImage(Uint8List bytes) async {
+    _cancelSpeech();
+    // Unfocus the text node itself: unfocusing its route scope only clears
+    // the parent scope, leaving a remembered text focus to reopen the keyboard.
+    FocusManager.instance.primaryFocus?.unfocus();
+    await showDialog<void>(
+      context: context,
+      builder: (_) => NoteImageViewer(bytes: bytes),
     );
   }
 
