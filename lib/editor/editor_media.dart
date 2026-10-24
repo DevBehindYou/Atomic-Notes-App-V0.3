@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart' show PlatformException;
 import 'package:image/image.dart' as image;
 import 'package:image_picker/image_picker.dart';
 import 'package:speech_to_text/speech_to_text.dart';
@@ -176,10 +177,12 @@ class PlatformEditorSpeechInput implements EditorSpeechInput {
         );
       });
       return _active && generation == _generation;
-    } catch (_) {
+    } catch (error) {
       if (_active && generation == _generation) {
-        onError(
-            'Dictation could not start. Check microphone permission and try again.');
+        onError(error is PlatformException &&
+                error.code == 'recognizerNotAvailable'
+            ? 'Speech recognition is unavailable. Install or enable a speech-recognition service, then tap the microphone again.'
+            : 'Dictation could not start. Check microphone permission and try again.');
         _finish();
       }
       return false;
