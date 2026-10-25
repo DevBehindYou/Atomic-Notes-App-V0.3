@@ -469,7 +469,7 @@ void main() {
     expect(repository.byId(copy.id)!.dirty, isTrue);
   });
 
-  test('conflict contract stale deletion becomes a live copy while the remote edit survives', () async {
+  test('conflict contract stale deletion stays pending without resurrection', () async {
     final note = Note.create()..title = 'shared'..body = 'base';
     final row = {...note.toRemote(api.user!), 'version': 3,
       'updated_at': DateTime.now().toUtc().toIso8601String()};
@@ -480,12 +480,15 @@ void main() {
     api.pullRows = [{...row, 'version': 4, 'body': 'remote edit'}]; api.sequence = 4;
     expect(await repository.syncNow(instant: true), isFalse);
     expect(api.pushes.single.single['deleted'], isTrue);
-    expect(repository.byId(note.id)!.body, 'remote edit');
-    expect(repository.byId(note.id)!.deleted, isFalse);
-    final copy = repository.visible().singleWhere((n) => n.id != note.id);
-    expect(copy.body, 'base');
-    expect(copy.deleted, isFalse, reason: 'current implementation preserves content, not deletion intent');
-    expect(copy.dirty, isTrue);
+    expect(repository.byId(note.id)!.body, 'base');
+    expect(repository.byId(note.id)!.deleted, isTrue);
+    expect(repository.byId(note.id)!.dirty, isTrue);
+    expect(repository.visible(), isEmpty);
+    expect((box.get(note.id) as Map)['deleted'], isTrue);
+    expect((box.get(note.id) as Map)['dirty'], isTrue);
+    expect(repository.byId(note.id)!.serverVersion, 3);
+    expect(box.get('__pending_sync_operation'), isNull);
+    expect(api.pullCursors, [null, null], reason: 'other cloud work remains available while dirty tombstone blocks its own replacement');
   });
 
   test('billing contract instant sync with 100 small notes sends two distinct requests', () async {

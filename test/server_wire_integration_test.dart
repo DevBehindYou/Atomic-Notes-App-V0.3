@@ -283,82 +283,208 @@ void main() {
     expect(other.notes.count, 0);
   });
 
-  for (final deleteFirst in [false, true]) {
-    final code = deleteFirst
-        ? 'stale_edit_keeps_remote_tombstone_and_local_conflict_copy'
-        : 'stale_delete_keeps_remote_edit_and_local_conflict_copy';
-    wireTest(code, () async {
-      // Use the otherwise read-only isolated owner with its own seeded wallet.
-      // Both clients have independent Hive/storage but share this synthetic
-      // bearer session. Session/device management is outside this proof.
-      final uid = descriptor['other'] as String;
-      final a = await device('delete-a', 'atomic-disposable-other', uid);
-      final b = await device('delete-b', 'atomic-disposable-other', uid);
-      Map<String, dynamic> wallet(Map<String, dynamic> state) =>
-          (state['users'] as List)
-              .cast<Map<String, dynamic>>()
-              .singleWhere((user) => user['userId'] == uid);
-      final title = deleteFirst ? 'Stale edit fixture' : 'Stale delete fixture';
-      final note = Note(id: newId(), title: title, body: 'Synthetic base');
-      await a.notes.save(note);
-      await a.cubit.sync(uploadAll: false);
-      expect(a.cubit.state.lastReport!.completed, isTrue);
-      final base = a.notes.byId(note.id)!.serverVersion;
-      await b.cubit.sync(uploadAll: false);
-      expect(b.notes.byId(note.id)!.serverVersion, base);
-      if (deleteFirst) {
-        await b.notes
-            .save(b.notes.byId(note.id)!..body = 'Synthetic offline edit');
-        await a.notes.deleteNotes([note.id]);
-      } else {
-        await b.notes.deleteNotes([note.id]);
-        await a.notes
-            .save(a.notes.byId(note.id)!..body = 'Synthetic accepted edit');
-      }
-      await a.cubit.sync(uploadAll: false);
-      expect(a.cubit.state.lastReport!.completed, isTrue);
-      final acceptedVersion = a.notes.byId(note.id)!.serverVersion;
-      expect(acceptedVersion, base + 1);
-      final before = await diagnostic('/__fixture/state');
-      final message = await b.cubit.sync(uploadAll: false);
-      expect(message!.text, contains('separate copies'));
-      expect(b.cubit.state.lastReport!.completed, isFalse);
-      expect(b.cubit.state.lastReport!.operations.single.charged, 10);
-      expect(b.cubit.state.lastReport!.operations.single.refunded, 10);
-      expect(b.notes.byId(note.id)!.serverVersion, acceptedVersion);
-      expect(b.notes.byId(note.id)!.deleted, deleteFirst);
-      expect(b.notes.byId(note.id)!.dirty, isFalse);
-      final copy = b.notes
-          .visible()
-          .singleWhere((n) => n.title == '$title (conflict copy)');
-      expect(copy.id, isNot(note.id));
-      expect(copy.deleted, isFalse);
-      expect(
-          copy.body, deleteFirst ? 'Synthetic offline edit' : 'Synthetic base');
-      expect(copy.dirty, isTrue);
-      final refused = await diagnostic('/__fixture/state');
-      expect(refused['writes'], before['writes']);
-      expect(wallet(refused)['energy'], wallet(before)['energy']);
-      expect(wallet(refused)['notes'], wallet(before)['notes']);
-      expect((wallet(refused)['ledger'] as List).length,
-          (wallet(before)['ledger'] as List).length + 2);
-      await b.cubit.sync(uploadAll: false);
-      expect(b.cubit.state.lastReport!.completed, isTrue);
-      expect(b.notes.byId(copy.id)!.dirty, isFalse);
-      final uploaded = await diagnostic('/__fixture/state');
-      expect(uploaded['writes'], (refused['writes'] as int) + 1);
-      expect(
-          wallet(uploaded)['energy'], (wallet(refused)['energy'] as int) - 10);
-      await a.cubit.sync(uploadAll: false);
-      expect(a.cubit.state.lastReport!.completed, isTrue);
-      expect(a.notes.byId(copy.id)!.body, copy.body);
-      expect(a.notes.byId(note.id)!.deleted, deleteFirst);
-      if (!deleteFirst) {
-        expect(a.notes.byId(note.id)!.body, 'Synthetic accepted edit');
-        expect(b.notes.byId(note.id)!.body, 'Synthetic accepted edit');
-      }
-    });
-  }
+  wireTest(
+      'stale_delete_preserves_pending_tombstone_and_allows_other_work_across_reopen',
+      () async {
+    final uid = descriptor['other'] as String;
+    final a = await device('stale-delete-a', 'atomic-disposable-other', uid);
+    final capture = _CapturePushes(transport);
+    final b = await device('stale-delete-b', 'atomic-disposable-other', uid,
+        deviceTransport: capture);
+    Map<String, dynamic> wallet(Map<String, dynamic> state) =>
+        (state['users'] as List)
+            .cast<Map<String, dynamic>>()
+            .singleWhere((user) => user['userId'] == uid);
+    final note = Note(
+        id: newId(), title: 'Stale delete fixture', body: 'Synthetic base');
+    await a.notes.save(note);
+    await a.cubit.sync(uploadAll: false);
+    expect(a.cubit.state.lastReport!.completed, isTrue);
+    final base = a.notes.byId(note.id)!.serverVersion;
+    await b.cubit.sync(uploadAll: false);
+    expect(b.notes.byId(note.id)!.serverVersion, base);
+    await b.notes.deleteNotes([note.id]);
+    final tombstone = jsonDecode(jsonEncode(b.notes.byId(note.id)!.toMap()));
+    final box = Hive.box('device-stale-delete-b');
+    final storedTombstone = jsonDecode(jsonEncode(box.get(note.id)));
+    await a.notes
+        .save(a.notes.byId(note.id)!..body = 'Synthetic accepted edit');
+    await a.cubit.sync(uploadAll: false);
+    expect(a.cubit.state.lastReport!.completed, isTrue);
+    final acceptedVersion = a.notes.byId(note.id)!.serverVersion;
+    expect(acceptedVersion, base + 1);
+
+    final before = await diagnostic('/__fixture/state');
+    final message = await b.cubit.sync(uploadAll: false);
+    expect(message!.text, contains('Recycle Bin'));
+    final refusedReport = b.cubit.state.lastReport!;
+    expect(refusedReport.completed, isFalse);
+    expect(refusedReport.operations.single.charged, 10);
+    expect(refusedReport.operations.single.refunded, 10);
+    expect(refusedReport.netCharge, 0);
+    expect(b.notes.byId(note.id)!.toMap(), tombstone);
+    expect(box.get(note.id), storedTombstone);
+    expect(b.notes.byId(note.id)!.deleted, isTrue);
+    expect(b.notes.byId(note.id)!.dirty, isTrue);
+    expect(b.notes.byId(note.id)!.serverVersion, base);
+    expect(
+        b.notes
+            .visible()
+            .where((n) => n.title == '${note.title} (conflict copy)'),
+        isEmpty);
+    expect(box.get('__pending_sync_operation'), isNull);
+    expect(capture.bodies, hasLength(1));
+    final refusedRequest = jsonDecode(capture.bodies.single) as Map;
+    expect(
+        refusedRequest['requestId'], refusedReport.operations.single.requestId);
+    expect(
+        (refusedRequest['rows'] as List).single, containsPair('deleted', true));
+    expect((refusedRequest['rows'] as List).single,
+        containsPair('base_version', base));
+    final refused = await diagnostic('/__fixture/state');
+    expect(refused['writes'], before['writes']);
+    expect(wallet(refused)['energy'], wallet(before)['energy']);
+    expect(wallet(refused)['notes'], wallet(before)['notes']);
+    expect((wallet(refused)['ledger'] as List).length,
+        (wallet(before)['ledger'] as List).length + 2);
+
+    await b.notes.stop(waitForSync: true);
+    await b.cubit.close();
+    b.notes.dispose();
+    repositories.remove(b.notes);
+    cubits.remove(b.cubit);
+    await box.close();
+    final reopened = await device(
+        'stale-delete-b', 'atomic-disposable-other', uid,
+        deviceTransport: capture);
+    final reopenedBox = Hive.box('device-stale-delete-b');
+    expect(reopened.notes.byId(note.id)!.toMap(), tombstone);
+    expect(reopenedBox.get(note.id), storedTombstone);
+    expect(reopenedBox.get('__pending_sync_operation'), isNull);
+    final unrelated = Note(
+        id: newId(),
+        title: 'Unrelated local work',
+        body: 'Synthetic later push');
+    await reopened.notes.save(unrelated);
+    final remote = Note(
+        id: newId(),
+        title: 'Unrelated remote work',
+        body: 'Synthetic later pull');
+    await a.notes.save(remote);
+    await a.cubit.sync(uploadAll: false);
+    expect(a.cubit.state.lastReport!.completed, isTrue);
+    final beforeMixed = await diagnostic('/__fixture/state');
+    final laterMessage = await reopened.cubit.sync(uploadAll: false);
+    expect(laterMessage!.text, contains('Recycle Bin'));
+    final mixedReport = reopened.cubit.state.lastReport!;
+    expect(mixedReport.completed, isFalse);
+    expect(mixedReport.operations.single.recovered, isFalse);
+    expect(mixedReport.operations.single.charged, 10);
+    expect(mixedReport.operations.single.refunded, 0,
+        reason: 'The real Server refunds only when no row succeeds');
+    expect(mixedReport.netCharge, 10);
+    expect(capture.bodies, hasLength(2));
+    final freshRequest = jsonDecode(capture.bodies.last) as Map;
+    expect(freshRequest['requestId'], isNot(refusedRequest['requestId']));
+    expect(freshRequest['requestId'], mixedReport.operations.single.requestId);
+    final sentRows = (freshRequest['rows'] as List).cast<Map>();
+    expect(sentRows.map((row) => row['id']),
+        unorderedEquals([note.id, unrelated.id]));
+    expect(sentRows.singleWhere((row) => row['id'] == note.id),
+        containsPair('base_version', base));
+    expect(reopened.notes.byId(note.id)!.toMap(), tombstone);
+    expect(reopenedBox.get(note.id), storedTombstone);
+    expect(reopenedBox.get('__pending_sync_operation'), isNull);
+    expect(reopened.notes.pendingCount, 1);
+    expect(
+        reopened.notes
+            .visible()
+            .where((n) => n.title == '${note.title} (conflict copy)'),
+        isEmpty);
+    expect(reopened.notes.byId(unrelated.id)!.dirty, isFalse);
+    expect(reopened.notes.byId(remote.id)!.body, remote.body);
+    expect(reopened.notes.byId(remote.id)!.dirty, isFalse);
+    final afterMixed = await diagnostic('/__fixture/state');
+    expect(afterMixed['writes'], (beforeMixed['writes'] as int) + 1);
+    expect(
+        wallet(afterMixed)['notes'], (wallet(beforeMixed)['notes'] as int) + 1);
+    expect(wallet(afterMixed)['energy'],
+        (wallet(beforeMixed)['energy'] as int) - 10);
+    expect((wallet(afterMixed)['ledger'] as List).length,
+        (wallet(beforeMixed)['ledger'] as List).length + 1);
+    final serverOriginal = ((await a.api.pullNotes())['rows'] as List)
+        .cast<Map<String, dynamic>>()
+        .singleWhere((row) => row['id'] == note.id);
+    expect(serverOriginal['body'], 'Synthetic accepted edit');
+    expect(serverOriginal['deleted'], isFalse);
+    expect(serverOriginal['version'], acceptedVersion);
+    await a.cubit.sync(uploadAll: false);
+    expect(a.cubit.state.lastReport!.completed, isTrue);
+    expect(a.notes.byId(unrelated.id)!.body, unrelated.body);
+    expect(a.notes.byId(note.id)!.body, 'Synthetic accepted edit');
+    expect(a.notes.byId(note.id)!.deleted, isFalse);
+    expect(a.notes.byId(note.id)!.serverVersion, acceptedVersion);
+  });
+
+  wireTest('stale_edit_keeps_remote_tombstone_and_local_conflict_copy',
+      () async {
+    // Use the otherwise read-only isolated owner with its own seeded wallet.
+    // Both clients have independent Hive/storage but share this synthetic
+    // bearer session. Session/device management is outside this proof.
+    final uid = descriptor['other'] as String;
+    final a = await device('delete-a', 'atomic-disposable-other', uid);
+    final b = await device('delete-b', 'atomic-disposable-other', uid);
+    Map<String, dynamic> wallet(Map<String, dynamic> state) =>
+        (state['users'] as List)
+            .cast<Map<String, dynamic>>()
+            .singleWhere((user) => user['userId'] == uid);
+    const title = 'Stale edit fixture';
+    final note = Note(id: newId(), title: title, body: 'Synthetic base');
+    await a.notes.save(note);
+    await a.cubit.sync(uploadAll: false);
+    expect(a.cubit.state.lastReport!.completed, isTrue);
+    final base = a.notes.byId(note.id)!.serverVersion;
+    await b.cubit.sync(uploadAll: false);
+    expect(b.notes.byId(note.id)!.serverVersion, base);
+    await b.notes.save(b.notes.byId(note.id)!..body = 'Synthetic offline edit');
+    await a.notes.deleteNotes([note.id]);
+    await a.cubit.sync(uploadAll: false);
+    expect(a.cubit.state.lastReport!.completed, isTrue);
+    final acceptedVersion = a.notes.byId(note.id)!.serverVersion;
+    expect(acceptedVersion, base + 1);
+    final before = await diagnostic('/__fixture/state');
+    final message = await b.cubit.sync(uploadAll: false);
+    expect(message!.text, contains('separate copies'));
+    expect(b.cubit.state.lastReport!.completed, isFalse);
+    expect(b.cubit.state.lastReport!.operations.single.charged, 10);
+    expect(b.cubit.state.lastReport!.operations.single.refunded, 10);
+    expect(b.notes.byId(note.id)!.serverVersion, acceptedVersion);
+    expect(b.notes.byId(note.id)!.deleted, isTrue);
+    expect(b.notes.byId(note.id)!.dirty, isFalse);
+    final copy = b.notes
+        .visible()
+        .singleWhere((n) => n.title == '$title (conflict copy)');
+    expect(copy.id, isNot(note.id));
+    expect(copy.deleted, isFalse);
+    expect(copy.body, 'Synthetic offline edit');
+    expect(copy.dirty, isTrue);
+    final refused = await diagnostic('/__fixture/state');
+    expect(refused['writes'], before['writes']);
+    expect(wallet(refused)['energy'], wallet(before)['energy']);
+    expect(wallet(refused)['notes'], wallet(before)['notes']);
+    expect((wallet(refused)['ledger'] as List).length,
+        (wallet(before)['ledger'] as List).length + 2);
+    await b.cubit.sync(uploadAll: false);
+    expect(b.cubit.state.lastReport!.completed, isTrue);
+    expect(b.notes.byId(copy.id)!.dirty, isFalse);
+    final uploaded = await diagnostic('/__fixture/state');
+    expect(uploaded['writes'], (refused['writes'] as int) + 1);
+    expect(wallet(uploaded)['energy'], (wallet(refused)['energy'] as int) - 10);
+    await a.cubit.sync(uploadAll: false);
+    expect(a.cubit.state.lastReport!.completed, isTrue);
+    expect(a.notes.byId(copy.id)!.body, copy.body);
+    expect(a.notes.byId(note.id)!.deleted, isTrue);
+  });
 
   wireTest('receive_only_preserves_actual_wallet_and_ledger', () async {
     final before = await diagnostic('/__fixture/state');

@@ -23,6 +23,13 @@ part 'notes_logout.dart';
 
 enum _PushOutcome { drained, pending, admissionRefused, retired }
 
+class _ConflictPreservationPending implements Exception {
+  const _ConflictPreservationPending(this.message);
+  final String message;
+  @override
+  String toString() => message;
+}
+
 /// Call-local receipt collection; no result is retained across callers/accounts.
 class _SyncAttemptCollector {
   SyncAttemptActivity activity = SyncAttemptActivity.notStarted;
@@ -860,6 +867,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     if (!_activeFor(uid)) return _PushOutcome.retired;
     final lifecycle = _lifecycleRevision, session = _api.sessionRevision;
     final cloudWipe = _cloudWipeRevision;
+    final loggingOut = _loggingOut;
     Map<String, dynamic>? pending = _hasUnansweredPush(uid)
         ? Map<String, dynamic>.from(_box.get(_pendingPushKey) as Map) : null;
     final recovered = pending != null;
@@ -959,6 +967,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     final versions = pending['versions'] as Map;
     final sentEncryption = {for (final row in rows) row['id'] as String: row['enc_v']};
     var conflicted = false;
+    var deletedConflict = false;
     var failed = false;
     final writtenSeqs = <int>[];
     for (final result in results) {
@@ -969,27 +978,78 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
         failed = true;
         if (result['error'] == 'note_conflict') conflicted = true;
         if (result['error'] == 'note_conflict' && local.dirty) {
-          var copyId =  (pending['conflictIds'] as Map)[id] as String;
-          final existingCopy = _notes[copyId];
-          if (existingCopy != null && pending['logoutAttemptId'] is String) {
-            // A user may edit a preserved copy between interrupted logout
-            // attempts. A replay must never overwrite that separate note.
-            copyId = newId();
-            (pending['conflictIds'] as Map)[id] = copyId;
-            await _box.put(_pendingPushKey, pending);
-            await _box.flush();
+          // Freeze content before persistence/encryption yields to another edit.
+          final source = local.copy();
+          bool sourceUnchanged() {
+            final current = _notes[id];
+            return identical(current, local) && current != null &&
+                current.contentSig == source.contentSig &&
+                current.updatedAt == source.updatedAt &&
+                current.deleted == source.deleted;
           }
-          final copy = Note(
-              id: copyId,
-              kind: local.kind, title: '${local.title.length > 270 ? local.title.substring(0, 270) : local.title} (conflict copy)',
-            body: local.body, items: local.items.map((i) => i.copy()).toList(),
-            important: local.important, dirty: true);
-          _notes[copy.id] = copy;
+          bool settlementCurrent() {
+            final saved = _box.get(_pendingPushKey);
+            return _activeFor(uid) && lifecycle == _lifecycleRevision &&
+                session == _api.sessionRevision && cloudWipe == _cloudWipeRevision &&
+                !_wipingCloud && !_lockingVault && loggingOut == _loggingOut &&
+                saved is Map && saved['userId'] == uid &&
+                saved['requestId'] == pending!['requestId'];
+          }
+          if (!settlementCurrent()) return _PushOutcome.retired;
+          // Preserve deletion intent without copying or rebasing it. This reply
+          // is terminal: settle other rows and retire the completed operation,
+          // so this one unresolved deletion cannot starve unrelated work.
+          if (source.deleted) {
+            deletedConflict = true;
+            continue;
+          }
+          var copyId = (pending['conflictIds'] as Map)[id] as String;
+          Note capturedCopy(String copyId) => Note(id: copyId,
+              kind: source.kind,
+              title: '${source.title.length > 270 ? source.title.substring(0, 270) : source.title} (conflict copy)',
+              body: source.body, items: source.items.map((i) => i.copy()).toList(),
+              pinned: source.pinned, important: source.important, dirty: true);
+          var copy = capturedCopy(copyId);
+          final existingCopy = _notes[copyId];
+          if (existingCopy != null && (existingCopy.contentSig != copy.contentSig ||
+              !existingCopy.dirty || existingCopy.serverVersion != 0 ||
+              existingCopy.syncedSig.isNotEmpty)) {
+            // The deterministic ID may now name independent user work, including
+            // a tombstone. Only the local mapping changes; the wire stays frozen.
+            copyId = newId();
+            pending['conflictIds'] = Map<String, dynamic>.from(pending['conflictIds'] as Map)
+              ..[id] = copyId;
+            await _box.put(_pendingPushKey, pending);
+            if (!settlementCurrent()) return _PushOutcome.retired;
+            await _box.flush();
+            if (!settlementCurrent()) return _PushOutcome.retired;
+            copy = capturedCopy(copyId);
+          }
+          // A same-content retry preserves the existing note's newer metadata,
+          // and retries its write even if the preceding put failed in memory.
+          final copySig = copy.contentSig;
+          final preserved = _notes.putIfAbsent(copy.id, () => copy);
           await _persist(copy.id);
+          if (!settlementCurrent()) return _PushOutcome.retired;
+          await _box.flush();
+          if (!settlementCurrent()) return _PushOutcome.retired;
+          // The user can also edit/delete the copy while it is being sealed.
+          // Such a note is independent work, no longer proof of this snapshot.
+          if (!sourceUnchanged() || !identical(_notes[copy.id], preserved) ||
+              preserved.contentSig != copySig || !preserved.dirty ||
+              preserved.serverVersion != 0 || preserved.syncedSig.isNotEmpty) {
+            throw const _ConflictPreservationPending(
+                'The note changed while preserving a conflict. Its newer changes remain pending.');
+          }
           // The other version is fetched again below and replaces this one.
           local.dirty = false;
           local.serverVersion = 0;
           await _persist(id);
+          if (!settlementCurrent()) return _PushOutcome.retired;
+          if (!sourceUnchanged()) {
+            throw const _ConflictPreservationPending(
+                'The note changed while preserving a conflict. Its newer changes remain pending.');
+          }
         }
         continue;
       }
@@ -1028,7 +1088,9 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
       notifyListeners();
       await _pull(uid);
       throw ApiException(
-          conflicted
+          deletedConflict
+              ? 'A deleted note changed on another device. Its deletion remains pending and needs review in the Recycle Bin. Other notes can continue syncing.'
+              : conflicted
               ? 'Some notes changed on another device. Your edits are saved as separate copies.'
               : 'Some notes could not be uploaded. They stay on this device and will retry.',
           409);
