@@ -21,6 +21,8 @@ import 'package:hive_ce/hive_ce.dart';
 
 part 'notes_logout.dart';
 
+enum _PushOutcome { drained, pending, admissionRefused, retired }
+
 /// Call-local receipt collection; no result is retained across callers/accounts.
 class _SyncAttemptCollector {
   SyncAttemptActivity activity = SyncAttemptActivity.notStarted;
@@ -685,6 +687,10 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     if (!SyncStatusHelper.isSyncOn) return false;
     final lifecycle = _lifecycleRevision;
     final cloudWipe = _cloudWipeRevision;
+    final session = _api.sessionRevision;
+    bool mayReceive() => _activeFor(uid) && !_lockingVault && !_loggingOut &&
+        !_wipingCloud && lifecycle == _lifecycleRevision &&
+        cloudWipe == _cloudWipeRevision && session == _api.sessionRevision;
 
     // Don't sit on a dead socket when we already know there's no network.
     final conn = await _checkConnectivity();
@@ -713,6 +719,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
       // A push carries at most 50 notes: keep sending until nothing is waiting,
       // so a completed sync means every queued change reached the server.
       var drained = false;
+      var admissionRefused = false;
       for (var batch = 0; batch < _maxPushBatches && !drained; batch++) {
         // The Server has closed automatic sync for now: leave the changes waiting, but still
         // collect a push that was sent and never answered.
@@ -720,12 +727,29 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
             hasUnansweredPush: _hasUnansweredPush(uid))) {
           break;
         }
-        drained = !await _push(uid, instant: instant, report: report);
+        final outcome = await _push(uid, instant: instant, report: report);
+        if (outcome == _PushOutcome.retired) {
+          report?.activity = SyncAttemptActivity.retired;
+          return false;
+        }
+        if (outcome == _PushOutcome.admissionRefused) {
+          admissionRefused = true;
+          break;
+        }
+        drained = outcome == _PushOutcome.drained;
+      }
+      if (admissionRefused && !mayReceive()) {
+        report?.activity = SyncAttemptActivity.retired;
+        return false;
       }
       await _pull(uid);
-      if (!_activeFor(uid)) return false;
+      if (!_activeFor(uid) || (admissionRefused && !mayReceive())) return false;
       unawaited(_refreshEnergy());
       _networkRetries = 0;
+      if (admissionRefused) {
+        lastError = 'Not enough Atomic Energy to upload. Your changes stay on this device; cloud notes were checked.';
+        return false;
+      }
       if (!drained) {
         if (!instant && nextAutoSyncAt != null) {
           // Not a failure: the changes send at the next automatic sync, or now with instant sync.
@@ -831,9 +855,11 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     notifyListeners();
   }
 
-  /// Sends one batch. Returns true when more changes are still waiting.
-  Future<bool> _push(String uid, {required bool instant, _SyncAttemptCollector? report}) async {
-    if (!_activeFor(uid)) return false;
+  /// Sends one batch, distinguishing refused new admission from unresolved writes.
+  Future<_PushOutcome> _push(String uid, {required bool instant, _SyncAttemptCollector? report}) async {
+    if (!_activeFor(uid)) return _PushOutcome.retired;
+    final lifecycle = _lifecycleRevision, session = _api.sessionRevision;
+    final cloudWipe = _cloudWipeRevision;
     Map<String, dynamic>? pending = _hasUnansweredPush(uid)
         ? Map<String, dynamic>.from(_box.get(_pendingPushKey) as Map) : null;
     final recovered = pending != null;
@@ -849,11 +875,11 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
       final candidates = _notes.values.where((n) => n.dirty).take(_maxPushRows).map((n) => n.copy()).toList();
       if (candidates.isEmpty) {
         if (settled) notifyListeners();
-        return false;
+        return _PushOutcome.drained;
       }
       _inFlightIds.addAll(candidates.map((n) => n.id));
       final sealed = await Future.wait(candidates.map((n) => _sealRemote(n, uid)));
-      if (!_activeFor(uid)) return false;
+      if (!_activeFor(uid)) return _PushOutcome.retired;
       // Keep one request under the Server's size limit; the rest goes in the next batch.
       var bytes = utf8.encode(jsonEncode({
         'rows': <dynamic>[], 'requestId': '00000000-0000-0000-0000-000000000000',
@@ -882,7 +908,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     final List<Map<String, dynamic>> results;
     final PushReply reply;
     try {
-      if (!_activeFor(uid)) return false;
+      if (!_activeFor(uid)) return _PushOutcome.retired;
       report?.submitted(pending['requestId'] as String, pending['instant'] == true, recovered);
       if (pending['logoutAttemptId'] is String) {
         final envelope = await LogoutEnvelope.prepare(
@@ -901,20 +927,34 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
       }
       results = reply.results;
     } on ApiException catch (e) {
+      if (e.code == 'insufficient_energy') {
+        // Only a new request's definitive admission refusal proves no remote write.
+        // A recovered envelope or mismatched status still needs reconciliation.
+        if (recovered || e.statusCode != 409) rethrow;
+        final saved = _box.get(_pendingPushKey);
+        if (!_activeFor(uid) || _loggingOut || _lockingVault || _wipingCloud ||
+            lifecycle != _lifecycleRevision || session != _api.sessionRevision ||
+            cloudWipe != _cloudWipeRevision || saved is! Map ||
+            saved['userId'] != uid || saved['requestId'] != pending['requestId']) {
+          return _PushOutcome.retired;
+        }
+        await _box.delete(_pendingPushKey);
+        return _PushOutcome.admissionRefused;
+      }
       if (e.code == 'sync_cooldown') {
         // Refused before anything was recorded or charged. Forget this request so the next
         // try can be made in either mode, and wait for the window the Server named.
         if (_activeFor(uid)) await _box.delete(_pendingPushKey);
         _startCooldown(e.retryAfterSeconds);
-        return true;
+        return _PushOutcome.pending;
       }
       // Validation happens before the operation is charged/recorded. Retry corrected data.
-      if (e.statusCode == 400 || e.statusCode == 413 || ['note_limit_reached', 'insufficient_energy', 'note_id_conflict'].contains(e.code)) {
+      if (e.statusCode == 400 || e.statusCode == 413 || ['note_limit_reached', 'note_id_conflict'].contains(e.code)) {
         if (_activeFor(uid)) await _box.delete(_pendingPushKey);
       }
       rethrow;
     }
-    if (!_activeFor(uid)) return false;
+    if (!_activeFor(uid)) return _PushOutcome.retired;
     report?.received(reply);
     final versions = pending['versions'] as Map;
     final sentEncryption = {for (final row in rows) row['id'] as String: row['enc_v']};
@@ -970,10 +1010,10 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
       if (!local.dirty) {
         local.updatedAt = DateTime.parse(result['updated_at'] as String).toUtc();
       }
-      if (!_activeFor(uid)) return false;
+      if (!_activeFor(uid)) return _PushOutcome.retired;
       await _persist(id);
     }
-    if (!_activeFor(uid)) return false;
+    if (!_activeFor(uid)) return _PushOutcome.retired;
     await _box.delete(_pendingPushKey);
     await _skipOwnPushedRows(writtenSeqs);
     // The Server takes a standard sync once per hour, so the next one is not open yet. A replayed
@@ -993,7 +1033,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
               : 'Some notes could not be uploaded. They stay on this device and will retry.',
           409);
     }
-    return _notes.values.any((n) => n.dirty);
+    return _notes.values.any((n) => n.dirty) ? _PushOutcome.pending : _PushOutcome.drained;
   }
 
   /// The rows this push just wrote would come back in the next pull, and each would be read from Drive

@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:atomic_notes/api/atomic_notes_api.dart';
 import 'package:atomic_notes/database/note.dart';
 import 'package:atomic_notes/database/notes_repository.dart';
+import 'package:atomic_notes/database/notes_source.dart';
 import 'package:atomic_notes/database/sync_report.dart';
 import 'package:atomic_notes/database/sync_status.dart';
 import 'package:atomic_notes/state/cloud_notes/cloud_notes_cubit.dart';
@@ -93,6 +94,8 @@ void main() {
             'hasMore': false,
             'cursor': DateTime.utc(2026, 10, 4).toIso8601String(),
           });
+        case ('DELETE', '/api/notes'):
+          return jsonResponse({});
         default:
           fail('Unexpected fixture endpoint');
       }
@@ -149,10 +152,15 @@ void main() {
 
   for (final instant in [false, true]) {
     test(
-        'B01 legacy insufficient Energy blocks dirty+remote receive (instant=$instant)',
+        'B02 definitive refusal receives remote work and preserves newer local edits (instant=$instant)',
         () async {
       final note = await addNote('queued locally');
       offerRemoteNote();
+      pullRows.add({
+        ...note.toRemote('user-a'),
+        'version': 1,
+        'body': 'Competing remote edit'
+      });
       final entered = Completer<void>();
       final release = Completer<void>();
       push = (_) async {
@@ -174,11 +182,26 @@ void main() {
       expect((box.get(note.id) as Map)['dirty'], isTrue);
       expect(box.get('__pending_sync_operation'), isNull);
       expect(getPushes(), hasLength(1));
-      // Legacy baseline, not desired policy: B02 must change this expectation.
-      // The desired isNotNull assertion failed on both modes before recording it.
-      expect(repository.byId('remote-receive-fixture'), isNull);
-      expect(requests.where((request) => request.method == 'GET'), isEmpty);
-      expect(box.get('__sync_cursor__'), isNull);
+      expect(repository.byId('remote-receive-fixture')?.body, 'Remote work');
+      expect(repository.byId(note.id)!.serverVersion, 0);
+      expect(
+          requests.where((request) => request.method == 'GET'), hasLength(1));
+      expect(box.get('__sync_cursor__'), 1);
+      final refusedId = jsonDecode(getPushes().single.body)['requestId'];
+      push = (request) async => jsonResponse({
+            'results': accepted(request),
+            'charged': instant ? 10 : 5,
+            'refunded': 0,
+          });
+      final funded = await repository.syncWithReport(instant: instant);
+      expect(funded.completed, isTrue);
+      expect(funded.netCharge, instant ? 10 : 5);
+      final retry = jsonDecode(getPushes().last.body) as Map;
+      expect(retry['requestId'], isNot(refusedId));
+      expect((retry['rows'] as List).single['body'], 'Newer local edit');
+      expect(repository.byId(note.id)!.dirty, isFalse);
+      expect(report.netCharge, isNull,
+          reason: 'Later funding cannot rewrite an unknown receipt');
     });
   }
 
@@ -210,6 +233,123 @@ void main() {
     expect(requests.where((request) => request.method == 'GET'), isEmpty);
     expect(box.get('__sync_cursor__'), isNull);
   });
+
+  for (final scenario in [
+    'same_code_503',
+    'other_code_409',
+    'substring_code_409',
+    'generic_error_text',
+    'network_error_text'
+  ]) {
+    test(
+        'B02 ambiguous refusal $scenario retains its envelope and blocks receive',
+        () async {
+      final note = await addNote('unresolved admission');
+      offerRemoteNote();
+      push = (_) async {
+        return switch (scenario) {
+          'same_code_503' =>
+            jsonResponse({'error': 'insufficient_energy'}, status: 503),
+          'other_code_409' =>
+            jsonResponse({'error': 'operation_in_progress'}, status: 409),
+          'substring_code_409' =>
+            jsonResponse({'error': 'not_insufficient_energy'}, status: 409),
+          'generic_error_text' => throw Exception('insufficient_energy'),
+          _ => throw const SocketException('insufficient_energy'),
+        };
+      };
+      final report = await repository.syncWithReport();
+      expect(report.completed, isFalse);
+      expect(report.netCharge, isNull);
+      expect(requests.where((request) => request.method == 'GET'), isEmpty);
+      final frozen = box.get('__pending_sync_operation') as Map?;
+      expect(frozen?['requestId'],
+          jsonDecode(getPushes().single.body)['requestId']);
+      expect((box.get(note.id) as Map)['dirty'], isTrue);
+      expect(box.get('__sync_cursor__'), isNull);
+    });
+  }
+
+  test('B02 a recovered unknown request stays frozen after a later 409 refusal',
+      () async {
+    final note = await addNote('unknown original outcome');
+    offerRemoteNote();
+    push = (_) async => throw TimeoutException('Public fixture lost reply');
+    await repository.syncWithReport();
+    final frozen = jsonEncode(box.get('__pending_sync_operation'));
+    final originalBody = getPushes().single.body;
+    await repository.save(note..body = 'Newer recovery edit');
+    push = (_) async =>
+        jsonResponse({'error': 'insufficient_energy'}, status: 409);
+    final recovered = await repository.syncWithReport(instant: true);
+    expect(recovered.completed, isFalse);
+    expect(recovered.netCharge, isNull);
+    expect(recovered.operations.single.recovered, isTrue);
+    expect(getPushes().last.body, originalBody);
+    expect(jsonEncode(box.get('__pending_sync_operation')), frozen);
+    expect((box.get(note.id) as Map)['body'], 'Newer recovery edit');
+    expect(requests.where((request) => request.method == 'GET'), isEmpty);
+    expect(box.get('__sync_cursor__'), isNull);
+  });
+
+  test('B02 refused upload still reports an independent pull failure',
+      () async {
+    final note = await addNote('upload still waiting');
+    offerRemoteNote();
+    refusePull = true;
+    push = (_) async =>
+        jsonResponse({'error': 'insufficient_energy'}, status: 409);
+    final report = await repository.syncWithReport();
+    expect(requests.where((request) => request.method == 'GET'), hasLength(1));
+    expect(report.completed, isFalse);
+    expect(report.netCharge, isNull);
+    expect(report.errorMessage,
+        'A cloud note could not be read safely. Try syncing again.');
+    expect((box.get(note.id) as Map)['dirty'], isTrue);
+    expect(box.get('__pending_sync_operation'), isNull);
+    expect(box.get('__sync_cursor__'), isNull);
+    expect(repository.byId('remote-receive-fixture'), isNull);
+  });
+
+  for (final replaceEnvelope in [false, true]) {
+    test(
+        'B02 a ${replaceEnvelope ? 'replaced envelope' : 'cloud wipe'} fences receiving after refusal',
+        () async {
+      final note = await addNote('fenced local work');
+      offerRemoteNote();
+      final entered = Completer<void>();
+      final release = Completer<void>();
+      push = (_) async {
+        entered.complete();
+        await release.future;
+        return jsonResponse({'error': 'insufficient_energy'}, status: 409);
+      };
+      final syncing = repository.syncWithReport();
+      await entered.future;
+      Future<WipeOutcome>? wiping;
+      Map? replacement;
+      if (replaceEnvelope) {
+        replacement = {
+          ...box.get('__pending_sync_operation') as Map,
+          'requestId': 'replacement-operation'
+        };
+        await box.put('__pending_sync_operation', replacement);
+      } else {
+        wiping = repository.wipeRemote();
+      }
+      release.complete();
+      final report = await syncing;
+      if (wiping != null) expect((await wiping).ok, isTrue);
+      expect(report.completed, isFalse);
+      expect(requests.where((request) => request.method == 'GET'), isEmpty);
+      expect(box.get('__sync_cursor__'), isNull);
+      expect(box.get('remote-receive-fixture'), isNull);
+      expect((box.get(note.id) as Map)['dirty'], isTrue);
+      if (replaceEnvelope) {
+        expect(box.get('__pending_sync_operation'), replacement);
+      }
+    });
+  }
 
   test('B01 cooldown still receives remote work while a local edit waits',
       () async {
