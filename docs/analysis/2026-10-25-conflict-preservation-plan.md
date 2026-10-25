@@ -58,6 +58,15 @@ review in the Recycle Bin. Manual retries create new requests under the existing
 charging/refund contract. The tests retain each attempt's reported charge without
 inventing a refund or treating later requests as free. There is no new automatic
 retry or delete-wins rebasing policy. Logout can still refuse unresolved work.
+The real two-client Server wire test applies the same no-resurrection rule to a
+stale local deletion against an accepted remote edit. It checks the complete
+local tombstone and persisted Hive row remain unchanged, the known operation
+clears, and the accepted remote body/version survive. After closing/reopening the
+client's Hive box, a fresh manual request can settle another local note and pull
+unrelated remote work while preserving the unresolved tombstone. A refused-only
+request reports the actual Server's 10 charge and 10 refund; a mixed request with
+one successful row reports 10 charged and no refund. The opposite stale edit
+against a remote tombstone still preserves the edit in a live conflict copy.
 The existing logout recovery path also validates its immutable plan conflict ID
 against pending metadata. Retargeting an occupied copy ID followed by interruption
 can leave those IDs different and conservatively block logout recovery; resolving
