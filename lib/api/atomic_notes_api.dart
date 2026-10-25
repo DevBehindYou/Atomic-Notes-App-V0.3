@@ -2,8 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:atomic_notes/api/logout_protocol.dart';
 import 'package:atomic_notes/api/logout_recovery.dart';
+import 'package:atomic_notes/api/push_acknowledgement.dart';
 import 'package:atomic_notes/api/user_sessions.dart';
-import 'package:atomic_notes/api/wire_timestamp.dart';
 
 import 'package:atomic_notes/authentication/auth_services/cred.dart';
 import 'package:atomic_notes/security/secure_options.dart';
@@ -14,6 +14,9 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:http/http.dart' as http;
 import 'package:atomic_notes/database/note.dart' show newId;
 
+export 'package:atomic_notes/api/push_acknowledgement.dart'
+    show PushReceipt, PushReply;
+
 class ApiException implements Exception {
   final String code;
   final int statusCode;
@@ -21,27 +24,6 @@ class ApiException implements Exception {
   ApiException(this.code, this.statusCode, {this.retryAfterSeconds});
   @override
   String toString() => code;
-}
-
-/// Historical totals for one Server operation, including on requestId replay.
-/// These amounts do not indicate a new wallet debit for this HTTP attempt.
-class PushReceipt {
-  const PushReceipt({required this.charged, required this.refunded})
-      : assert(charged >= 0), assert(refunded >= 0), assert(refunded <= charged);
-  final int charged;
-  final int refunded;
-  int get netCharge => charged - refunded;
-}
-
-/// Note acknowledgements and optional billing metadata for the submitted batch.
-/// A missing receipt means unknown cost, including with older Servers.
-class PushReply {
-  const PushReply({required this.requestId, required this.instant,
-      required this.results, this.receipt});
-  final String requestId;
-  final bool instant;
-  final List<Map<String, dynamic>> results;
-  final PushReceipt? receipt;
 }
 
 /// The authenticated transport boundary. Every response belongs to the exact
@@ -287,11 +269,11 @@ class ApiClient {
     // Freeze identity/version primitives before transport awaits. Validation
     // binds acknowledgements to these submitted rows, never later caller edits.
     final sentRows = rows.map((row) => Map<String, dynamic>.from(row)).toList();
-    final expected = _pushExpectedVersions(sentRows);
+    final decoder = PushAcknowledgementDecoder(sentRows);
     final data = await _request('POST', '/notes/push',
       body: {'rows': sentRows, 'requestId': requestId, 'mode': instant ? 'instant' : 'standard'},
       timeout: const Duration(seconds: 90), acceptSyncFailure: true) as Map;
-    return _pushReply(data, requestId, instant, expected);
+    return decoder.decode(data, requestId: requestId, instant: instant);
   }
 
   Future<LogoutAdmission> beginLogoutSync(String attemptId, List<Map<String, dynamic>> batches) async {
@@ -328,10 +310,10 @@ class ApiClient {
   }
 
   Future<PushReply> pushLogoutNotes(LogoutEnvelope envelope) async {
-    final expected = _pushExpectedVersions(envelope.rows);
+    final decoder = PushAcknowledgementDecoder(envelope.rows);
     final data = await _request('POST', '/notes/push', body: envelope.toWire(),
       timeout: const Duration(seconds: 90), acceptSyncFailure: true) as Map;
-    final reply = _pushReply(data, envelope.requestId, true, expected);
+    final reply = decoder.decode(data, requestId: envelope.requestId, instant: true);
     if (reply.receipt == null) {
       throw const FormatException('Invalid logout push receipt');
     }
@@ -384,73 +366,6 @@ class ApiClient {
     // Session-revision fencing above also applies to completion receipt replay.
   }
 
-  Map<String, int> _pushExpectedVersions(List<Map<String, dynamic>> rows) {
-    final expected = <String, int>{};
-    for (final row in rows) {
-      final id = row['id'], version = row['base_version'];
-      if (id is! String || id.isEmpty || expected.containsKey(id) ||
-          version is! int || version < 0) {
-        throw const FormatException('Invalid submitted push identities');
-      }
-      expected[id] = version;
-    }
-    return expected;
-  }
-
-  List<Map<String, dynamic>> _pushResults(Object? value, Map<String, int> expected) {
-    if (value is! List || value.length != expected.length) {
-      throw const FormatException('Invalid push acknowledgement coverage');
-    }
-    final seen = <String>{}, results = <Map<String, dynamic>>[];
-    for (final entry in value) {
-      if (entry is! Map || !entry.keys.every((key) => key is String)) {
-        throw const FormatException('Invalid push acknowledgement');
-      }
-      final result = Map<String, dynamic>.from(entry);
-      final id = result['id'], ok = result['ok'];
-      if (id is! String || !expected.containsKey(id) || !seen.add(id) || ok is! bool) {
-        throw const FormatException('Invalid push acknowledgement identity');
-      }
-      final seq = result['seq'], unchanged = result['unchanged'];
-      if ((result.containsKey('seq') && (seq is! int || seq <= 0)) ||
-          (result.containsKey('unchanged') && unchanged is! bool)) {
-        throw const FormatException('Invalid push acknowledgement metadata');
-      }
-      if (ok) {
-        final version = result['version'];
-        final base = expected[id]!;
-        if (version is! int || version <= 0 || version < base ||
-            (version == base && unchanged != true) ||
-            !isServerUtcTimestamp(result['updated_at'])) {
-          throw const FormatException('Invalid push success acknowledgement');
-        }
-      } else {
-        final error = result['error'];
-        if (error is! String || error.trim().isEmpty) {
-          throw const FormatException('Invalid push failure acknowledgement');
-        }
-      }
-      results.add(Map<String, dynamic>.unmodifiable(result));
-    }
-    // Nothing escapes until the entire batch has passed validation.
-    return List<Map<String, dynamic>>.unmodifiable(results);
-  }
-
-  PushReply _pushReply(Map data, String requestId, bool instant, Map<String, int> expected) {
-    final results = _pushResults(data['results'], expected);
-    final charged = data['charged'];
-    final refunded = data['refunded'];
-    // Old Servers omit receipts. Malformed optional billing metadata must not
-    // discard valid note acknowledgements or imply that an operation was free.
-    final receipt = charged is int && refunded is int &&
-        charged >= 0 && refunded >= 0 && refunded <= charged
-        ? PushReceipt(charged: charged, refunded: refunded) : null;
-    return PushReply(
-      requestId: requestId, instant: instant,
-      results: results,
-      receipt: receipt,
-    );
-  }
   Future<Map<String, dynamic>> pullNotes({int? after, bool encOnly = false}) async =>
     Map<String, dynamic>.from(await _request('GET', '/notes/pull', query: {
       if (encOnly) 'encOnly': 'true', if (after != null) 'after': after.toString(),
