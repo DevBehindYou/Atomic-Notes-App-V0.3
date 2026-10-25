@@ -1,5 +1,7 @@
 # B01 receive admission baseline — 25 October 2026
 
+Historical baseline at commit `bb3db75aefa0fc45c6154138b7ed7bbd496c61f6`. The two legacy receive expectations below are superseded by [B02 independent receive](B02_INDEPENDENT_RECEIVE.md); the original red/green observations remain historical evidence.
+
 Base: App main `127c12170e17419c231415a18b20dd8ebeada4db`. This is a test-only characterization of the accepted App flow before B02; production code and policy are unchanged.
 
 The six added cases in `test/sync_http_repository_test.dart` join the real ApiClient, NotesRepository and isolated Hive with synthetic in-process HTTP responses. No request leaves the process. Configurable remote rows extend the existing harness instead of duplicating it.
