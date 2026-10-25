@@ -385,6 +385,27 @@ void main() {
     expect(finished, 0);
     expect(api.aborts, 1);
   });
+  test('unresolved deletion refuses logout without replaying the old ordinary request', () async {
+    final note = await dirtyNote();
+    expect(await repo.syncNow(instant: true), isTrue);
+    await repo.deleteNotes([note.id]);
+    api.pushResults = [{'id': note.id, 'ok': false, 'error': 'note_conflict', 'version': 2}];
+    api.pullRows = [{...note.toRemote(api.user!), 'deleted': false,
+      'body': 'Remote competing edit', 'version': 2,
+      'updated_at': DateTime.now().toUtc().toIso8601String()}];
+    expect(await repo.syncNow(instant: true), isFalse);
+    final ordinary = api.requestIds.last;
+    expect(box.get('__pending_sync_operation'), isNull);
+    await expectLater(logout(), throwsA(isA<LogoutBlocked>()));
+    expect(finished, 0);
+    expect(repo.byId(note.id)!.deleted, isTrue);
+    expect(repo.byId(note.id)!.dirty, isTrue);
+    expect(repo.byId(note.id)!.serverVersion, 1);
+    expect(repo.visible(), isEmpty);
+    expect(box.get('__pending_sync_operation'), isNull);
+    expect(api.requestIds.last, ordinary);
+    expect(api.logoutRequests.single, isNot(ordinary));
+  });
   test(
       'writer, duplicate logout, wipe and vault lock are fenced during an upload',
       () async {
