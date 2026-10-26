@@ -1,0 +1,241 @@
+name: Staging Android
+
+on:
+  pull_request:
+    paths:
+      - 'android/**'
+      - 'lib/**'
+      - 'assets/**'
+      - 'pubspec.*'
+      - '.github/workflows/staging-android.yml'
+  workflow_dispatch:
+    inputs:
+      google_server_client_id:
+        description: 'Public WEB OAuth client ID matching the staging server (never a client secret or Android client ID)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: staging-android-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  compile:
+    name: Package isolation (${{ matrix.mode }})
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [debug, release]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: '3.44.8'
+          channel: stable
+          cache: true
+      - name: Resolve locked public configuration
+        run: |
+          cp lib/authentication/auth_services/cred.example.dart lib/authentication/auth_services/cred.dart
+          flutter pub get --enforce-lockfile
+      - name: Compile actual main and verify default/staging identities
+        env:
+          BUILD_MODE: ${{ matrix.mode }}
+        run: |
+          set -euo pipefail
+          AAPT="$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)"
+          test -x "$AAPT"
+          # This synthetic ID is compile-only. No PR APK is published or accepted for sign-in.
+          for staging in false true; do
+            ATOMIC_ANDROID_STAGING="$staging" flutter build apk "--$BUILD_MODE" \
+              --target lib/main.dart --target-platform android-arm64 --split-per-abi --no-pub \
+              --dart-define=API_BASE_URL=https://atomic-notes-app-server-staging.vercel.app/api \
+              --dart-define=GOOGLE_SERVER_CLIENT_ID=000000000000-stagingcompileonly0000000000000000.apps.googleusercontent.com
+            "$AAPT" dump badging "build/app/outputs/flutter-apk/app-arm64-v8a-$BUILD_MODE.apk" > "$RUNNER_TEMP/badging.txt"
+            package=com.notes.atomic
+            label=Atomic
+            if [ "$BUILD_MODE" = debug ]; then label='Atomic Test'; fi
+            if [ "$staging" = true ]; then package=com.notes.atomic.staging; label='Atomic Staging'; fi
+            grep -F "package: name='$package' " "$RUNNER_TEMP/badging.txt"
+            grep -Fx "application-label:'$label'" "$RUNNER_TEMP/badging.txt"
+            grep -Eq "^launchable-activity: name='com.notes.atomic.MainActivity' " "$RUNNER_TEMP/badging.txt"
+          done
+
+  release:
+    name: Signed staging APK from reviewed main
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      github.event.repository.fork == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      ATOMIC_ANDROID_STAGING: 'true'
+      API_BASE_URL: https://atomic-notes-app-server-staging.vercel.app/api
+      GOOGLE_SERVER_CLIENT_ID: ${{ inputs.google_server_client_id }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Validate public input and dedicated staging secrets
+        env:
+          KEYSTORE_BASE64: ${{ secrets.STAGING_ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.STAGING_ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.STAGING_ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.STAGING_ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for name in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [ -z "${!name}" ]; then echo "::error::Required staging signing secret is missing: $name"; exit 1; fi
+          done
+          python3 - <<'PY'
+          import os, re
+          client = os.environ['GOOGLE_SERVER_CLIENT_ID']
+          if (not re.fullmatch(r'[0-9]{6,}-[a-z0-9]{16,}\.apps\.googleusercontent\.com', client)
+                  or client.split('-', 1)[0].strip('0') == ''
+                  or any(word in client.lower() for word in ('placeholder', 'example', 'compileonly'))):
+              raise SystemExit('Expected a real public Google Web OAuth client ID; never a secret.')
+          PY
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: '3.44.8'
+          channel: stable
+          cache: true
+      - name: Resolve locked public configuration
+        run: |
+          cp lib/authentication/auth_services/cred.example.dart lib/authentication/auth_services/cred.dart
+          flutter pub get --enforce-lockfile
+      - name: Restore dedicated staging signer
+        env:
+          KEYSTORE_BASE64: ${{ secrets.STAGING_ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.STAGING_ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.STAGING_ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.STAGING_ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          python3 - <<'PY'
+          import base64, os
+          from pathlib import Path
+          key = Path(os.environ['RUNNER_TEMP']) / 'staging.jks'
+          key.write_bytes(base64.b64decode(os.environ['KEYSTORE_BASE64'], validate=True))
+          def escape(value):
+              return (value.replace('\\', '\\\\').replace('\r', '\\r').replace('\n', '\\n')
+                      .replace('\t', '\\t').replace('\f', '\\f').replace(' ', '\\ '))
+          values = {'storeFile': str(key), 'storePassword': os.environ['KEYSTORE_PASSWORD'],
+                    'keyAlias': os.environ['KEY_ALIAS'], 'keyPassword': os.environ['KEY_PASSWORD']}
+          Path('android/key.properties').write_text(
+              ''.join(f'{name}={escape(value)}\n' for name, value in values.items()), encoding='utf-8')
+          PY
+      - name: Build real arm64 staging release
+        run: |
+          set -euo pipefail
+          VERSION="$(sed -n 's/^version:[[:space:]]*//p' pubspec.yaml | tr -d '\r')"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+\+[0-9]+$ ]]
+          # A separate package has its own version sequence; reruns retain the same versionCode.
+          BUILD_NUMBER="$GITHUB_RUN_NUMBER"
+          [[ "$BUILD_NUMBER" =~ ^[1-9][0-9]*$ ]] && (( BUILD_NUMBER < 2100000000 ))
+          flutter build apk --release --target lib/main.dart --target-platform android-arm64 \
+            --split-per-abi --no-pub --build-name="${VERSION%%+*}" --build-number="$BUILD_NUMBER" \
+            --dart-define=API_BASE_URL="$API_BASE_URL" \
+            --dart-define=GOOGLE_SERVER_CLIENT_ID="$GOOGLE_SERVER_CLIENT_ID"
+      - name: Verify APK identity, signer, embedded configuration and provenance
+        run: |
+          set -euo pipefail
+          APK=build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+          AAPT="$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)"
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)"
+          "$AAPT" dump badging "$APK" > "$RUNNER_TEMP/staging-badging.txt"
+          "$APKSIGNER" verify --verbose --print-certs "$APK" > "$RUNNER_TEMP/staging-certs.txt"
+          python3 - <<'PY'
+          import hashlib, json, os, re, subprocess, zipfile
+          from pathlib import Path
+          temp = Path(os.environ['RUNNER_TEMP'])
+          badging = (temp / 'staging-badging.txt').read_text()
+          certs = (temp / 'staging-certs.txt').read_text()
+          def require(condition, message):
+              if not condition:
+                  raise SystemExit(message)
+          package = re.search(r"^package: name='([^']+)' versionCode='([^']+)' versionName='([^']+)'", badging, re.M)
+          require(package is not None, 'Missing APK package metadata.')
+          package_id, version_code, version_name = package.groups()
+          require(package_id == 'com.notes.atomic.staging', 'APK is not the isolated staging package.')
+          require("application-label:'Atomic Staging'" in badging.splitlines(), 'Wrong staging label.')
+          require(re.search(r"^launchable-activity: name='com.notes.atomic.MainActivity' ", badging, re.M), 'Wrong launcher activity.')
+          require("native-code: 'arm64-v8a'" in badging.splitlines(), 'Expected arm64 APK.')
+          expected_name = re.search(r'^version:\s*([^+\s]+)\+', Path('pubspec.yaml').read_text(), re.M).group(1)
+          require(version_name == expected_name and version_code == os.environ['GITHUB_RUN_NUMBER'], 'Unexpected APK version.')
+          require('android debug' not in certs.lower(), 'Debug signer is forbidden for staging acceptance.')
+          fingerprints = {}
+          for algorithm, length in [('SHA-1', 40), ('SHA-256', 64)]:
+              matches = re.findall(rf'^Signer #1 certificate {algorithm} digest: ([0-9a-fA-F]{{{length}}})$', certs, re.M)
+              require(len(matches) == 1, f'Missing signer {algorithm} fingerprint.')
+              fingerprints[algorithm] = ':'.join(re.findall('..', matches[0].upper()))
+          require(re.search(r'^Number of signers: 1$', certs, re.M), 'Expected exactly one staging signer.')
+          apk = Path('build/app/outputs/flutter-apk/app-arm64-v8a-release.apk')
+          endpoint = os.environ['API_BASE_URL'].encode()
+          client = os.environ['GOOGLE_SERVER_CLIENT_ID'].encode()
+          found_endpoint = found_client = False
+          with zipfile.ZipFile(apk) as archive:
+              for entry in archive.infolist():
+                  require(not re.search(r'(^|/)(key\.properties|[^/]+\.(jks|keystore))$', entry.filename, re.I), 'Signing file bundled in APK.')
+                  data = archive.read(entry)
+                  require(not re.search(rb'GOCSPX-[A-Za-z0-9_-]+|-----BEGIN (?:RSA |EC |ENCRYPTED )?PRIVATE KEY-----', data), 'Possible client secret/private key bundled in APK.')
+                  found_endpoint |= endpoint in data
+                  found_client |= client in data
+          require(found_endpoint and found_client, 'Expected public staging configuration not found in compiled APK.')
+          source = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          require(source == os.environ['GITHUB_SHA'], 'Checkout does not match dispatched main commit.')
+          provenance = {'package': package_id, 'label': 'Atomic Staging',
+                        'launchableActivity': 'com.notes.atomic.MainActivity', 'abi': 'arm64-v8a',
+                        'versionName': version_name, 'versionCode': int(version_code),
+                        'apkSha256': hashlib.sha256(apk.read_bytes()).hexdigest(),
+                        'certificateFingerprints': fingerprints, 'sourceCommit': source,
+                        'workflow': os.environ['GITHUB_WORKFLOW_REF'],
+                        'runId': os.environ['GITHUB_RUN_ID'], 'runNumber': os.environ['GITHUB_RUN_NUMBER'],
+                        'runAttempt': os.environ['GITHUB_RUN_ATTEMPT'],
+                        'runUrl': f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
+                        'entrypoint': 'lib/main.dart', 'apiBaseUrl': endpoint.decode(),
+                        'googleServerWebClientId': client.decode(),
+                        'acceptance': 'Artifact checks only; Google registration and real spare-account device acceptance pending.'}
+          output = Path('staging-artifact')
+          output.mkdir()
+          apk.rename(output / 'atomic-staging-arm64.apk')
+          (output / 'provenance.json').write_text(json.dumps(provenance, indent=2) + '\n')
+          with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a') as summary:
+              summary.write('### Staging artifact verification\n```json\n' + json.dumps(provenance, indent=2) + '\n```\n')
+          PY
+      - name: Remove staging signing material
+        if: always()
+        run: rm -f "$RUNNER_TEMP/staging.jks" android/key.properties
+      - name: Upload verified staging APK and public provenance only
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: atomic-staging-arm64-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            staging-artifact/atomic-staging-arm64.apk
+            staging-artifact/provenance.json
+          if-no-files-found: error
+          retention-days: 7
