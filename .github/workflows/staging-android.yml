@@ -8,6 +8,7 @@ on:
       - 'assets/**'
       - 'pubspec.*'
       - '.github/workflows/staging-android.yml'
+      - 'tools/test_staging_android_version.py'
   workflow_dispatch:
     inputs:
       google_server_client_id:
@@ -52,6 +53,8 @@ jobs:
         run: |
           cp lib/authentication/auth_services/cred.example.dart lib/authentication/auth_services/cred.dart
           flutter pub get --enforce-lockfile
+      - name: Check split APK provenance version regression
+        run: python3 tools/test_staging_android_version.py
       - name: Compile actual main and verify default/staging identities
         env:
           BUILD_MODE: ${{ matrix.mode }}
@@ -156,7 +159,8 @@ jobs:
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+\+[0-9]+$ ]]
           # A separate package has its own version sequence; reruns retain the same versionCode.
           BUILD_NUMBER="$GITHUB_RUN_NUMBER"
-          [[ "$BUILD_NUMBER" =~ ^[1-9][0-9]*$ ]] && (( BUILD_NUMBER < 2100000000 ))
+          # Flutter's arm64 split adds 2 * 1000 to this base version code.
+          [[ "$BUILD_NUMBER" =~ ^[1-9][0-9]*$ ]] && (( BUILD_NUMBER < 2099998000 ))
           flutter build apk --release --target lib/main.dart --target-platform android-arm64 \
             --split-per-abi --no-pub --build-name="${VERSION%%+*}" --build-number="$BUILD_NUMBER" \
             --dart-define=API_BASE_URL="$API_BASE_URL" \
@@ -186,7 +190,8 @@ jobs:
           require(re.search(r"^launchable-activity: name='com.notes.atomic.MainActivity' ", badging, re.M), 'Wrong launcher activity.')
           require("native-code: 'arm64-v8a'" in badging.splitlines(), 'Expected arm64 APK.')
           expected_name = re.search(r'^version:\s*([^+\s]+)\+', Path('pubspec.yaml').read_text(), re.M).group(1)
-          require(version_name == expected_name and version_code == os.environ['GITHUB_RUN_NUMBER'], 'Unexpected APK version.')
+          expected_code = 2000 + int(os.environ['GITHUB_RUN_NUMBER'])
+          require(version_name == expected_name and int(version_code) == expected_code, 'Unexpected APK version.')
           require('android debug' not in certs.lower(), 'Debug signer is forbidden for staging acceptance.')
           fingerprints = {}
           for algorithm, length in [('SHA-1', 40), ('SHA-256', 64)]:

@@ -60,8 +60,9 @@ directories, or properties file. No production signing secrets are referenced.
    `https://atomic-notes-app-server-staging.vercel.app/api/auth/callback`.
 2. Dispatch **Staging Android** on the reviewed `main` commit using that Web
    client ID. The build uses pubspec's version name and the workflow `run_number`
-   as its staging version code. Reruns retain the same code; a later dispatch
-   increments it. Keep this workflow's run sequence when updating this package.
+   as its base build number. Flutter's arm64 split adds `2000`, so the final APK
+   version code is `2000 + run_number`. Reruns retain the same code; a later
+   dispatch increments it. Keep this workflow's run sequence when updating this package.
 3. Download the exact successful run's `atomic-staging-arm64-<run>-<attempt>`
    artifact. It contains `atomic-staging-arm64.apk` and `provenance.json`. The
    workflow verifies package, label, launcher, arm64 ABI, version, signature,
