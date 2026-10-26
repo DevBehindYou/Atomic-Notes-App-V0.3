@@ -4,6 +4,9 @@ plugins {
     id "dev.flutter.flutter-gradle-plugin"
 }
 
+// Explicit opt-in: ordinary builds retain their existing package and labels.
+def androidStaging = System.getenv('ATOMIC_ANDROID_STAGING') == 'true'
+
 def localProperties = new Properties()
 def localPropertiesFile = rootProject.file('local.properties')
 if (localPropertiesFile.exists()) {
@@ -58,6 +61,7 @@ android {
 
     defaultConfig {
         applicationId = "com.notes.atomic"
+        manifestPlaceholders.atomicAppLabel = 'Atomic'
         // Android 9 (Pie). Chosen for the security floor, not just for
         // local_auth's biometric prompt (which only needs 23): API 28 is where
         // hardware-backed keystore attestation and StrongBox become available
@@ -83,6 +87,13 @@ android {
     }
 
     buildTypes {
+        configureEach {
+            if (androidStaging) {
+                applicationIdSuffix = '.staging'
+            }
+            manifestPlaceholders.atomicAppLabel = androidStaging ? 'Atomic Staging' :
+                (name in ['debug', 'profile'] ? 'Atomic Test' : 'Atomic')
+        }
         release {
             signingConfig = keystorePropertiesFile.exists() ? signingConfigs.release : signingConfigs.debug
         }

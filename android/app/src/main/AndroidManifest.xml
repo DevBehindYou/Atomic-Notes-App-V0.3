@@ -1,5 +1,5 @@
 <!-- The `package` attribute is intentionally absent: AGP 8+ takes the
-     application ID from `namespace` in app/build.gradle and errors out if
+     application ID and namespace from app/build.gradle and errors out if
      this attribute is present. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
@@ -8,11 +8,11 @@
     <!-- Dictation starts only from the editor microphone action. No audio is saved. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <application
-        android:label="Atomic"
+        android:label="${atomicAppLabel}"
         android:name="${applicationName}"
         android:icon="@mipmap/launcher_icon">
         <activity
-            android:name=".MainActivity"
+            android:name="com.notes.atomic.MainActivity"
             android:exported="true"
             android:launchMode="singleTop"
             android:theme="@style/LaunchTheme"
