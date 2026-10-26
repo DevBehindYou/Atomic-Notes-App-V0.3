@@ -66,6 +66,10 @@ directories, or properties file. No production signing secrets are referenced.
 3. Download the exact successful run's `atomic-staging-arm64-<run>-<attempt>`
    artifact. It contains `atomic-staging-arm64.apk` and `provenance.json`. The
    workflow verifies package, label, launcher, arm64 ABI, version, signature,
+   and fingerprints calculated from the public DER certificate printed by
+   `apksigner --print-certs-pem`. Exactly one reported signer and one distinct
+   certificate are required; repeated copies of that same certificate are allowed.
+   It also checks
    source SHA, public endpoint/client ID presence, and absence of signing files,
    recognizable Google client-secret and private-key material. This bounded scan
    is not a general proof that every possible secret format is absent.
