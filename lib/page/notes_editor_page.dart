@@ -39,6 +39,7 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
   final _scroll = ScrollController();
   final _titleFocus = FocusNode();
   final List<RichNoteController> _lines = [];
+  final _contentRevision = ValueNotifier<int>(0);
   late final EditorImageInput _imageInput;
   late final EditorSpeechInput _speechInput;
   final Map<String, Uint8List> _images = {};
@@ -76,6 +77,7 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
 
   RichNoteController _controller(NoteLine line) {
     final controller = RichNoteController(text: line.text, styles: line.styles);
+    var previousValue = controller.value;
     controller.addListener(() {
       if (!mounted || _closing || _document.isReadOnly) return;
       final index = _lines.indexOf(controller);
@@ -87,9 +89,18 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
               controller.selection != _speechSelection)) {
         _cancelSpeech();
       }
+      final nextValue = controller.value;
+      final valueChanged = previousValue != nextValue;
+      final textChanged = previousValue.text != nextValue.text;
+      previousValue = nextValue;
+      // Caret and IME range updates belong to EditableText. They must still
+      // fence dictation above, but do not change the document or its metadata.
+      // A style toggle notifies without changing TextEditingValue, so it must
+      // continue through this path even when the text is unchanged.
+      if (valueChanged && !textChanged) return;
       _document.replaceText(index, controller.text);
       _document.replaceStyles(index, controller.styles);
-      setState(() {});
+      _contentRevision.value++;
     });
     return controller;
   }
@@ -126,6 +137,7 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
     _speechSession++;
     unawaited(_speechInput.cancel());
     _title.dispose();
+    _contentRevision.dispose();
     _titleFocus.dispose();
     _scroll.dispose();
     for (final controller in _lines) {
@@ -143,8 +155,15 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
     return result;
   }
 
+  // The document already compares its editable projection with the initial
+  // lines/tags. Serializing and hashing the full note here would repeat that
+  // work on every edit just to update a label or decide whether to prompt.
   bool get _changed =>
-      !_document.isReadOnly && _snapshot().contentSig != widget.note.contentSig;
+      !_document.isReadOnly &&
+      (_document.hasChanges ||
+          _title.text != widget.note.title ||
+          _draft.pinned != widget.note.pinned ||
+          _draft.important != widget.note.important);
 
   void _finish(bool save) {
     if (_closing || _picking || _starting) return;
@@ -438,16 +457,19 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
                                     'EDITED ${_stamp(widget.note.updatedAt)}',
                                     small: true,
                                   ),
-                                  MonoLabel(
-                                    _document.isReadOnly
-                                        ? 'Unsupported format · read-only'
-                                        : _changed
-                                            ? 'SAVE WITH DONE'
-                                            : widget.note.isEmpty
-                                                ? 'UNSAVED DRAFT'
-                                                : 'ON DEVICE',
-                                    small: true,
-                                    color: AppColors.signal,
+                                  ValueListenableBuilder<int>(
+                                    valueListenable: _contentRevision,
+                                    builder: (context, _, __) => MonoLabel(
+                                      _document.isReadOnly
+                                          ? 'Unsupported format · read-only'
+                                          : _changed
+                                              ? 'SAVE WITH DONE'
+                                              : widget.note.isEmpty
+                                                  ? 'UNSAVED DRAFT'
+                                                  : 'ON DEVICE',
+                                      small: true,
+                                      color: AppColors.signal,
+                                    ),
                                   ),
                                 ],
                               ),
@@ -465,7 +487,7 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
                                 ),
                                 cursorColor: AppColors.signal,
                                 decoration: _decoration('Title'),
-                                onChanged: (_) => setState(() {}),
+                                onChanged: (_) => _contentRevision.value++,
                               ),
                               _tags(),
                               const SizedBox(height: AppSpace.md),
@@ -481,7 +503,10 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
                             horizontal: AppSpace.screenMargin,
                             vertical: AppSpace.sm,
                           ),
-                          child: _statistics(),
+                          child: ValueListenableBuilder<int>(
+                            valueListenable: _contentRevision,
+                            builder: (context, _, __) => _statistics(),
+                          ),
                         ),
                       const HairRule(color: AppColors.ink),
                       Padding(
@@ -950,9 +975,8 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
   }
 
   Widget _statistics() {
-    final snapshot = _snapshot();
     final text = [
-      snapshot.title,
+      _title.text,
       ..._document.lines
           .where((line) => !line.isImage)
           .map((line) => line.text),
@@ -967,7 +991,12 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
             small: true),
         if (_listening || _starting)
           const MonoLabel('LISTENING…', small: true, color: AppColors.signal),
-        if (snapshot.kind == NoteKind.todo || _document.hasChecklist)
+        if (_document.hasChecklist ||
+            (_draft.kind == NoteKind.todo &&
+                (!_document.hasChanges ||
+                    (_draft.body.isEmpty &&
+                        _document.lines.isEmpty &&
+                        _document.tags.isEmpty))))
           MonoLabel(
             '${_document.lines.where((line) => line.isChecklist && line.text.trim().isNotEmpty && line.done).length} / ${_document.lines.where((line) => line.isChecklist && line.text.trim().isNotEmpty).length} DONE',
             small: true,
