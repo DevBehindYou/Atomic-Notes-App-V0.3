@@ -61,7 +61,8 @@ class NoteDocument {
   // body by the vault. It opts in explicitly; legacy prose is never parsed.
   static const formatMarker = 'atomic-notes:task-lines:v1';
   static const richFormatMarker = 'atomic-notes:rich-document:v2';
-  static const maxTagsPerNote = 5;
+  // Insertion policy only; the decoder still accepts existing legacy tags.
+  static const maxTagsPerNote = 3;
   static const maxTagCharacters = 15;
 
   // An insertion rule, not a decoder/save bound: older notes may contain more
@@ -242,7 +243,7 @@ class NoteDocument {
     final checked = _checkedTags(value);
     final additions = checked.where((tag) => !_tags.contains(tag)).toList();
     if (additions.isNotEmpty && checked.length > maxTagsPerNote) {
-      throw const FormatException('Use up to 5 tags per note');
+      throw const FormatException('Use up to 3 tags per note');
     }
     if (additions.any((tag) => tag.characters.length > maxTagCharacters)) {
       throw const FormatException('Tags must be 15 characters or less');

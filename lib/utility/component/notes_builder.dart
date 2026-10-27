@@ -147,13 +147,6 @@ class NotesBulder extends StatelessWidget {
                   color: _accent,
                 ),
               ],
-              if (document.tags.isNotEmpty) ...[
-                const SizedBox(height: AppSpace.sm),
-                Text(document.tags.map((tag) => '#$tag').join('  '),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: AppType.labelMono.copyWith(color: _metadataColor)),
-              ],
             ],
           ),
         ),
