@@ -22,15 +22,18 @@ Note _legacy(List<String> tags) => Note(
     );
 
 void main() {
-  test('five tags fit; a sixth is rejected without changing the draft', () {
+  test('three tags fit; a fourth is rejected without changing the draft', () {
     final note = Note(id: 'tag-count', body: 'Keep this text');
-    final doc = NoteDocument.fromNote(note)
-      ..setTags(['one', 'two', 'three', 'four', 'five']);
+    final doc = NoteDocument.fromNote(note)..setTags(['one', 'two', 'three']);
     final before = doc.toNote(note).toMap();
-    expect(() => doc.setTags([...doc.tags, 'six']), throwsFormatException);
+    expect(
+        () => doc.setTags([...doc.tags, 'four']),
+        throwsA(isA<FormatException>().having(
+            (error) => error.message, 'message', 'Use up to 3 tags per note')));
     expect(doc.toNote(note).toMap(), before);
-    doc.setTags([' one ', 'ONE', 'two', 'three', 'four', 'five']);
-    expect(doc.tags, ['one', 'two', 'three', 'four', 'five']);
+    doc.setTags([' one ', 'ONE', 'two', 'three']);
+    expect(doc.tags, ['one', 'two', 'three']);
+    expect(NoteDocument.fromNote(doc.toNote(note)).tags, doc.tags);
   });
 
   test('15 characters fit; a 16-character tag is rejected atomically', () {
@@ -53,27 +56,35 @@ void main() {
     expect(doc.tags, [tag]);
   });
 
-  test('legacy tags remain readable and removable without silent truncation',
-      () {
-    final tags = [
-      '12345678901234567890',
-      'two',
-      'three',
-      'four',
-      'five',
-      'six'
-    ];
-    final original = _legacy(tags);
-    final doc = NoteDocument.fromNote(original);
-    expect(doc.isReadOnly, isFalse);
-    expect(doc.toNote(original).toMap(), original.toMap());
-    doc.replaceText(0, 'Updated text');
-    expect(NoteDocument.fromNote(doc.toNote(original)).tags, tags);
-    doc.setTags(tags.take(5).toList());
-    expect(doc.tags, tags.take(5).toList());
-    expect(() => doc.setTags([...doc.tags, 'new']), throwsFormatException);
-    doc.setTags(doc.tags.skip(1).toList());
-    doc.setTags([...doc.tags, 'new']);
-    expect(doc.tags, ['two', 'three', 'four', 'five', 'new']);
-  });
+  for (final count in [5, 12]) {
+    test('$count legacy tags remain editable and removable without truncation',
+        () {
+      final tags = [
+        List.filled(40, 'a').join(),
+        for (var i = 1; i < count; i++) 'tag$i',
+      ];
+      final original = _legacy(tags);
+      final doc = NoteDocument.fromNote(original);
+      expect(doc.isReadOnly, isFalse);
+      doc.setTags(tags);
+      expect(doc.toNote(original).toMap(), original.toMap());
+      doc.replaceText(0, 'Updated text');
+      final edited = NoteDocument.fromNote(doc.toNote(original));
+      expect(edited.lines.single.text, 'Updated text');
+      expect(edited.tags, tags);
+      while (doc.tags.length > 2) {
+        final before = doc.tags.toList();
+        expect(() => doc.setTags([...doc.tags, 'new']), throwsFormatException);
+        expect(doc.tags, before);
+        doc.setTags(doc.tags.take(doc.tags.length - 1).toList());
+        expect(NoteDocument.fromNote(doc.toNote(original)).tags, doc.tags);
+      }
+      // New tags fit again below the cap, even beside a retained long tag.
+      doc.setTags([...doc.tags, 'new']);
+      expect(doc.tags, [tags.first, 'tag1', 'new']);
+      expect(NoteDocument.fromNote(doc.toNote(original)).tags, doc.tags);
+      doc.setTags([]);
+      expect(NoteDocument.fromNote(doc.toNote(original)).tags, isEmpty);
+    });
+  }
 }

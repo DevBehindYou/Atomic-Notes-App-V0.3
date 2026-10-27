@@ -91,18 +91,18 @@ Future<void> _edit(WidgetTester tester, String text) async {
 }
 
 void main() {
-  testWidgets('tag popup allows 15 characters and disables adding after five',
+  testWidgets('tag popup allows 15 characters and disables adding after three',
       (tester) async {
-    final original = Note(id: 'five-tag-popup', body: 'Body');
+    final original = Note(id: 'three-tag-popup', body: 'Body');
     final document = NoteDocument.fromNote(original)
-      ..setTags(['one', 'two', 'three', 'four', 'five']);
+      ..setTags(['one', 'two', 'three']);
     await _open(tester, document.toNote(original));
     expect(
         tester
             .widget<TextButton>(find.widgetWithText(TextButton, 'Tag'))
             .onPressed,
         isNull);
-    await tester.tap(find.byTooltip('Remove tag five'));
+    await tester.tap(find.byTooltip('Remove tag three'));
     await tester.pumpAndSettle();
     await _action(tester, 'Add tag');
     final field = find.byKey(const ValueKey('note-tag-input'));
