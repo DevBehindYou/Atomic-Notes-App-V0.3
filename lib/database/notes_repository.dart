@@ -97,9 +97,10 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
 
   @visibleForTesting
   factory NotesRepository.forTest({required Box box, required ApiClient api,
-    required Vault vault, required Future<List<ConnectivityResult>> Function() checkConnectivity}) {
+    required Vault vault, required Future<List<ConnectivityResult>> Function() checkConnectivity,
+    bool automaticSync = false}) {
     final repository = NotesRepository._(api: api, vault: vault,
-      checkConnectivity: checkConnectivity, refreshEnergy: () async {}, automaticSync: false);
+      checkConnectivity: checkConnectivity, refreshEnergy: () async {}, automaticSync: automaticSync);
     repository._box = box;
     repository._cacheReady = true;
     return repository;
@@ -222,6 +223,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   /// While set and in the future, the Server has said an automatic (standard)
   /// sync is not open yet. Instant sync is never blocked.
   DateTime? _standardBlockedUntil;
+  static const _cooldownKey = '__standard_sync_cooldown__';
   Timer? _autoRetry;
 
   /// When the next automatic sync can send changes, or null when it is open now.
@@ -279,6 +281,9 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     final lifecycle = _lifecycleRevision;
     _notes.clear();
     _syncCursor = null;
+    _standardBlockedUntil = null;
+    _autoRetry?.cancel();
+    _autoRetry = null;
     // A cache written by a different account — a previous user whose session
     // expired without an explicit logout — must never surface for this one.
     // (Explicit logout already wipes the box; this covers the expiry path.)
@@ -287,7 +292,10 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     // Loading (including cold startup and vault lock) never adopts or erases
     // another account's disk cache. Only start() may replace a clean cache.
     if (owner is String && owner != uid) return;
-    if (uid != null) _restoreCursor(uid);
+    if (uid != null) {
+      _restoreCursor(uid);
+      _restoreCooldown(uid);
+    }
     for (final raw in _box.values) {
       if (raw is Map && raw['id'] is String) {
         final opened = await _open(raw);
@@ -386,6 +394,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     if (_userId != uid || !_ownsCache(uid) || lifecycle != _lifecycleRevision) return;
     await _box.put(_ownerKey, uid);
     _stopped = false;
+    _scheduleCooldownRetry();
     notifyListeners();
     if (!_automaticSync) return;
     // MIGRATION NOTE: `_listenRealtime()` used to be called here — removed,
@@ -440,6 +449,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
         }
       } finally {
         _lockingVault = false;
+        _scheduleCooldownRetry();
       }
     }
   }
@@ -846,20 +856,55 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     _networkRetry = Timer(delay, () => unawaited(syncNow()));
   }
 
-  /// Remembers that automatic sync is closed for [seconds] (or the usual hour) and
-  /// tries once more just after it opens, so an hourly timer that fires a moment
-  /// early does not cost a whole extra hour.
-  void _startCooldown(int? seconds) {
-    final wait = Duration(
-        seconds: (seconds ?? EnergyService.instance.limits.syncStandardIntervalSeconds).clamp(1, 7200));
-    _standardBlockedUntil = DateTime.now().add(wait);
+  // Only a learned server deadline is cached. Without it, each cold launch can
+  // upload the whole image-bearing body merely to learn the same 429 again.
+  // This advisory gate never changes billing or blocks instant/recovery work.
+  void _restoreCooldown(String uid) {
+    if (_box.get(_ownerKey) != uid) return;
+    final saved = _box.get(_cooldownKey);
+    if (saved is! Map || saved['userId'] != uid || saved['until'] is! String) return;
+    final until = DateTime.tryParse(saved['until'] as String);
+    if (until == null) return;
+    final wait = until.difference(DateTime.now());
+    // Corrupt dates or a moved clock cannot create an indefinite local block.
+    if (wait <= Duration.zero || wait > const Duration(hours: 2)) return;
+    _standardBlockedUntil = until;
+  }
+
+  Future<void> _rememberCooldown(String uid, DateTime until,
+      {required int lifecycle, required int session}) async {
+    bool current() => _activeFor(uid) && _box.get(_ownerKey) == uid &&
+        lifecycle == _lifecycleRevision && session == _api.sessionRevision;
+    if (!current()) return;
+    _standardBlockedUntil = until;
+    await _box.put(_cooldownKey, {
+      'userId': uid, 'until': until.toUtc().toIso8601String(),
+    });
+    if (!current()) return;
+    _scheduleCooldownRetry();
+    notifyListeners();
+  }
+
+  /// Retry just after a restored or newly learned deadline, without waiting
+  /// for the hourly timer. Lifecycle/session checks retire old-account timers.
+  void _scheduleCooldownRetry() {
     _autoRetry?.cancel();
-    if (!_automaticSync || _stopped) return;
+    _autoRetry = null;
+    final until = nextAutoSyncAt, uid = _userId;
+    if (!_automaticSync || _stopped || _lockingVault || _loggingOut ||
+        _logoutCompleting || until == null || uid == null) {
+      return;
+    }
+    final lifecycle = _lifecycleRevision, session = _api.sessionRevision;
+    final wait = until.difference(DateTime.now());
     _autoRetry = Timer(wait + const Duration(seconds: 5), () {
+      if (!_activeFor(uid) || lifecycle != _lifecycleRevision ||
+          session != _api.sessionRevision || _standardBlockedUntil != until) {
+        return;
+      }
       _standardBlockedUntil = null;
       unawaited(syncNow());
     });
-    notifyListeners();
   }
 
   /// Sends one batch, distinguishing refused new admission from unresolved writes.
@@ -952,8 +997,18 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
       if (e.code == 'sync_cooldown') {
         // Refused before anything was recorded or charged. Forget this request so the next
         // try can be made in either mode, and wait for the window the Server named.
-        if (_activeFor(uid)) await _box.delete(_pendingPushKey);
-        _startCooldown(e.retryAfterSeconds);
+        if (e.statusCode != 429) rethrow;
+        final saved = _box.get(_pendingPushKey);
+        if (!_activeFor(uid) || lifecycle != _lifecycleRevision ||
+            session != _api.sessionRevision || saved is! Map ||
+            saved['userId'] != uid || saved['requestId'] != pending['requestId']) {
+          return _PushOutcome.retired;
+        }
+        await _box.delete(_pendingPushKey);
+        final wait = Duration(seconds: (e.retryAfterSeconds ??
+            EnergyService.instance.limits.syncStandardIntervalSeconds).clamp(1, 7200));
+        await _rememberCooldown(uid, DateTime.now().add(wait),
+            lifecycle: lifecycle, session: session);
         return _PushOutcome.pending;
       }
       // Validation happens before the operation is charged/recorded. Retry corrected data.
@@ -1079,8 +1134,9 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     // The Server takes a standard sync once per hour, so the next one is not open yet. A replayed
     // instant request does not close it, whatever started this attempt.
     if (closesAutomaticSync(sentInstant: pending['instant'] == true, results: results)) {
-      _standardBlockedUntil = DateTime.now().add(
-          Duration(seconds: EnergyService.instance.limits.syncStandardIntervalSeconds));
+      await _rememberCooldown(uid, DateTime.now().add(
+          Duration(seconds: EnergyService.instance.limits.syncStandardIntervalSeconds)),
+          lifecycle: lifecycle, session: session);
     }
     if (failed) {
       // The pull cursor is already past the version that conflicted, so start over.
@@ -1246,6 +1302,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
       notifyListeners();
       return;
     }
+    _scheduleCooldownRetry();
     // A locked pull skipped encrypted rows but still advanced the cursor.
     await _resetCursor();
     lastSyncedAt = null;
