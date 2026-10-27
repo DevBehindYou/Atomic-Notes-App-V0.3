@@ -7,6 +7,7 @@ import 'package:atomic_notes/editor/rich_selection_toolbar.dart';
 import 'package:atomic_notes/editor/rich_text_controller.dart';
 import 'package:atomic_notes/database/note.dart';
 import 'package:atomic_notes/database/note_document.dart';
+import 'package:atomic_notes/database/note_word_limit.dart';
 import 'package:atomic_notes/theme/app_tokens.dart';
 import 'package:atomic_notes/theme/editorial.dart';
 import 'package:atomic_notes/utility/component/my_snackbar.dart';
@@ -36,6 +37,7 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
   late final Note _draft;
   late final TextEditingController _title;
   late final NoteDocument _document;
+  late final NoteWordLimit _wordLimit;
   final _scroll = ScrollController();
   final _titleFocus = FocusNode();
   final List<RichNoteController> _lines = [];
@@ -65,6 +67,7 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
     _draft = Note.fromMap(widget.note.toMap());
     _title = TextEditingController(text: _draft.title);
     _document = NoteDocument.fromNote(_draft);
+    _wordLimit = NoteWordLimit(originalWords: _wordCount);
     _titleFocus.addListener(() {
       if (_titleFocus.hasFocus && (_listening || _starting)) _cancelSpeech();
     });
@@ -169,6 +172,12 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
     if (_closing || _picking || _starting) return;
     if (save) {
       if (_document.isReadOnly) return;
+      final wordError = _wordLimit.errorFor(_wordCount);
+      if (wordError != null) {
+        _cancelSpeech();
+        _message(wordError);
+        return;
+      }
       final edited = _snapshot(removeEmptyLines: true);
       final error = NoteContentBudget.errorFor(edited);
       if (error != null) {
@@ -471,6 +480,19 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
                                       color: AppColors.signal,
                                     ),
                                   ),
+                                  if (compact)
+                                    ValueListenableBuilder<int>(
+                                      valueListenable: _contentRevision,
+                                      builder: (context, _, __) => Wrap(
+                                        spacing: AppSpace.md,
+                                        children: [
+                                          _wordCountLabel(_wordCount),
+                                          _wordLimitLabel(),
+                                        ],
+                                      ),
+                                    )
+                                  else
+                                    _wordLimitLabel(),
                                 ],
                               ),
                               const SizedBox(height: AppSpace.md),
@@ -974,19 +996,21 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
     _finish(false);
   }
 
+  int get _wordCount =>
+      NoteWordLimit.count(title: _title.text, lines: _document.lines);
+
+  Widget _wordLimitLabel() => MonoLabel(_wordLimit.label, small: true);
+
+  Widget _wordCountLabel(int words) => MonoLabel('$words WORDS',
+      small: true, color: words > _wordLimit.ceiling ? AppColors.error : null);
+
   Widget _statistics() {
-    final text = [
-      _title.text,
-      ..._document.lines
-          .where((line) => !line.isImage)
-          .map((line) => line.text),
-    ].join(' ').trim();
-    final words = text.isEmpty ? 0 : text.split(RegExp(r'\s+')).length;
+    final words = _wordCount;
     return Wrap(
       spacing: AppSpace.lg,
       runSpacing: AppSpace.xs,
       children: [
-        MonoLabel('$words WORDS', small: true),
+        _wordCountLabel(words),
         MonoLabel('${(words / 200).ceil().clamp(1, 9999)} MIN READ',
             small: true),
         if (_listening || _starting)
