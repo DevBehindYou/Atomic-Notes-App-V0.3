@@ -62,6 +62,10 @@ class _HomePageState extends State<HomePage>
   static const double _shortScreen = 480;
   late final Widget _scrollingBody;
 
+  // Keyboard resizing replaces the grid, but the Home owner must still accept
+  // its editor result. Keep the dialog's context outside both grid layouts.
+  void _editNote(Note note) => unawaited(_openEditor(context, note));
+
   @override
   void initState() {
     super.initState();
@@ -78,7 +82,7 @@ class _HomePageState extends State<HomePage>
       children: [
         _Header(
             key: _headerKey, searchController: _searchCtrl, welcome: _welcome),
-        Expanded(child: _NotesGrid(controller: _controller)),
+        Expanded(child: _NotesGrid(controller: _controller, onEdit: _editNote)),
       ],
     );
     _scrollingBody = NestedScrollView(
@@ -91,7 +95,7 @@ class _HomePageState extends State<HomePage>
         ),
       ],
       // No controller of its own: the grid scrolls through the NestedScrollView's.
-      body: const _NotesGrid(),
+      body: _NotesGrid(onEdit: _editNote),
     );
   }
 
@@ -764,10 +768,11 @@ void _newNote(BuildContext context, NoteKind kind) {
 }
 
 class _NotesGrid extends StatelessWidget {
-  const _NotesGrid({this.controller});
+  const _NotesGrid({this.controller, required this.onEdit});
 
   /// Null inside the short-screen layout, where the NestedScrollView drives the scrolling.
   final ScrollController? controller;
+  final ValueChanged<Note> onEdit;
 
   @override
   Widget build(BuildContext context) {
@@ -792,7 +797,7 @@ class _NotesGrid extends StatelessWidget {
               selectionMode: state.selecting,
               onTap: () => state.selecting
                   ? bloc.add(NoteSelectionToggled(note.id))
-                  : _openEditor(context, note),
+                  : onEdit(note),
               onLongPress: () => bloc.add(NoteSelectionToggled(note.id)),
               onToggleItem: (i) => bloc.add(NoteItemToggled(note, i)),
             );
