@@ -5,9 +5,10 @@ import 'package:atomic_notes/api/atomic_notes_api.dart';
 import 'package:atomic_notes/api/logout_protocol.dart';
 import 'package:atomic_notes/api/logout_recovery.dart';
 import 'package:atomic_notes/database/energy_service.dart';
+import 'package:atomic_notes/database/logout_plan.dart';
 import 'package:atomic_notes/database/note.dart';
 import 'package:atomic_notes/database/note_document.dart';
-import 'package:atomic_notes/database/logout_plan.dart';
+import 'package:atomic_notes/database/note_projection.dart';
 import 'package:atomic_notes/database/note_quota.dart';
 import 'package:atomic_notes/database/notes_source.dart';
 import 'package:atomic_notes/database/sync_policy.dart';
@@ -81,7 +82,7 @@ class LocalOnlyCacheError extends StateError {
 /// (see the server's README). Automatic sync runs at launch, when the app comes
 /// back to the foreground, when the network returns, a few seconds after a local
 /// change (or as soon as the Server's hourly window opens), and hourly.
-class NotesRepository extends ChangeNotifier with WidgetsBindingObserver implements NotesSource, SyncReportSource {
+class NotesRepository extends ChangeNotifier with WidgetsBindingObserver implements NotesSource, SyncReportSource, NoteProjectionSource {
   NotesRepository._({ApiClient? api, Vault? vault,
     Future<List<ConnectivityResult>> Function()? checkConnectivity,
     Future<void> Function()? refreshEnergy, bool automaticSync = true})
@@ -239,6 +240,34 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   /// In-memory index, id -> note.
   final Map<String, Note> _notes = {};
 
+  final NoteProjectionCache _projections = NoteProjectionCache();
+  bool _disposed = false;
+
+  @override
+  NoteProjection projectionFor(Note note, {bool evict = true}) {
+    // A stale card must not repopulate sensitive derived data after an owner
+    // change, clear, lock or replacement. Unowned notes are decoded transiently.
+    if (_disposed) return NoteProjection.fromNote(note);
+    if (!_ownsCache(_userId)) {
+      _projections.clear();
+      return NoteProjection.fromNote(note);
+    }
+    if (!identical(_notes[note.id], note) || note.deleted) {
+      return NoteProjection.fromNote(note);
+    }
+    return _projections.get(note, evict: evict);
+  }
+
+  @override
+  void notifyListeners() {
+    if (!_ownsCache(_userId)) {
+      _projections.clear();
+    } else {
+      _projections.retainNotes(_notes);
+    }
+    super.notifyListeners();
+  }
+
   // ---- lifecycle --------------------------------------------------------
 
   Future<void> init() async {
@@ -280,6 +309,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   Future<void> _loadFromDisk() async {
     final lifecycle = _lifecycleRevision;
     _notes.clear();
+    _projections.clear();
     _syncCursor = null;
     _standardBlockedUntil = null;
     _autoRetry?.cancel();
@@ -382,6 +412,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     if (owner is String && owner != uid) {
       if (hasForeignPendingCache) _assertCacheOwner();
       _notes.clear();
+      _projections.clear();
       _protectedIds.clear();
       _encryptedCloudVersions.clear();
       _syncCursor = null;
@@ -468,6 +499,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   void clearMemory() {
     _lifecycleRevision++;
     _notes.clear();
+    _projections.clear();
     _encryptedCloudVersions.clear();
     _syncCursor = null;
     lastSyncedAt = null;
@@ -477,6 +509,8 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
 
   @override
   void dispose() {
+    _disposed = true;
+    _projections.clear();
     NoteQuota.changes.removeListener(notifyListeners);
     unawaited(_connectivity?.cancel());
     WidgetsBinding.instance.removeObserver(this);
@@ -493,12 +527,16 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   /// Live notes, tombstones excluded, pinned first.
   @override
   List<Note> visible({NoteFilter filter = NoteFilter.newest}) {
-    if (!_ownsCache(_userId)) return [];
+    if (!_ownsCache(_userId)) {
+      _projections.clear();
+      return [];
+    }
     final list = _notes.values.where((n) => !n.deleted).toList();
 
     switch (filter) {
       case NoteFilter.todos:
-        list.retainWhere((n) => n.kind == NoteKind.todo || NoteDocument.fromNote(n).hasChecklist);
+        list.retainWhere((n) =>
+            n.kind == NoteKind.todo || projectionFor(n, evict: false).hasChecklist);
       case NoteFilter.notes:
         list.retainWhere((n) => n.kind == NoteKind.text);
       case NoteFilter.newest:
@@ -589,6 +627,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     }
     if (_hasLocalOnlyNotes) throw LocalOnlyCacheError();
     _notes.clear();
+    _projections.clear();
     _encryptedCloudVersions.clear();
     _syncCursor = null;
     // Let an in-flight write finish first: it would otherwise land after the
@@ -1485,6 +1524,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     }
     final removed = _notes.length;
     _notes.clear();
+    _projections.clear();
     _syncCursor = null;
     lastSyncedAt = null;
     // Let an in-flight write finish first, or it lands after the clear.

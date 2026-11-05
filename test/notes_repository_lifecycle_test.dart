@@ -3,12 +3,14 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:atomic_notes/api/atomic_notes_api.dart';
-import 'package:atomic_notes/database/note.dart';
 import 'package:atomic_notes/database/logout_plan.dart';
+import 'package:atomic_notes/database/note.dart';
+import 'package:atomic_notes/database/note_document.dart';
 import 'package:atomic_notes/database/notes_repository.dart';
 import 'package:atomic_notes/database/sync_status.dart';
 import 'package:atomic_notes/security/vault.dart';
 import 'package:atomic_notes/security/vault_crypto.dart';
+import 'package:atomic_notes/state/notes/notes_bloc.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -113,6 +115,75 @@ void main() {
     repository.dispose();
     await Hive.close();
     await directory.delete(recursive: true);
+  });
+
+  test('Home, search and to-do filtering reuse one validated projection', () async {
+    final original = Note.create()..body = 'Visible context';
+    final document = NoteDocument.fromNote(original)..setTags(['Launch']);
+    document.insertChecklistAfter(0);
+    document.replaceText(1, 'Ship task');
+    final note = document.toNote(original);
+    await repository.save(note);
+    final saved = jsonEncode(note.toMap());
+    final first = repository.projectionFor(note);
+    final bloc = NotesBloc(source: repository,
+        isSyncEnabled: () => false, isOnline: () async => true);
+    addTearDown(bloc.close);
+    for (final query in ['launch', 'visible', 'missing']) {
+      final changed = bloc.stream.firstWhere((state) => state.query == query);
+      bloc.add(NotesQueryChanged(query));
+      final state = await changed;
+      expect(state.notes, query == 'missing' ? isEmpty : [note]);
+      expect(bloc.projectionFor(note), same(first));
+    }
+    expect(repository.visible(filter: NoteFilter.todos), [note]);
+    expect(repository.projectionFor(note), same(first));
+    expect(jsonEncode(note.toMap()), saved);
+    note.body = 'Replaced plain text';
+    note.items.clear();
+    await repository.save(note);
+    expect(repository.projectionFor(note), isNot(same(first)));
+    expect(repository.visible(filter: NoteFilter.todos), isEmpty);
+  });
+
+  test('projection retention ends at deletion, lock, clear, owner change and dispose', () async {
+    vault.unlocked = true;
+    final note = Note.create()..body = 'Public synthetic cache fence';
+    await repository.save(note);
+    final first = repository.projectionFor(note);
+    await repository.deleteNotes([note.id]);
+    expect(repository.projectionFor(note), isNot(same(first)));
+    await repository.restoreNote(note.id);
+    final restored = repository.projectionFor(note);
+    expect(restored, isNot(same(first)));
+    await repository.lockVault();
+    expect(repository.byId(note.id), isNull);
+    expect(repository.projectionFor(note), isNot(same(restored)));
+    expect(repository.projectionFor(note), isNot(same(repository.projectionFor(note))));
+    vault.unlocked = true;
+    await repository.start();
+    final reloaded = repository.byId(note.id)!;
+    final opened = repository.projectionFor(reloaded);
+    repository.clearMemory();
+    expect(repository.projectionFor(reloaded), isNot(same(opened)));
+    await repository.start();
+    final owned = repository.byId(note.id)!;
+    final beforeOwnerChange = repository.projectionFor(owned);
+    api.user = 'user-b';
+    expect(repository.visible(), isEmpty);
+    expect(repository.projectionFor(owned), isNot(same(beforeOwnerChange)));
+    api.user = 'user-a';
+    // Disposing releases retained entries even if a caller still owns a note.
+    final beforeDispose = repository.projectionFor(owned);
+    expect(beforeDispose, isNot(same(beforeOwnerChange)));
+    await repository.stop(waitForSync: true);
+    repository.dispose();
+    expect(repository.projectionFor(owned), isNot(same(beforeDispose)));
+    expect(repository.projectionFor(owned), isNot(same(repository.projectionFor(owned))));
+    // The normal teardown still owns a live isolated repository.
+    repository = NotesRepository.forTest(box: box, api: api, vault: vault,
+      checkConnectivity: () async => [ConnectivityResult.wifi]);
+    await repository.start();
   });
 
   for (final saved in [null, 'public-corrupt-attempt', {'phase': 'completing'}]) {

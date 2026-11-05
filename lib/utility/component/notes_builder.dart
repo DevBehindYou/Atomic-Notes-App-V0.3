@@ -1,5 +1,6 @@
 import 'package:atomic_notes/database/note.dart';
 import 'package:atomic_notes/database/note_document.dart';
+import 'package:atomic_notes/database/note_projection.dart';
 import 'package:atomic_notes/theme/app_tokens.dart';
 import 'package:atomic_notes/theme/editorial.dart';
 import 'package:flutter/material.dart';
@@ -12,6 +13,7 @@ import 'package:flutter/material.dart';
 /// same way.
 class NotesBulder extends StatelessWidget {
   final Note note;
+  final NoteProjection? projection;
   final bool selected;
   final bool selectionMode;
   final bool featured;
@@ -30,6 +32,7 @@ class NotesBulder extends StatelessWidget {
 
   const NotesBulder({
     required this.note,
+    this.projection,
     required this.selected,
     required this.selectionMode,
     required this.onTap,
@@ -42,10 +45,9 @@ class NotesBulder extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bool untitled = note.title.trim().isEmpty;
-    final document = NoteDocument.fromNote(note);
+    final document = projection ?? NoteProjection.fromNote(note);
     final mixedChecklist = note.kind == NoteKind.text &&
         (document.hasChecklist || NoteDocument.hasRichContent(note));
-    final tasks = document.lines.where((line) => line.isChecklist).toList();
 
     return Padding(
       padding: const EdgeInsets.only(bottom: AppSpace.xs),
@@ -54,7 +56,8 @@ class NotesBulder extends StatelessWidget {
         onLongPress: onLongPress,
         behavior: HitTestBehavior.opaque,
         child: Container(
-          padding: const EdgeInsets.all(AppSpace.md - 2),
+          padding: const EdgeInsets.symmetric(
+              horizontal: AppSpace.md - 2, vertical: AppSpace.sm + 2),
           decoration: BoxDecoration(
             color: note.important
                 ? AppColors.importantSurface
@@ -100,7 +103,7 @@ class NotesBulder extends StatelessWidget {
                     ),
                 ],
               ),
-              const SizedBox(height: AppSpace.sm),
+              const SizedBox(height: AppSpace.xs),
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -139,10 +142,10 @@ class NotesBulder extends StatelessWidget {
                 ),
               ],
               if ((note.kind == NoteKind.todo || mixedChecklist) &&
-                  tasks.isNotEmpty) ...[
+                  document.hasChecklist) ...[
                 const SizedBox(height: AppSpace.sm),
                 MonoLabel(
-                  '${tasks.where((line) => line.done).length} / ${tasks.length} DONE',
+                  '${document.doneCount} / ${document.checklistCount} DONE',
                   small: true,
                   color: _accent,
                 ),
@@ -167,8 +170,8 @@ class NotesBulder extends StatelessWidget {
     return date.year == now.year ? stamp : '${date.year}-$stamp';
   }
 
-  Widget _mixedContent(NoteDocument document) {
-    final lines = document.lines;
+  Widget _mixedContent(NoteProjection document) {
+    final lines = document.previewLines;
     return Padding(
       padding: const EdgeInsets.only(top: AppSpace.sm),
       child: Column(
@@ -188,31 +191,33 @@ class NotesBulder extends StatelessWidget {
                       ? GestureDetector(
                           onTap: selectionMode ? null : () => onToggleItem(i),
                           behavior: HitTestBehavior.opaque,
-                          child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                _Tick(
-                                    on: lines[i].done,
-                                    small: true,
-                                    important: note.important),
-                                const SizedBox(width: AppSpace.sm),
-                                Expanded(
-                                    child: Text(lines[i].text,
-                                        maxLines: 2,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: AppType.bodySm.copyWith(
-                                            color: _bodyColor,
-                                            decoration: lines[i].done
-                                                ? TextDecoration.lineThrough
-                                                : null))),
-                              ]))
+                          child: ConstrainedBox(
+                              constraints: const BoxConstraints(minHeight: 48),
+                              child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    _Tick(
+                                        on: lines[i].done,
+                                        small: true,
+                                        important: note.important),
+                                    const SizedBox(width: AppSpace.sm),
+                                    Expanded(
+                                        child: Text(lines[i].text,
+                                            maxLines: 2,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: AppType.bodySm.copyWith(
+                                                color: _bodyColor,
+                                                decoration: lines[i].done
+                                                    ? TextDecoration.lineThrough
+                                                    : null))),
+                                  ])))
                       : Text(lines[i].text,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           style: AppType.bodyMd.copyWith(color: _bodyColor)),
             ),
-          if (lines.length > 4)
-            MonoLabel('+${lines.length - 4} MORE',
+          if (document.lineCount > 4)
+            MonoLabel('+${document.lineCount - 4} MORE',
                 small: true, color: _metadataColor),
         ],
       ),
@@ -236,31 +241,35 @@ class NotesBulder extends StatelessWidget {
                 // let a tick steal the tap.
                 onTap: selectionMode ? null : () => onToggleItem(i),
                 behavior: HitTestBehavior.opaque,
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _Tick(
-                        on: rows[i].done,
-                        small: true,
-                        important: note.important),
-                    const SizedBox(width: AppSpace.sm),
-                    Expanded(
-                      child: Text(
-                        rows[i].text,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: AppType.bodySm.copyWith(
-                          decoration:
-                              rows[i].done ? TextDecoration.lineThrough : null,
-                          color: note.important
-                              ? AppColors.onImportantSurface
-                              : rows[i].done
-                                  ? AppColors.outline
-                                  : AppColors.onSurface,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(minHeight: 48),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _Tick(
+                          on: rows[i].done,
+                          small: true,
+                          important: note.important),
+                      const SizedBox(width: AppSpace.sm),
+                      Expanded(
+                        child: Text(
+                          rows[i].text,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: AppType.bodySm.copyWith(
+                            decoration: rows[i].done
+                                ? TextDecoration.lineThrough
+                                : null,
+                            color: note.important
+                                ? AppColors.onImportantSurface
+                                : rows[i].done
+                                    ? AppColors.outline
+                                    : AppColors.onSurface,
+                          ),
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),

@@ -792,6 +792,7 @@ class _NotesGrid extends StatelessWidget {
         Widget card(Note note, {bool featured = false}) => NotesBulder(
               key: ValueKey(note.id),
               note: note,
+              projection: bloc.projectionFor(note),
               featured: featured,
               selected: state.selected.contains(note.id),
               selectionMode: state.selecting,

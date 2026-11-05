@@ -1,5 +1,6 @@
 import 'package:atomic_notes/database/note.dart';
 import 'package:atomic_notes/database/note_document.dart';
+import 'package:atomic_notes/database/note_projection.dart';
 import 'package:atomic_notes/database/note_quota.dart';
 import 'package:atomic_notes/database/notes_source.dart';
 import 'package:atomic_notes/state/ui_message.dart';
@@ -44,6 +45,8 @@ class NotesBloc extends Bloc<NotesEvent, NotesState> {
   final bool Function() _isSyncEnabled;
   final Future<bool> Function() _isOnline;
 
+  NoteProjection projectionFor(Note note) => projectNote(_source, note);
+
   int _noticeCount = 0;
   bool _manualSyncInProgress = false;
 
@@ -69,10 +72,7 @@ class NotesBloc extends Bloc<NotesEvent, NotesState> {
         : all
             .where((n) =>
                 n.title.toLowerCase().contains(q) ||
-                NoteDocument.fromNote(n).plainText.toLowerCase().contains(q) ||
-                NoteDocument.fromNote(n)
-                    .tags
-                    .any((tag) => tag.toLowerCase().contains(q)))
+                projectNote(source, n, evict: false).matches(q))
             .toList();
     // Drop selections for notes that vanished under us (deleted on another device, or pulled in
     // as a tombstone). The same set is kept when nothing was dropped.
