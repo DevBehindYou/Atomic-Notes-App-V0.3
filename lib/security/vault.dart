@@ -25,6 +25,16 @@ class VaultUnverifiableError implements Exception {
   String toString() => 'Cannot verify the phrase while offline';
 }
 
+typedef _VaultOwner = ({String user, int session, int generation});
+
+class _UnlockAttempt {
+  _UnlockAttempt(this.owner, this.phrase, this.sample);
+  final _VaultOwner owner;
+  final String phrase;
+  final String? sample;
+  late final Future<bool> result;
+}
+
 /// End-to-end encryption for note content.
 ///
 /// The key is derived from the recovery phrase and the account id, and nothing
@@ -76,6 +86,12 @@ class Vault {
   SecretKey? _key;
   bool _enabled = false;
   String? _boundUser;
+  int? _boundSession;
+  int _generation = 0;
+  Future<void>? _initializing;
+  _VaultOwner? _initializingOwner;
+  _UnlockAttempt? _unlocking;
+  Future<void> _deviceWrites = Future<void>.value();
 
   final ApiClient _api;
   String? get _uid => _api.currentUserId;
@@ -86,10 +102,33 @@ class Vault {
   bool get isEnabled => _enabled;
 
   /// The key is in memory, so vault notes can be read and written.
-  bool get isUnlocked => _key != null;
+  bool get isUnlocked => _currentKey != null;
 
   /// Protected content must stay locked until a usable key is available.
-  bool get isLocked => _enabled && _key == null;
+  bool get isLocked => _enabled && _currentKey == null;
+
+  SecretKey? get _currentKey =>
+      _boundUser == _uid && _boundSession == _api.sessionRevision ? _key : null;
+
+  _VaultOwner? _captureOwner() {
+    final uid = _uid;
+    final session = _api.sessionRevision;
+    if (uid != _boundUser || session != _boundSession) {
+      _key = null;
+      _enabled = false;
+      _boundUser = uid;
+      _boundSession = session;
+      _generation++;
+    }
+    return uid == null
+        ? null
+        : (user: uid, session: session, generation: _generation);
+  }
+
+  bool _isCurrent(_VaultOwner owner) =>
+      owner.user == _uid &&
+      owner.session == _api.sessionRevision &&
+      owner.generation == _generation;
 
   // ---- lifecycle --------------------------------------------------------
 
@@ -103,17 +142,27 @@ class Vault {
   /// appeared, encrypted notes were silently skipped as unreadable, and new
   /// notes were written in the clear. splash_screen now calls this on every
   /// launch and after every login, which is what makes it correct.
-  Future<void> init() async {
-    final uid = _uid;
-
-    // A different account on this device must never inherit the previous key.
-    if (uid != _boundUser) {
-      _key = null;
-      _enabled = false;
-      _boundUser = uid;
+  Future<void> init() {
+    final owner = _captureOwner();
+    if (owner == null) return Future<void>.value();
+    if (_initializingOwner == owner && _initializing != null) {
+      return _initializing!;
     }
-    if (uid == null) return;
+    // Share only work currently in flight. A later call still refreshes cloud
+    // state, including after an earlier response said no vault existed.
+    _initializingOwner = owner;
+    late final Future<void> pending;
+    pending = _initialize(owner).whenComplete(() {
+      if (identical(_initializing, pending)) {
+        _initializing = null;
+        _initializingOwner = null;
+      }
+    });
+    _initializing = pending;
+    return pending;
+  }
 
+  Future<void> _initialize(_VaultOwner owner) async {
     var cloudUnavailable = false;
     try {
       // Bounded: offline with an expired token, the client tries to refresh
@@ -122,8 +171,10 @@ class Vault {
       // screen. Failing fast here drops to the cached-key path so the app
       // always opens (local-first).
       final row = await _api.getVault().timeout(const Duration(seconds: 5));
-      _enabled = row != null;
+      if (!_isCurrent(owner)) return;
+      _enabled = row != null || _key != null;
     } catch (_) {
+      if (!_isCurrent(owner)) return;
       cloudUnavailable = true;
       debugPrint('Vault.init: cloud state unavailable; checking device cache');
     }
@@ -132,7 +183,11 @@ class Vault {
     if (_key != null) return;
 
     try {
-      final cached = await _secure.read(key: _keyStore(uid));
+      // An explicit lock may already have queued removal of this device key.
+      await _deviceWrites;
+      if (!_isCurrent(owner) || _key != null) return;
+      final cached = await _secure.read(key: _keyStore(owner.user));
+      if (!_isCurrent(owner) || _key != null) return;
       if (cached != null) {
         final bytes = base64Decode(cached);
         if (bytes.length != 32) {
@@ -143,9 +198,9 @@ class Vault {
         debugPrint('Vault: unlocked from device key store');
       }
     } catch (_) {
+      if (!_isCurrent(owner) || _key != null) return;
       // A failed read is not an absent vault. Preserve the entry and require
       // unlock, including when the cloud cannot tell us the vault state.
-      _key = null;
       _enabled = true;
       debugPrint('Vault: device key unavailable; remaining locked');
     }
@@ -159,17 +214,21 @@ class Vault {
   /// rather than trusting cached state. Replacing a vault row is the one
   /// operation that can permanently orphan notes.
   Future<void> createVault(List<String> phrase) async {
-    final uid = _uid;
-    if (uid == null) throw StateError('Not signed in');
+    final owner = _captureOwner();
+    if (owner == null) throw StateError('Not signed in');
+    final uid = owner.user;
 
     final existing = await _api.getVault();
+    _requireCurrent(owner);
     if (existing != null) {
       _enabled = true;
       throw const VaultAlreadyExistsError();
     }
 
     final key = await _deriveKey(SeedPhrase.canonical(phrase), uid);
+    _requireCurrent(owner);
     final verifier = await VaultCrypto.makeVerifier(key);
+    _requireCurrent(owner);
 
     try {
       // Insert, never upsert: the server rejects this with a 409 if a row
@@ -182,6 +241,7 @@ class Vault {
         kdfParallelism: kdfParallelism,
       );
     } on ApiException catch (e) {
+      _requireCurrent(owner);
       if (e.code == 'vault_already_exists') {
         _enabled = true;
         throw const VaultAlreadyExistsError();
@@ -189,9 +249,11 @@ class Vault {
       rethrow;
     }
 
+    _requireCurrent(owner);
     _key = key;
     _enabled = true;
-    await _cacheKey(uid, key);
+    await _cacheKey(owner, key);
+    _requireCurrent(owner);
     debugPrint('Vault: created and unlocked');
   }
 
@@ -204,23 +266,57 @@ class Vault {
   /// [VaultUnverifiableError] when neither the verifier nor a sample is
   /// available, rather than accepting a phrase it could not check.
   Future<bool> unlock(List<String> phrase, {String? sampleCiphertext}) async {
-    final uid = _uid;
-    if (uid == null) return false;
+    final owner = _captureOwner();
+    if (owner == null) return false;
+    return _unlockCanonical(
+        owner, SeedPhrase.canonical(phrase), sampleCiphertext);
+  }
 
+  Future<bool> _unlockCanonical(
+      _VaultOwner owner, String phrase, String? sample) async {
+    if (!_isCurrent(owner)) return false;
+    final active = _unlocking;
+    if (active != null) {
+      if (active.owner == owner &&
+          active.phrase == phrase &&
+          active.sample == sample) {
+        return active.result;
+      }
+      // A different phrase/sample must be verified independently, but wait for
+      // the current job to release its Argon2 workspace first.
+      try {
+        await active.result;
+      } catch (_) {
+        // An earlier attempt's failure does not poison the next attempt.
+      }
+      return _unlockCanonical(owner, phrase, sample);
+    }
+    final attempt = _UnlockAttempt(owner, phrase, sample);
+    _unlocking = attempt;
+    attempt.result = _unlock(owner, phrase, sample).whenComplete(() {
+      if (identical(_unlocking, attempt)) _unlocking = null;
+    });
+    return attempt.result;
+  }
+
+  Future<bool> _unlock(
+      _VaultOwner owner, String phrase, String? sampleCiphertext) async {
     Map<String, dynamic>? row;
     try {
       row = await _api.getVault();
     } catch (e) {
       debugPrint('Vault.unlock: verifier unreachable ($e)');
     }
+    if (!_isCurrent(owner)) return false;
 
     final key = await _deriveKey(
-      SeedPhrase.canonical(phrase),
-      uid,
+      phrase,
+      owner.user,
       memory: row?['kdfMemory'] as int?,
       iterations: row?['kdfIterations'] as int?,
       parallelism: row?['kdfParallelism'] as int?,
     );
+    if (!_isCurrent(owner)) return false;
 
     final verifier = row?['verifier'] as String?;
     bool ok;
@@ -231,6 +327,7 @@ class Vault {
     } else {
       throw const VaultUnverifiableError();
     }
+    if (!_isCurrent(owner)) return false;
 
     if (!ok) {
       debugPrint('Vault: unlock rejected, phrase did not verify');
@@ -239,7 +336,8 @@ class Vault {
 
     _key = key;
     _enabled = true;
-    await _cacheKey(uid, key);
+    await _cacheKey(owner, key);
+    if (!_isCurrent(owner)) return false;
     debugPrint('Vault: unlocked');
     return true;
   }
@@ -273,13 +371,13 @@ class Vault {
   // ---- content ----------------------------------------------------------
 
   Future<String> encryptContent(Map<String, dynamic> content) {
-    final key = _key;
+    final key = _currentKey;
     if (key == null) throw StateError('Vault is locked');
     return VaultCrypto.sealJson(content, key);
   }
 
   Future<Map<String, dynamic>> decryptContent(String payload) {
-    final key = _key;
+    final key = _currentKey;
     if (key == null) throw StateError('Vault is locked');
     return VaultCrypto.openJson(payload, key);
   }
@@ -290,8 +388,9 @@ class Vault {
   /// phrase is needed to open it here again.
   Future<void> lockThisDevice() async {
     final uid = _uid;
+    _generation++;
     _key = null;
-    if (uid != null) await _secure.delete(key: _keyStore(uid));
+    if (uid != null) await _deleteCachedKey(uid);
     debugPrint('Vault: locked on this device');
   }
 
@@ -302,6 +401,7 @@ class Vault {
   /// user gets nothing — [init] rebinds per account and only reads that
   /// account's key store entry.
   void lockMemory() {
+    _generation++;
     _key = null;
   }
 
@@ -309,14 +409,38 @@ class Vault {
   /// the user id is still readable.
   Future<void> clearLocal() async {
     final uid = _uid;
+    _generation++;
     _key = null;
     _enabled = false;
     _boundUser = null;
-    if (uid != null) await _secure.delete(key: _keyStore(uid));
+    _boundSession = null;
+    if (uid != null) await _deleteCachedKey(uid);
   }
 
-  Future<void> _cacheKey(String uid, SecretKey key) async {
-    final bytes = await key.extractBytes();
-    await _secure.write(key: _keyStore(uid), value: base64Encode(bytes));
+  void _requireCurrent(_VaultOwner owner) {
+    if (!_isCurrent(owner)) {
+      throw StateError('Vault operation is no longer current');
+    }
+  }
+
+  Future<void> _cacheKey(_VaultOwner owner, SecretKey key) {
+    final pending = _deviceWrites.then((_) async {
+      if (!_isCurrent(owner)) return;
+      final bytes = await key.extractBytes();
+      if (!_isCurrent(owner)) return;
+      await _secure.write(
+          key: _keyStore(owner.user), value: base64Encode(bytes));
+    });
+    _deviceWrites = pending.catchError((Object _) {});
+    return pending;
+  }
+
+  Future<void> _deleteCachedKey(String uid) {
+    // A platform write already underway cannot be cancelled. Deleting after
+    // it settles makes explicit device lock/clear win, even if that write fails.
+    final pending =
+        _deviceWrites.then((_) => _secure.delete(key: _keyStore(uid)));
+    _deviceWrites = pending.catchError((Object _) {});
+    return pending;
   }
 }
