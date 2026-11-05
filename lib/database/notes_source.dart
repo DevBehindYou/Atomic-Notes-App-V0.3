@@ -1,4 +1,5 @@
 import 'package:atomic_notes/database/note.dart';
+import 'package:atomic_notes/database/note_projection.dart';
 import 'package:flutter/foundation.dart';
 
 /// What the notes state needs from the place notes are kept.
@@ -71,3 +72,14 @@ class WipeOutcome {
   final String message;
   const WipeOutcome(this.ok, this.message);
 }
+
+/// Optional repository-owned derived data. Small test sources need not cache.
+abstract interface class NoteProjectionSource {
+  NoteProjection projectionFor(Note note, {bool evict = true});
+}
+
+NoteProjection projectNote(NotesSource source, Note note,
+        {bool evict = true}) =>
+    source is NoteProjectionSource
+        ? (source as NoteProjectionSource).projectionFor(note, evict: evict)
+        : NoteProjection.fromNote(note);
