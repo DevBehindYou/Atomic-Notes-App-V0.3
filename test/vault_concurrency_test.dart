@@ -21,6 +21,7 @@ class _Store extends FlutterSecureStorage {
   int reads = 0, writes = 0, deletes = 0;
   Completer<void>? readGate, writeGate, deleteGate;
   bool failVaultWrites = false;
+  bool failVaultDeletes = false;
 
   @override
   Future<String?> read(
@@ -69,6 +70,7 @@ class _Store extends FlutterSecureStorage {
     if (key.startsWith('atomic_vault_key_')) {
       deletes++;
       await deleteGate?.future;
+      if (failVaultDeletes) throw StateError('fixture vault delete failed');
     }
     values.remove(key);
   }
@@ -278,6 +280,73 @@ void main() {
     expect(readsBeforeDeletion, 0);
     expect(vault.isUnlocked, isFalse);
     expect(store.values[entry], isNull);
+  });
+
+  for (final clear in [false, true]) {
+    test('failed ${clear ? 'clear' : 'device lock'} blocks cached unlock',
+        () async {
+      store.values[entry] = base64Encode(List<int>.filled(32, 7));
+      final gate = Completer<void>();
+      store.deleteGate = gate;
+      store.failVaultDeletes = true;
+      final locking = expectLater(
+          clear ? vault.clearLocal() : vault.lockThisDevice(),
+          throwsStateError);
+      await _until(() => store.deletes == 1);
+      final initializing = vault.init();
+      await _until(() => gets == 1);
+      gate.complete();
+      await Future.wait([locking, initializing]);
+      await vault.init();
+      expect(vault.isLocked, isTrue);
+      expect(store.reads, 0);
+      expect(store.values[entry], isNotNull);
+
+      // A subsequent deliberate unlock replaces the failed deletion's entry.
+      expect(await vault.unlock(phrase), isTrue);
+      vault.lockMemory();
+      await vault.init();
+      expect(vault.isUnlocked, isTrue);
+      expect(store.reads, 1);
+    });
+  }
+
+  test('a manual unlock started during a device lock cannot reopen the vault',
+      () async {
+    final gate = Completer<void>();
+    store.deleteGate = gate;
+    final locking = vault.lockThisDevice();
+    await _until(() => store.deletes == 1);
+    final unlocking = vault.unlock(phrase);
+    gate.complete();
+    await locking;
+    expect(await unlocking, isFalse);
+    expect(vault.isUnlocked, isFalse);
+    expect(crypto.calls, 0);
+    expect(store.values[entry], isNull);
+
+    expect(await vault.unlock(phrase), isTrue);
+  });
+
+  test('a failed explicit lock leaves another account cache readable',
+      () async {
+    store.values[entry] = base64Encode(List<int>.filled(32, 7));
+    store.failVaultDeletes = true;
+    await expectLater(vault.lockThisDevice(), throwsStateError);
+
+    store.values['atomic_api_user_id'] = 'other-user';
+    store.values['atomic_vault_key_other-user'] =
+        base64Encode(List<int>.filled(32, 8));
+    await api.init();
+    await vault.init();
+    expect(vault.isUnlocked, isTrue);
+    expect(store.reads, 1);
+
+    store.values['atomic_api_user_id'] = 'fixture-user';
+    await api.init();
+    await vault.init();
+    expect(vault.isLocked, isTrue);
+    expect(store.reads, 1);
   });
 
   test('a late cache read cannot replace the verified in-memory key', () async {

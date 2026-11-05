@@ -92,6 +92,8 @@ class Vault {
   _VaultOwner? _initializingOwner;
   _UnlockAttempt? _unlocking;
   Future<void> _deviceWrites = Future<void>.value();
+  final _pendingCacheDeletes = <String, Future<void>>{};
+  final _failedCacheDeletes = <String>{};
 
   final ApiClient _api;
   String? get _uid => _api.currentUserId;
@@ -186,6 +188,10 @@ class Vault {
       // An explicit lock may already have queued removal of this device key.
       await _deviceWrites;
       if (!_isCurrent(owner) || _key != null) return;
+      if (_failedCacheDeletes.contains(owner.user)) {
+        _enabled = true;
+        return;
+      }
       final cached = await _secure.read(key: _keyStore(owner.user));
       if (!_isCurrent(owner) || _key != null) return;
       if (cached != null) {
@@ -217,6 +223,9 @@ class Vault {
     final owner = _captureOwner();
     if (owner == null) throw StateError('Not signed in');
     final uid = owner.user;
+    if (_pendingCacheDeletes.containsKey(uid)) {
+      throw StateError('Vault device lock is in progress');
+    }
 
     final existing = await _api.getVault();
     _requireCurrent(owner);
@@ -267,7 +276,9 @@ class Vault {
   /// available, rather than accepting a phrase it could not check.
   Future<bool> unlock(List<String> phrase, {String? sampleCiphertext}) async {
     final owner = _captureOwner();
-    if (owner == null) return false;
+    if (owner == null || _pendingCacheDeletes.containsKey(owner.user)) {
+      return false;
+    }
     return _unlockCanonical(
         owner, SeedPhrase.canonical(phrase), sampleCiphertext);
   }
@@ -430,6 +441,7 @@ class Vault {
       if (!_isCurrent(owner)) return;
       await _secure.write(
           key: _keyStore(owner.user), value: base64Encode(bytes));
+      if (_isCurrent(owner)) _failedCacheDeletes.remove(owner.user);
     });
     _deviceWrites = pending.catchError((Object _) {});
     return pending;
@@ -438,8 +450,23 @@ class Vault {
   Future<void> _deleteCachedKey(String uid) {
     // A platform write already underway cannot be cancelled. Deleting after
     // it settles makes explicit device lock/clear win, even if that write fails.
-    final pending =
-        _deviceWrites.then((_) => _secure.delete(key: _keyStore(uid)));
+    late final Future<void> pending;
+    pending = _deviceWrites.then((_) async {
+      try {
+        await _secure.delete(key: _keyStore(uid));
+        _failedCacheDeletes.remove(uid);
+      } catch (_) {
+        // The old entry may still exist. Require a verified phrase before
+        // trusting this account's cache again in this process.
+        _failedCacheDeletes.add(uid);
+        rethrow;
+      } finally {
+        if (identical(_pendingCacheDeletes[uid], pending)) {
+          _pendingCacheDeletes.remove(uid);
+        }
+      }
+    });
+    _pendingCacheDeletes[uid] = pending;
     _deviceWrites = pending.catchError((Object _) {});
     return pending;
   }
