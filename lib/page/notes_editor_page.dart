@@ -149,7 +149,18 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
     for (final node in _focus) {
       node.dispose();
     }
+    for (final bytes in _images.values) {
+      _releaseImage(bytes);
+    }
+    _images.clear();
     super.dispose();
+  }
+
+  void _releaseImage(Uint8List bytes) {
+    // MemoryImage keys compare byte-buffer identity. Only release this draft's
+    // keys; keep live listeners (including an open image viewer) attached.
+    PaintingBinding.instance.imageCache
+        .evict(MemoryImage(bytes), includeLive: false);
   }
 
   Note _snapshot({bool removeEmptyLines = false}) {
@@ -273,6 +284,7 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
   void _removeLine(int index) {
     if (_document.isReadOnly) return;
     _cancelSpeech();
+    final removedImage = _document.lines[index].imageBase64;
     setState(() {
       _document.removeAt(index);
       _lines.removeAt(index).dispose();
@@ -280,6 +292,11 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
       if (index < _activeLine) _activeLine--;
       _activeLine = _activeLine.clamp(-1, _lines.length - 1);
     });
+    if (removedImage != null &&
+        !_document.lines.any((line) => line.imageBase64 == removedImage)) {
+      final bytes = _images.remove(removedImage);
+      if (bytes != null) _releaseImage(bytes);
+    }
   }
 
   Future<void> _confirmRemoveImage(int index) async {
