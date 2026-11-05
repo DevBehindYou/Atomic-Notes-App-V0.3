@@ -19,15 +19,58 @@ import 'package:flutter/material.dart';
 import 'package:hive_ce/hive_ce.dart';
 
 class SplashPage extends StatefulWidget {
-  const SplashPage({super.key});
+  const SplashPage({super.key}) : startup = const SplashStartupServices();
+
+  @visibleForTesting
+  const SplashPage.forTest({super.key, required this.startup});
+
+  final SplashStartupServices startup;
 
   @override
   _SplashPageState createState() => _SplashPageState();
 }
 
+/// The existing account services, separated only to exercise startup ordering.
+class SplashStartupServices {
+  const SplashStartupServices();
+  bool get isSignedIn => ApiClient.instance.isSignedIn;
+  int get sessionRevision => ApiClient.instance.sessionRevision;
+  bool get hasForeignPendingCache =>
+      NotesRepository.instance.hasForeignPendingCache;
+  bool get twoFactorArmed => TwoFactor.instance.isArmed;
+  bool get vaultLocked => Vault.instance.isLocked;
+  Future<void> initVault() => Vault.instance.init();
+  Future<void> startNotes() => NotesRepository.instance.start();
+  Future<void> stopNotes() => NotesRepository.instance.stop();
+  void clearNotesMemory() => NotesRepository.instance.clearMemory();
+  Future<void> markOnboardingSeen(Box<bool> authBox) =>
+      authBox.put('hasSeenOnboarding', true);
+
+  void startAccountServices() {
+    unawaited(EnergyService.instance.init());
+    unawaited(NotificationService.instance.init());
+  }
+}
+
 class _SplashPageState extends State<SplashPage> {
-  final _api = ApiClient.instance;
+  late final _startup = widget.startup;
   bool _recoveringCache = false;
+
+  bool _ownsSession(int revision) =>
+      _startup.isSignedIn && _startup.sessionRevision == revision;
+
+  bool _canContinue(int revision) {
+    if (!mounted ||
+        _recoveringCache ||
+        ModalRoute.of(context)?.isCurrent == false) {
+      return false;
+    }
+    if (_ownsSession(revision)) return true;
+    // A replacement session needs its own vault and account-cache checks.
+    Navigator.pushReplacementNamed(
+        context, _startup.isSignedIn ? '/splashpage' : '/loginpage');
+    return false;
+  }
 
   void _showCacheRecovery() {
     if (!mounted || _recoveringCache) return;
@@ -36,13 +79,13 @@ class _SplashPageState extends State<SplashPage> {
         context, '/account-cache-recovery', (_) => false);
   }
 
-  Future<void> _startNotes() async {
+  Future<void> _startNotes(int revision) async {
     try {
-      await NotesRepository.instance.start();
+      await _startup.startNotes();
     } on ForeignPendingCacheError {
-      _showCacheRecovery();
+      if (_ownsSession(revision)) _showCacheRecovery();
     } catch (_) {
-      if (!mounted || _recoveringCache) return;
+      if (!mounted || _recoveringCache || !_ownsSession(revision)) return;
       Navigator.pushReplacementNamed(context, '/loginpage');
     }
   }
@@ -54,27 +97,22 @@ class _SplashPageState extends State<SplashPage> {
   }
 
   Future<void> _redirect() async {
+    final revision = _startup.sessionRevision;
     try {
       // The auth box is read here rather than in a separate method racing
       // this one: the old code could reach the `isAuthOn` check before the
       // box-opening callback had assigned it.
       final authBox = await Hive.openBox<bool>('authBox');
-      if (!mounted) return;
+      if (!_canContinue(revision)) return;
       final bool isAuthOn =
           authBox.get('isAuthOn', defaultValue: false) ?? false;
       final bool hasSeenOnboarding =
           authBox.get('hasSeenOnboarding', defaultValue: false) ?? false;
 
-      if (!_api.isSignedIn) {
-        await Future.delayed(const Duration(seconds: 1));
-        if (!mounted) return;
-        Navigator.pushReplacementNamed(context, '/loginpage');
-        return;
-      }
-
-      if (NotesRepository.instance.hasForeignPendingCache) {
-        await NotesRepository.instance.stop();
-        NotesRepository.instance.clearMemory();
+      if (_startup.hasForeignPendingCache) {
+        await _startup.stopNotes();
+        if (!_canContinue(revision)) return;
+        _startup.clearNotesMemory();
         _showCacheRecovery();
         return;
       }
@@ -89,7 +127,12 @@ class _SplashPageState extends State<SplashPage> {
       // encrypted rows were skipped as unreadable, and new notes were written
       // in the clear. The splash runs on every launch AND after every login,
       // which makes it the one place this is always correct.
-      await Vault.instance.init();
+      await _startup.initVault();
+      if (!_canContinue(revision)) return;
+      if (_startup.hasForeignPendingCache) {
+        _showCacheRecovery();
+        return;
+      }
 
       // Local-first means routing NEVER waits on the network. The cached
       // notes were already loaded from Hive in main(), so there is nothing
@@ -98,18 +141,14 @@ class _SplashPageState extends State<SplashPage> {
       // It used to be awaited, which meant that with no connection the app
       // sat on this screen until a socket gave up. An offline launch has to
       // be as fast as an online one.
-      unawaited(_startNotes());
+      unawaited(_startNotes(revision));
 
       // Load Atomic Energy/Coins for this account and apply the daily grant.
       // Non-blocking, same as sync — routing never waits on it.
-      unawaited(EnergyService.instance.init());
-
-      // Pull the notification feed for this account (also non-blocking).
-      unawaited(NotificationService.instance.init());
-
-      await Future.delayed(const Duration(milliseconds: 900));
+      // Pull the notification feed too; both services remain non-blocking.
+      _startup.startAccountServices();
       if (!mounted || _recoveringCache) return;
-      if (NotesRepository.instance.hasForeignPendingCache) {
+      if (_startup.hasForeignPendingCache) {
         _showCacheRecovery();
         return;
       }
@@ -120,8 +159,8 @@ class _SplashPageState extends State<SplashPage> {
       final route = const SplashRouteResolver().resolve(
         isSignedIn: true,
         isAuthOn: isAuthOn,
-        twoFactorArmed: TwoFactor.instance.isArmed,
-        vaultLocked: Vault.instance.isLocked,
+        twoFactorArmed: _startup.twoFactorArmed,
+        vaultLocked: _startup.vaultLocked,
         hasSeenOnboarding: hasSeenOnboarding,
       );
 
@@ -130,8 +169,8 @@ class _SplashPageState extends State<SplashPage> {
       // their first note — so anyone who hadn't written a note yet got the
       // 6-page tutorial on every single launch.
       if (route == SplashRoute.onboarding) {
-        await authBox.put('hasSeenOnboarding', true);
-        if (!mounted) return;
+        await _startup.markOnboardingSeen(authBox);
+        if (!_canContinue(revision)) return;
       }
 
       Navigator.pushReplacementNamed(
@@ -141,7 +180,7 @@ class _SplashPageState extends State<SplashPage> {
       );
     } catch (error) {
       // Fall back to the login page rather than sitting on the splash forever.
-      if (!mounted) return;
+      if (!_canContinue(revision)) return;
       Navigator.pushReplacementNamed(context, '/loginpage');
     }
   }

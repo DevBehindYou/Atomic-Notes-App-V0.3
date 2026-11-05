@@ -38,7 +38,7 @@ class _Unavailable implements MascotAssetResolver {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-  test('all 52 original clips resolve offline with a bounded encoded cache',
+  test('all 28 original clips resolve offline with a bounded encoded cache',
       () async {
     final bundle = _Bundle();
     final resolver = BundledMascotResolver(bundle: bundle);
@@ -52,7 +52,7 @@ void main() {
         await lease.close();
       }
     }
-    expect(bundle.reads, 52);
+    expect(bundle.reads, 28);
   });
   test('concurrent requests share one local read', () async {
     final bundle = _Bundle();
@@ -102,13 +102,13 @@ void main() {
     await tester.pump();
     expect(MascotScope.maybeOf(tester.element(find.byType(DevBehindYouMascot))),
         same(scope.currentState));
-    scope.currentState!.preferences.selectMascot('051-blink');
+    scope.currentState!.preferences.selectMascot('052-tilde');
     expect(
-        scope.currentState!.preferences.state.desired.selectedId, '051-blink');
+        scope.currentState!.preferences.state.desired.selectedId, '052-tilde');
     await tester.pump();
     await tester.pump();
     expect(tester.widget<MascotView>(find.byType(MascotView)).mascot.id,
-        '051-blink');
+        '052-tilde');
     await tester.pumpWidget(const SizedBox());
     await tester.pump();
     expect(tester.takeException(), isNull);

@@ -11,23 +11,46 @@ void main() {
     final defaults = MascotPreferences.defaults();
     expect(defaults.toMap(), {
       'schemaVersion': 1,
-      'selectedId': '061-cubie',
+      'selectedId': '066-hoot',
       'animationsEnabled': true,
     });
     expect(
         defaults.copyWith(animationsEnabled: false).animationsEnabled, false);
     expect(() => MascotPreferences(selectedId: 'unknown'), throwsArgumentError);
-    expect(() => MascotPreferences(schemaVersion: 2, selectedId: '061-cubie'),
+    expect(() => MascotPreferences(schemaVersion: 2, selectedId: '066-hoot'),
         throwsArgumentError);
   });
   test('codec accepts strict v1 and preserves supported values', () {
     final decoded = MascotPreferencesCodec.decode({
       'schemaVersion': 1,
-      'selectedId': '061-cubie',
+      'selectedId': '066-hoot',
       'animationsEnabled': false
     });
     expect(decoded.kind, MascotPreferenceReadKind.valid);
     expect(decoded.value!.animationsEnabled, false);
+  });
+  test('retired favorites fall back to Hoot without changing motion', () {
+    for (final id in [
+      '038-ollie',
+      '049-sat',
+      '051-blink',
+      '058-commit',
+      '061-cubie',
+      '062-atomblock'
+    ]) {
+      for (final motion in [false, true]) {
+        final raw = {
+          'schemaVersion': 1,
+          'selectedId': id,
+          'animationsEnabled': motion
+        };
+        final decoded = MascotPreferencesCodec.decode(raw);
+        expect(decoded.kind, MascotPreferenceReadKind.valid);
+        expect(decoded.value!.selectedId, '066-hoot');
+        expect(decoded.value!.animationsEnabled, motion);
+        expect(raw['selectedId'], id);
+      }
+    }
   });
   test('missing, malformed and future schemas are distinguished', () {
     expect(MascotPreferencesCodec.decode(null).kind,
@@ -36,10 +59,10 @@ void main() {
       false,
       {},
       {'schemaVersion': 1, 'selectedId': 'unknown', 'animationsEnabled': true},
-      {'schemaVersion': 1, 'selectedId': '061-cubie', 'animationsEnabled': 1},
+      {'schemaVersion': 1, 'selectedId': '066-hoot', 'animationsEnabled': 1},
       {
         'schemaVersion': 1.0,
-        'selectedId': '061-cubie',
+        'selectedId': '066-hoot',
         'animationsEnabled': true
       }
     ]) {

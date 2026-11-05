@@ -57,6 +57,15 @@ abstract interface class MascotPreferencesStore {
 }
 
 class MascotPreferencesCodec {
+  // Retired v1 favorites remain readable without resetting the motion setting.
+  static const _retiredIds = {
+    '038-ollie',
+    '049-sat',
+    '051-blink',
+    '058-commit',
+    '061-cubie',
+    '062-atomblock',
+  };
   static MascotPreferenceRead decode(Object? raw) {
     if (raw == null) return const MascotPreferenceRead.missing();
     if (raw is! Map) return const MascotPreferenceRead.malformed();
@@ -69,11 +78,12 @@ class MascotPreferencesCodec {
     if (version is! int ||
         version != 1 ||
         id is! String ||
-        MascotCatalog.findById(id) == null ||
+        (MascotCatalog.findById(id) == null && !_retiredIds.contains(id)) ||
         motion is! bool) {
       return const MascotPreferenceRead.malformed();
     }
-    return MascotPreferenceRead.valid(
-        MascotPreferences(selectedId: id, animationsEnabled: motion));
+    return MascotPreferenceRead.valid(MascotPreferences(
+        selectedId: _retiredIds.contains(id) ? MascotCatalog.defaultId : id,
+        animationsEnabled: motion));
   }
 }

@@ -57,7 +57,7 @@ class MascotSettingsPage extends StatelessWidget {
                               'Touch your mascot to change its animation. Your choice stays on this device.'),
                           const SizedBox(height: 8),
                           const Text(
-                              'All 13 mascots are included and work offline. Each has four animations.'),
+                              'All 7 mascots are included and work offline. Each has four animations.'),
                           if (readOnly)
                             const Text(
                                 'These settings were saved by a newer app. Update the app to change them.'),

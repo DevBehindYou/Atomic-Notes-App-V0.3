@@ -31,7 +31,7 @@ class Resolver implements MascotAssetResolver {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   test(
-      'all 52 supplied GIFs decode with their pinned frame counts and cycle durations',
+      'all 28 supplied GIFs decode with their pinned frame counts and cycle durations',
       () async {
     var decoded = 0;
     for (final mascot in MascotCatalog.all) {
@@ -54,7 +54,7 @@ void main() {
         decoded++;
       }
     }
-    expect(decoded, 52);
+    expect(decoded, 28);
   }, timeout: const Timeout(Duration(minutes: 2)));
   test('real GIF honors encoded cycle durations and closes byte lease once',
       () async {

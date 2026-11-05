@@ -131,23 +131,15 @@ flutter:
   # so the Atomic icon sets are listed explicitly.
   assets:
     - assets/Atomic Notes Mascot/022 Antimatter/
-    - assets/Atomic Notes Mascot/038 Ollie/
     - assets/Atomic Notes Mascot/040 Vaulty/
     - assets/Atomic Notes Mascot/047 Rocco/
-    - assets/Atomic Notes Mascot/049 Sat/
-    - assets/Atomic Notes Mascot/051 Blink/
     - assets/Atomic Notes Mascot/052 Tilde/
-    - assets/Atomic Notes Mascot/058 Commit/
-    - assets/Atomic Notes Mascot/061 Cubie/
-    - assets/Atomic Notes Mascot/062 Atomblock/
     - assets/Atomic Notes Mascot/066 Hoot/
     - assets/Atomic Notes Mascot/073 Lappy/
     - assets/Atomic Notes Mascot/076 Pocket/
     - assets/
     - assets/new-atomic-icons/png/atomic-icon-on-light.png
     - assets/new-atomic-icons/png/atomic-icon-on-dark.png
-    - assets/new-atomic-icons/gif/atomic-spin-on-light.gif
-    - assets/new-atomic-icons/gif/atomic-spin-on-dark.gif
     - assets/atomic-splash/atomic-spin-on-light-static.png
     - assets/atomic-splash/atomic-spin-on-dark-static.png
     - assets/Atomic Icons/atom-formation.gif

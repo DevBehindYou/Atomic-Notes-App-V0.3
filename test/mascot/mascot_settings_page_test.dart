@@ -55,7 +55,7 @@ void main() {
     await show(tester);
     expect(
         find.text(
-            'All 13 mascots are included and work offline. Each has four animations.'),
+            'All 7 mascots are included and work offline. Each has four animations.'),
         findsOneWidget);
     expect(find.textContaining('Download'), findsNothing);
     for (final mascot in MascotCatalog.all) {
@@ -70,15 +70,15 @@ void main() {
       (tester) async {
     await show(tester);
     await tester.scrollUntilVisible(
-        find.byKey(const ValueKey('choose-051-blink')), 180);
-    await tester.tap(find.byKey(const ValueKey('choose-051-blink')));
+        find.byKey(const ValueKey('choose-052-tilde')), 180);
+    await tester.tap(find.byKey(const ValueKey('choose-052-tilde')));
     await tester.pump();
-    expect(preferences.state.desired.selectedId, '051-blink');
-    expect(store.writes.last.selectedId, '051-blink');
+    expect(preferences.state.desired.selectedId, '052-tilde');
+    expect(store.writes.last.selectedId, '052-tilde');
     await tester.drag(find.byType(ListView), const Offset(0, 3000));
     await tester.pump();
-    expect(find.text('Your mascot: Blink'), findsOneWidget);
-    expect(find.text('Hero 051-blink'), findsOneWidget);
+    expect(find.text('Your mascot: Tilde'), findsOneWidget);
+    expect(find.text('Hero 052-tilde'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
   });
   testWidgets('large text keeps favorite and motion controls usable',
