@@ -9,7 +9,9 @@ import 'package:hive_ce/hive.dart';
 
 class Startup extends SplashStartupServices {
   Startup({this.signedIn = true});
-  final bool signedIn;
+  bool signedIn;
+  @override
+  int sessionRevision = 0;
   final vaultReady = Completer<void>();
   final notesReady = Completer<void>();
   final stopReady = Completer<void>();
@@ -180,6 +182,53 @@ void main() {
     expect(startup.notesStarts, 0);
     expect(startup.serviceStarts, 0);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'session expiry during vault init routes to login without account work',
+      (tester) async {
+    final startup = Startup()..locked = true;
+    await open(tester, startup);
+    expect(startup.vaultReads, 1);
+    startup.signedIn = false;
+    startup.sessionRevision++;
+    startup.vaultReady.complete();
+    await flush(tester);
+    expect(find.text('Ready /loginpage'), findsOneWidget);
+    expect(find.text('Ready /vaultunlock'), findsNothing);
+    expect(startup.notesStarts, 0);
+    expect(startup.serviceStarts, 0);
+    expect(startup.onboardingWrites, 0);
+  });
+
+  testWidgets('replacement session during onboarding starts fresh gate checks',
+      (tester) async {
+    final startup = Startup();
+    await open(tester, startup);
+    startup.vaultReady.complete();
+    await flush(tester);
+    expect(startup.onboardingWrites, 1);
+    startup.sessionRevision++;
+    startup.notesReady.completeError(ForeignPendingCacheError());
+    await flush(tester);
+    expect(find.text('Ready /account-cache-recovery'), findsNothing);
+    startup.onboardingSaved.complete();
+    await flush(tester);
+    expect(find.text('Ready /splashpage'), findsOneWidget);
+    expect(find.text('Ready /onboardingscreen'), findsNothing);
+  });
+
+  testWidgets('expired session during cache stop routes to login',
+      (tester) async {
+    final startup = Startup()..foreignCache = true;
+    await open(tester, startup);
+    startup.signedIn = false;
+    startup.sessionRevision++;
+    startup.stopReady.complete();
+    await flush(tester);
+    expect(find.text('Ready /loginpage'), findsOneWidget);
+    expect(find.text('Ready /account-cache-recovery'), findsNothing);
+    expect(startup.memoryClears, 0);
   });
   testWidgets('onboarding waits for its local flag write after all gates pass',
       (tester) async {
