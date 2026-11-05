@@ -195,8 +195,11 @@ jobs:
       - name: Resolve Flutter dependencies
         run: flutter pub get --enforce-lockfile | tee ci-logs/pub-get.log
 
-      - name: Verify pinned mascot catalog and default assets
-        run: dart run tool/verify_mascot_catalog.dart
+      - name: Verify retained mascot catalog and static splash assets
+        run: |
+          dart run tool/verify_mascot_catalog.dart
+          python3 -m unittest discover -s tool -p 'test_verify_mascot_assets.py'
+          python3 tool/verify_mascot_assets.py
 
       - name: Analyze (errors, warnings, and infos are fatal)
         id: analyze
@@ -365,6 +368,9 @@ jobs:
       - name: Build verification APK
         id: build
         run: flutter build apk --debug --no-pub 2>&1 | tee ci-logs/build-apk.log
+
+      - name: Verify retained artwork in the built APK
+        run: python3 tool/verify_mascot_assets.py --apk build/app/outputs/flutter-apk/app-debug.apk
 
       - name: Upload compiler evidence and resolved dependencies
         id: diagnostics

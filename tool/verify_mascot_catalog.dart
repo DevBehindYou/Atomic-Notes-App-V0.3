@@ -15,10 +15,14 @@ Future<void> main(List<String> args) async {
       .join();
   final pinned =
       jsonDecode(File('docs/mascot/catalog-v1.json').readAsStringSync()) as Map;
-  final records = pinned['clips'] as List;
+  // Keep the complete original audit as provenance; verify the retained subset.
+  final retainedIds = MascotCatalog.all.map((m) => m.id).toSet();
+  final records = (pinned['clips'] as List)
+      .where((record) => retainedIds.contains(record['mascot_id']))
+      .toList();
   final clips = MascotCatalog.all.expand((m) => m.clips).toList();
   require(
-      MascotCatalog.all.length == 13 && clips.length == 52, '13 x 4 required');
+      MascotCatalog.all.length == 7 && clips.length == 28, '7 x 4 required');
   final ids = <String>{};
   for (var i = 0; i < clips.length; i++) {
     final c = clips[i];
@@ -58,8 +62,8 @@ Future<void> main(List<String> args) async {
       .map((f) => f.path.replaceAll('\\', '/'))
       .toSet();
   require(
-      expected.length == 52 &&
-          actual.length == 52 &&
+      expected.length == 28 &&
+          actual.length == 28 &&
           actual.containsAll(expected),
       'unexpected bundled mascot files');
   final yaml = File('pubspec.yaml').readAsStringSync();
@@ -73,7 +77,9 @@ Future<void> main(List<String> args) async {
     require(await digest(source) == pinned['sourceManifestSha256'],
         'source manifest changed');
     final sourceRecords =
-        (jsonDecode(utf8.decode(source)) as Map)['assets'] as List;
+        ((jsonDecode(utf8.decode(source)) as Map)['assets'] as List)
+            .where((record) => retainedIds.contains(record['mascot_id']))
+            .toList();
     require(sourceRecords.length == records.length, 'source record count');
     for (var i = 0; i < records.length; i++) {
       for (final key in (records[i] as Map).keys) {
@@ -83,5 +89,5 @@ Future<void> main(List<String> args) async {
     }
   }
   stdout.writeln(
-      'Verified 13 mascots / 52 clips; all 52 GIFs bundled / 18721297 bytes.');
+      'Verified 7 mascots / 28 clips; all 28 original GIFs bundled / 9906906 bytes.');
 }

@@ -169,6 +169,7 @@ jobs:
         run: |
           set -euo pipefail
           APK=build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+          python3 tool/verify_mascot_assets.py --apk "$APK"
           AAPT="$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)"
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)"
           printf 'APK signing tool: %s\n' "$APKSIGNER"

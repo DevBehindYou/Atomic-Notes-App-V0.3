@@ -106,14 +106,14 @@ void main() {
     final store = Store();
     final cubit = MascotCubit(store);
     final loading = cubit.load();
-    cubit.selectMascot('038-ollie');
+    cubit.selectMascot('040-vaulty');
     store.readResult.complete(MascotPreferenceRead.valid(MascotPreferences(
       selectedId: '022-antimatter',
       animationsEnabled: false,
     )));
     await loading;
     await tick();
-    expect(cubit.state.desired.selectedId, '038-ollie');
+    expect(cubit.state.desired.selectedId, '040-vaulty');
     expect(cubit.state.desired.animationsEnabled, false);
     expect(store.writes.single.animationsEnabled, false);
     await cubit.close();

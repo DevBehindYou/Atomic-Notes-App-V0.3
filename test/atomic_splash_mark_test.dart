@@ -1,4 +1,5 @@
 import 'dart:ui' as ui;
+import 'dart:io';
 import 'package:atomic_notes/utility/component/atomic_splash_mark.dart';
 import 'package:atomic_notes/utility/component/logo_container.dart';
 import 'package:flutter/material.dart';
@@ -44,10 +45,9 @@ void main() {
       [AtomicSplashAssets.lightAnimation, AtomicSplashAssets.lightStill],
       [AtomicSplashAssets.darkAnimation, AtomicSplashAssets.darkStill],
     ]) {
-      final gif = await rootBundle.load(pair[0]);
+      final gif = await File(pair[0]).readAsBytes();
       final png = await rootBundle.load(pair[1]);
-      final animation =
-          await ui.instantiateImageCodec(gif.buffer.asUint8List());
+      final animation = await ui.instantiateImageCodec(gif);
       final still = await ui.instantiateImageCodec(png.buffer.asUint8List());
       try {
         expect(animation.frameCount, 100);
@@ -72,15 +72,36 @@ void main() {
     }
   });
 
-  testWidgets('uses the supplied animation matching actual theme brightness',
+  test('splash animation sources are preserved but excluded from the bundle',
+      () async {
+    final manifest = await AssetManifest.loadFromAssetBundle(rootBundle);
+    expect(
+        manifest.listAssets(),
+        containsAll(
+            [AtomicSplashAssets.lightStill, AtomicSplashAssets.darkStill]));
+    expect(manifest.listAssets(),
+        isNot(contains(AtomicSplashAssets.lightAnimation)));
+    expect(manifest.listAssets(),
+        isNot(contains(AtomicSplashAssets.darkAnimation)));
+  });
+  testWidgets('static mark exposes its accessible Atomic Notes image label',
+      (tester) async {
+    final semantics = tester.ensureSemantics();
+    await open(tester);
+    expect(find.bySemanticsLabel('Atomic Notes'), findsOneWidget);
+    semantics.dispose();
+    await tester.pumpWidget(const SizedBox());
+  });
+  testWidgets(
+      'uses only the static supplied artwork matching actual theme brightness',
       (tester) async {
     for (final brightness in Brightness.values) {
       await open(tester, brightness: brightness);
       expect(
           asset(tester),
           brightness == Brightness.dark
-              ? AtomicSplashAssets.darkAnimation
-              : AtomicSplashAssets.lightAnimation);
+              ? AtomicSplashAssets.darkStill
+              : AtomicSplashAssets.lightStill);
     }
     await tester.pumpWidget(const SizedBox());
   });
@@ -98,16 +119,15 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
-  testWidgets('inactive ticker removes the animated image listener',
-      (tester) async {
+  testWidgets('inactive ticker keeps the static artwork', (tester) async {
     await open(tester, active: false);
     expect(asset(tester), AtomicSplashAssets.lightStill);
     await open(tester);
-    expect(asset(tester), AtomicSplashAssets.lightAnimation);
+    expect(asset(tester), AtomicSplashAssets.lightStill);
     await tester.pumpWidget(const SizedBox());
   });
 
-  testWidgets('background lifecycle stops playback and resume restores it',
+  testWidgets('background lifecycle and resume keep the static artwork',
       (tester) async {
     await open(tester);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
@@ -115,7 +135,7 @@ void main() {
     expect(asset(tester), AtomicSplashAssets.lightStill);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pump();
-    expect(asset(tester), AtomicSplashAssets.lightAnimation);
+    expect(asset(tester), AtomicSplashAssets.lightStill);
     await tester.pumpWidget(const SizedBox());
   });
 
@@ -136,7 +156,7 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
-  testWidgets('animated mark fits the existing lockup on a narrow phone',
+  testWidgets('static mark fits the existing lockup on a narrow phone',
       (tester) async {
     tester.view.physicalSize = const Size(320, 640);
     tester.view.devicePixelRatio = 1;
