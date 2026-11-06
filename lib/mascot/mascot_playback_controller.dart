@@ -39,6 +39,7 @@ class MascotPlaybackController extends ChangeNotifier {
       {required MascotDefinition mascot,
       required this.source,
       required this.targetPhysicalPixels,
+      this.clipRest = Duration.zero,
       MascotScheduler? scheduler,
       Random? random,
       void Function(OwnedMascotFrame)? releaseFrame})
@@ -50,6 +51,9 @@ class MascotPlaybackController extends ChangeNotifier {
   }
   final MascotFrameSource source;
   final MascotScheduler scheduler;
+
+  /// Time to hold the last frame after a complete clip without a decoder.
+  final Duration clipRest;
   final Random _random;
   final void Function(OwnedMascotFrame) _release;
   int targetPhysicalPixels;
@@ -159,6 +163,7 @@ class MascotPlaybackController extends ChangeNotifier {
 
   Future<void> _start(int gen,
       {required bool poster, bool user = false}) async {
+    if (!_current(gen)) return;
     // Initial static artwork participates in adjacency avoidance too.
     if (poster && !user && _clip == null) {
       _sequence = MascotSequence(_random, _mascot.clips.map((c) => c.slot),
@@ -227,7 +232,13 @@ class MascotPlaybackController extends ChangeNotifier {
               if (!_current(gen) || !_allowed) return;
               if (_frames >= session.frameCount) {
                 await _closeSession();
-                await _start(gen, poster: false);
+                if (!_current(gen)) return;
+                if (clipRest == Duration.zero) {
+                  await _start(gen, poster: false);
+                } else {
+                  _timer = scheduler.schedule(clipRest,
+                      () => _enqueue(() => _start(gen, poster: false)));
+                }
               } else {
                 try {
                   await _decode(gen);

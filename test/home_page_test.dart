@@ -4,6 +4,7 @@
 import 'dart:async';
 
 import 'package:atomic_notes/database/note.dart';
+import 'package:atomic_notes/mascot/mascot_view.dart';
 import 'package:atomic_notes/page/home_page.dart';
 import 'package:atomic_notes/state/notes/notes_bloc.dart';
 import 'package:atomic_notes/theme/app_tokens.dart';
@@ -89,6 +90,8 @@ void main() {
       (tester) async {
     final source = _source();
     await _open(tester, source);
+    expect(tester.widget<MascotView>(find.byType(MascotView)).clipRest,
+        const Duration(seconds: 2));
     expect(find.byKey(const ValueKey('mascot-sync-status')), findsNothing);
     expect(find.byTooltip('Sync status'), findsNothing);
     await tester.tap(find.byKey(const ValueKey('mascot-character')));
