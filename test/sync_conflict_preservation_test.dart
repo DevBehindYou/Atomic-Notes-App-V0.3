@@ -6,6 +6,7 @@ import 'package:atomic_notes/api/atomic_notes_api.dart';
 import 'package:atomic_notes/database/note.dart';
 import 'package:atomic_notes/database/notes_repository.dart';
 import 'package:atomic_notes/database/sync_status.dart';
+import 'package:atomic_notes/security/vault.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive_ce.dart';
@@ -13,14 +14,32 @@ import 'package:hive_ce/hive_ce.dart';
 import 'notes_repository_lifecycle_test.dart' show TestApi, TestVault;
 
 const _pendingKey = '__pending_sync_operation';
+const _cursorKey = '__sync_cursor__';
+
+class _CursorAwareApi extends TestApi {
+  int? remoteRowSequence;
+
+  @override
+  Future<Map<String, dynamic>> pullNotes(
+      {int? after, bool encOnly = false}) async {
+    final result = await super.pullNotes(after: after, encOnly: encOnly);
+    final remoteSequence = remoteRowSequence;
+    if (after != null && remoteSequence != null && after >= remoteSequence) {
+      result['rows'] = <Map<String, dynamic>>[];
+    }
+    return result;
+  }
+}
 
 class _FaultBox implements Box {
   _FaultBox(this.inner);
   final Box inner;
   String? failPut;
+  String? failDelete;
   bool failFlush = false;
   int flushes = 0;
   Future<void> Function(dynamic key)? beforePut;
+  void Function(dynamic key)? afterDelete;
   Future<void> Function()? beforeFlush;
   @override
   dynamic get(dynamic key, {dynamic defaultValue}) =>
@@ -42,7 +61,15 @@ class _FaultBox implements Box {
   }
 
   @override
-  Future<void> delete(dynamic key) => inner.delete(key);
+  Future<void> delete(dynamic key) async {
+    if (key == failDelete) {
+      failDelete = null;
+      throw StateError('Synthetic cursor delete failure');
+    }
+    await inner.delete(key);
+    afterDelete?.call(key);
+  }
+
   @override
   Future<int> clear() => inner.clear();
   @override
@@ -65,7 +92,7 @@ void main() {
   late Directory directory;
   late Box raw;
   late _FaultBox box;
-  late TestApi api;
+  late _CursorAwareApi api;
   late TestVault vault;
   late NotesRepository repository;
 
@@ -82,7 +109,7 @@ void main() {
     raw = await Hive.openBox('conflict-notes');
     box = _FaultBox(raw);
     SyncStatusHelper.syncBox = await Hive.openBox<bool>('conflict-sync');
-    api = TestApi();
+    api = _CursorAwareApi();
     vault = TestVault();
     repository = createRepository();
     await repository.start();
@@ -136,6 +163,112 @@ void main() {
     repository = createRepository();
     await repository.start();
   }
+
+  for (final fault in ['delete', 'flush']) {
+    test(
+        'conflict retries the full pull after cursor $fault fails and Hive reopens',
+        () async {
+      await box.put(_cursorKey, 10);
+      await reopen();
+      final note = await seed();
+      api.sequence = 10;
+      api.remoteRowSequence = 8;
+      if (fault == 'delete') {
+        box.failDelete = _cursorKey;
+      } else {
+        box.beforeFlush = () async {
+          if (!box.containsKey(_cursorKey)) box.failFlush = true;
+        };
+      }
+
+      expect(await repository.syncNow(instant: true), isFalse);
+      final requestId = api.requestIds.single;
+      final sentRows = jsonEncode(api.pushes.single);
+      expect(api.pullCursors, isEmpty);
+      expect(box.get(_cursorKey), fault == 'delete' ? 10 : null);
+      expect(box.get(_pendingKey), isA<Map>());
+
+      await reopen();
+      api.beforePush = () async {
+        if (api.pushes.last.single['id'] != note.id) api.pushResults = null;
+      };
+      expect(await repository.syncNow(instant: true), isFalse);
+
+      expect(repository.byId(note.id)!.body, 'Remote winner');
+      expect(repository.byId(note.id)!.serverVersion, 4);
+      expect(api.pullCursors, [null]);
+      expect(api.requestIds, [requestId, requestId]);
+      expect(jsonEncode(api.pushes.last), sentRows);
+      expect(box.get(_pendingKey), isNull);
+      final preserved =
+          repository.visible().where((n) => n.id != note.id).single;
+      expect(preserved.body, 'Captured source');
+      expect(preserved.dirty, isTrue);
+    });
+  }
+
+  test('conflict settlement leaves the full pull for a replacement session',
+      () async {
+    await box.put(_cursorKey, 10);
+    await reopen();
+    final note = await seed();
+    api.sequence = 10;
+    api.remoteRowSequence = 8;
+    box.afterDelete = (key) {
+      if (key == _pendingKey) api.sessionRevision++;
+    };
+
+    expect(await repository.syncNow(instant: true), isFalse);
+    expect(api.pullCursors, isEmpty);
+    expect(box.get(_cursorKey), isNull);
+    expect(box.get(_pendingKey), isNull);
+
+    await reopen();
+    api.pushResults = null;
+    expect(await repository.syncNow(instant: true), isTrue);
+    expect(api.pullCursors, [null]);
+    expect(repository.byId(note.id)!.body, 'Remote winner');
+    final preserved = repository.visible().where((n) => n.id != note.id).single;
+    expect(preserved.body, 'Captured source');
+  });
+
+  test('conflict replay resets the cursor even when the vault is locked',
+      () async {
+    await box.put(_cursorKey, 10);
+    await reopen();
+    vault.unlocked = true;
+    final note = await seed();
+    api.sequence = 10;
+    api.remoteRowSequence = 8;
+    final row = api.pullRows.single;
+    final payload = await vault.encryptContent({
+      'title': row['title'],
+      'body': row['body'],
+      'items': row['items'],
+    });
+    row.addAll({
+      'enc_v': Vault.encVersion,
+      'payload': payload,
+      'title': '',
+      'body': '',
+      'items': <dynamic>[],
+    });
+    box.failDelete = _cursorKey;
+    expect(await repository.syncNow(instant: true), isFalse);
+    final requestId = api.requestIds.single;
+    final preservedId = copyId(note.id);
+
+    vault.unlocked = false;
+    await reopen();
+    expect(repository.byId(note.id), isNull);
+    expect(repository.byId(preservedId), isNull);
+    await repository.syncNow(instant: true);
+
+    expect(api.pullCursors, [null]);
+    expect(api.requestIds, [requestId, requestId]);
+    expect(box.get(_pendingKey), isNull);
+    expect((box.get(preservedId) as Map)['enc_v'], Vault.encVersion);
+  });
 
   for (final tombstone in [false, true]) {
     test(
