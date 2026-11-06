@@ -446,4 +446,100 @@ void main() {
     await expectLater(
         input.pickJpeg(maxBytes: 60000), throwsA(isA<EditorMediaException>()));
   });
+
+  group('C07 source layouts and formats', () {
+    Future<image.Image> optimize(List<int> source,
+        {int maxBytes = 60000}) async {
+      final picker = FakePicker()
+        ..file = XFile.fromData(Uint8List.fromList(source));
+      final encoded =
+          await PlatformEditorImageInput(picker: picker, isAndroid: false)
+              .pickJpeg(maxBytes: maxBytes);
+      final bytes = base64Decode(encoded!);
+      expect(bytes.length, lessThanOrEqualTo(maxBytes));
+      return image.decodeJpg(bytes)!;
+    }
+
+    void expectNear(image.Pixel pixel, List<int> rgb) {
+      for (var i = 0; i < 3; i++) {
+        expect([pixel.r, pixel.g, pixel.b][i], closeTo(rgb[i], 6),
+            reason: 'got (${pixel.r}, ${pixel.g}, ${pixel.b}), want $rgb');
+      }
+    }
+
+    test('transparent grayscale-with-alpha areas become white, not black',
+        () async {
+      final source = image.Image(width: 64, height: 64, numChannels: 2);
+      for (final pixel in source) {
+        // Left half opaque dark gray, right half fully transparent.
+        pixel.setRgba(60, 60, 60, pixel.x < 32 ? 255 : 0);
+      }
+      final out = await optimize(image.encodePng(source));
+      expectNear(out.getPixel(5, 5), [60, 60, 60]);
+      expectNear(out.getPixel(58, 5), [255, 255, 255]);
+    });
+
+    test('semi-transparent color blends over white', () async {
+      final source = image.Image(width: 32, height: 32, numChannels: 4);
+      for (final pixel in source) {
+        pixel.setRgba(0, 0, 255, 128);
+      }
+      final out = await optimize(image.encodePng(source));
+      expectNear(out.getPixel(16, 16), [127, 127, 255]);
+    });
+
+    test('16-bit PNG keeps its color', () async {
+      final source = image.Image(
+          width: 32, height: 32, numChannels: 4, format: image.Format.uint16);
+      for (final pixel in source) {
+        pixel.setRgba(65535, 0, 0, 65535);
+      }
+      final out = await optimize(image.encodePng(source));
+      expectNear(out.getPixel(16, 16), [255, 0, 0]);
+    });
+
+    test('EXIF orientation is applied, then removed', () async {
+      final source = image.Image(width: 80, height: 40);
+      image.fill(source, color: image.ColorRgb8(0, 200, 0));
+      source.exif.imageIfd.orientation = 6; // rotate 90 degrees clockwise
+      final out = await optimize(image.encodeJpg(source));
+      expect([out.width, out.height], [40, 80]);
+      expect(out.exif.isEmpty, isTrue);
+    });
+
+    test('a GIF is accepted as its first frame', () async {
+      final source = image.Image(width: 40, height: 20);
+      image.fill(source, color: image.ColorRgb8(200, 0, 0));
+      final out = await optimize(image.encodeGif(source));
+      expect([out.width, out.height], [40, 20]);
+      expectNear(out.getPixel(10, 10), [200, 0, 0]);
+    });
+
+    test('a small WebP from the gallery is accepted', () async {
+      // 3 x 2 lossless WebP, red at alpha 128 (generated with Pillow).
+      final webp =
+          base64Decode('UklGRhwAAABXRUJQVlA4TA8AAAAvAkAAEAcQ/Y8CBiKi/wEA');
+      final out = await optimize(webp);
+      expect([out.width, out.height], [3, 2]);
+      expectNear(out.getPixel(1, 1), [255, 127, 127]);
+    });
+
+    test('other formats name the supported ones', () async {
+      for (final source in [
+        image.encodeBmp(image.Image(width: 4, height: 4)),
+        [0, 0, 0, 24, ...ascii.encode('ftypheic'), 0, 0, 0, 0],
+      ]) {
+        await expectLater(
+            optimize(source),
+            throwsA(isA<EditorMediaException>().having((e) => e.message,
+                'message', 'Choose a JPEG, PNG, WebP or GIF image.')));
+      }
+    });
+
+    test('an oversized GIF is refused before its pixels are decoded', () async {
+      // Header claims 4097 x 1: beyond the 4096 dimension bound.
+      final source = image.encodeGif(image.Image(width: 4097, height: 1));
+      await expectLater(optimize(source), throwsA(isA<EditorMediaException>()));
+    });
+  });
 }
