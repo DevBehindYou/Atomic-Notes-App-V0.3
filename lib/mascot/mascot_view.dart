@@ -16,6 +16,7 @@ class MascotView extends StatefulWidget {
       this.routeVisible = true,
       this.interactive = true,
       this.size = 96,
+      this.clipRest = Duration.zero,
       this.onAdvance,
       this.semanticActionLabel = 'change animation',
       this.frameSource});
@@ -23,6 +24,7 @@ class MascotView extends StatefulWidget {
   final MascotAssetResolver resolver;
   final bool animationsEnabled, routeVisible, interactive;
   final double size;
+  final Duration clipRest;
   final VoidCallback? onAdvance;
   final String semanticActionLabel;
   final MascotFrameSource? frameSource;
@@ -48,6 +50,7 @@ class _MascotViewState extends State<MascotView> with WidgetsBindingObserver {
         mascot: widget.mascot,
         source: widget.frameSource ?? FlutterGifFrameSource(widget.resolver),
         targetPhysicalPixels: widget.size.round().clamp(1, 480),
+        clipRest: widget.clipRest,
         releaseFrame: _release);
   }
 
@@ -83,7 +86,8 @@ class _MascotViewState extends State<MascotView> with WidgetsBindingObserver {
   void didUpdateWidget(covariant MascotView old) {
     super.didUpdateWidget(old);
     if (old.resolver != widget.resolver ||
-        old.frameSource != widget.frameSource) {
+        old.frameSource != widget.frameSource ||
+        old.clipRest != widget.clipRest) {
       _player.dispose();
       _create();
     } else {

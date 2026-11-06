@@ -122,6 +122,90 @@ void main() {
     await c.close();
     expect(s.sessions.expand((s) => s.frames).every((f) => f.isDisposed), true);
   });
+  test('clip rest keeps the last frame and closes the decoder between clips',
+      () async {
+    final source = Source();
+    final clock = Clock();
+    const frameTime = Duration(milliseconds: 50);
+    const rest = Duration(seconds: 2);
+    final controller = MascotPlaybackController(
+        mascot: MascotCatalog.defaultMascot,
+        source: source,
+        targetPhysicalPixels: 48,
+        scheduler: clock,
+        clipRest: rest);
+    addTearDown(controller.close);
+    controller.setPlaybackAllowed(true);
+    await settle();
+
+    for (var clip = 0; clip < 4; clip++) {
+      final session = source.sessions.last;
+      clock.elapse(frameTime);
+      await settle();
+      final lastFrame = controller.frame!;
+      expect(session.reads, 2);
+      expect(session.closes, 0);
+
+      clock.elapse(frameTime);
+      await settle();
+      expect(session.closes, 1);
+      expect(clock.active, 1);
+      clock.elapse(rest - const Duration(milliseconds: 1));
+      await settle();
+      expect(source.sessions, hasLength(clip + 1));
+      expect(controller.frame, same(lastFrame));
+      expect(lastFrame.isDisposed, isFalse);
+
+      clock.elapse(const Duration(milliseconds: 1));
+      await settle();
+      expect(source.sessions, hasLength(clip + 2));
+      expect(lastFrame.isDisposed, isTrue);
+    }
+
+    expect(source.ids.take(4).toSet(), hasLength(4));
+    expect(source.ids[4], isNot(source.ids[3]));
+  });
+
+  test('a tap cancels the rest and hiding cancels the next idle advance',
+      () async {
+    final source = Source();
+    final clock = Clock();
+    const frameTime = Duration(milliseconds: 50);
+    const rest = Duration(seconds: 2);
+    final controller = MascotPlaybackController(
+        mascot: MascotCatalog.defaultMascot,
+        source: source,
+        targetPhysicalPixels: 48,
+        scheduler: clock,
+        clipRest: rest);
+    addTearDown(controller.close);
+    controller.setPlaybackAllowed(true);
+    await settle();
+    clock.elapse(frameTime);
+    await settle();
+    clock.elapse(frameTime);
+    await settle();
+    final interruptedRest = clock.jobs.last;
+    expect(source.sessions.single.closes, 1);
+
+    controller.advanceFromUser();
+    await settle();
+    expect(interruptedRest.canceled, isTrue);
+    expect(source.sessions, hasLength(2));
+    expect(source.ids[1], isNot(source.ids[0]));
+    clock.elapse(frameTime);
+    await settle();
+    clock.elapse(frameTime);
+    await settle();
+    expect(source.sessions.last.closes, 1);
+
+    controller.setPlaybackAllowed(false, visible: false);
+    clock.elapse(rest);
+    await settle();
+    expect(source.sessions, hasLength(2));
+    expect(clock.active, 0);
+  });
+
   test('tap coalesces to a single latest pending advance', () async {
     final s = Source();
     final clock = Clock();

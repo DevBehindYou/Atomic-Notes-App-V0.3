@@ -41,12 +41,14 @@ class DevBehindYouMascot extends StatelessWidget {
     this.size = 72,
     this.secondary = false,
     this.interactive = false,
+    this.clipRest = Duration.zero,
     this.onAdvance,
     this.semanticActionLabel = 'change animation',
   });
   final double size;
   final bool secondary;
   final bool interactive;
+  final Duration clipRest;
   final VoidCallback? onAdvance;
   final String semanticActionLabel;
 
@@ -66,6 +68,7 @@ class DevBehindYouMascot extends StatelessWidget {
           resolver: scope?.resolver ?? BundledMascotResolver.instance,
           size: size,
           interactive: interactive,
+          clipRest: clipRest,
           onAdvance: onAdvance,
           semanticActionLabel: semanticActionLabel,
           animationsEnabled: !secondary &&

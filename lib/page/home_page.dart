@@ -563,6 +563,7 @@ class _MascotState extends State<_Mascot> {
           key: const ValueKey('mascot-character'),
           child: DevBehindYouMascot(
             interactive: true,
+            clipRest: const Duration(seconds: 2),
             onAdvance: _onTap,
             semanticActionLabel: 'show sync status and change animation',
           ),
