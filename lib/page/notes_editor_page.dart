@@ -199,8 +199,11 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
       final edited = _snapshot(removeEmptyLines: true);
       final error = NoteContentBudget.errorFor(edited);
       if (error != null) {
-        _message(
-            '$error. Shorten the note or remove an image; your draft is still here.');
+        // A title error is about the title alone; the others are size limits
+        // that shortening the note or removing an image can resolve.
+        _message(error == NoteContentBudget.titleError
+            ? '$error. Your draft is still here.'
+            : '$error. Shorten the note or remove an image; your draft is still here.');
         return;
       }
       // Leave sync versions, dirty state and timestamps to the repository.
@@ -808,6 +811,9 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
                   controller: controller,
                   autofocus: true,
                   maxLength: NoteDocument.maxTagCharacters,
+                  // Show the count, but never cut pasted text: an over-long
+                  // tag is refused on Add with a message instead.
+                  maxLengthEnforcement: MaxLengthEnforcement.none,
                   maxLines: 1,
                   style: AppType.bodyLg,
                   cursorColor: AppColors.signal,
