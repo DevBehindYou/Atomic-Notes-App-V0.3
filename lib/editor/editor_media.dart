@@ -288,13 +288,15 @@ class PlatformEditorImageInput implements EditorImageInput {
       rethrow;
     } catch (_) {
       throw const EditorMediaException(
-        'The image could not be added. Choose a JPEG or PNG image and try again.',
+        'The image could not be added. Choose a JPEG, PNG, WebP or GIF image and try again.',
       );
     } finally {
       _picking = false;
     }
   }
 }
+
+const _supportedFormats = 'Choose a JPEG, PNG, WebP or GIF image.';
 
 String _compressImage((Uint8List, int) request) {
   final (bytes, maxBytes) = request;
@@ -311,8 +313,26 @@ String _compressImage((Uint8List, int) request) {
       bytes[2] == 78 &&
       bytes[3] == 71) {
     decoder = image.PngDecoder(maxPixels: maxPixels);
+  } else if (bytes.length >= 6 &&
+      bytes[0] == 0x47 &&
+      bytes[1] == 0x49 &&
+      bytes[2] == 0x46 &&
+      bytes[3] == 0x38) {
+    // GIF8: the first frame only.
+    decoder = image.GifDecoder()..maxPixels = maxPixels;
+  } else if (bytes.length >= 12 &&
+      bytes[0] == 0x52 &&
+      bytes[1] == 0x49 &&
+      bytes[2] == 0x46 &&
+      bytes[3] == 0x46 &&
+      bytes[8] == 0x57 &&
+      bytes[9] == 0x45 &&
+      bytes[10] == 0x42 &&
+      bytes[11] == 0x50) {
+    // RIFF....WEBP: Android returns small gallery WebP files unconverted.
+    decoder = image.WebPDecoder()..maxPixels = maxPixels;
   } else {
-    throw const EditorMediaException('Choose a JPEG or PNG image.');
+    throw const EditorMediaException(_supportedFormats);
   }
   final info = decoder.startDecode(bytes);
   if (info == null ||
@@ -329,12 +349,18 @@ String _compressImage((Uint8List, int) request) {
     throw const EditorMediaException(
         'The image could not be read. Choose another image.');
   }
-  final resized = _resizeWithin(image.bakeOrientation(decoded), 1024);
-  // Composite onto white and create fresh pixels so EXIF/GPS, source filenames
-  // and other metadata are never embedded in synced note content.
-  final clean = image.Image(width: resized.width, height: resized.height);
-  image.fill(clean, color: image.ColorRgb8(255, 255, 255));
-  image.compositeImage(clean, resized);
+  // Normalize every source layout (16-bit, grayscale with alpha, palette) to
+  // 8-bit RGBA first. Resizing and compositing other layouts directly turned
+  // 16-bit images white and gray transparency black.
+  final rgba = decoded.format == image.Format.uint8 &&
+          decoded.numChannels == 4 &&
+          !decoded.hasPalette
+      ? decoded
+      : decoded.convert(format: image.Format.uint8, numChannels: 4);
+  final resized = _resizeWithin(image.bakeOrientation(rgba), 1024);
+  // Flatten onto white into fresh pixels so EXIF/GPS, source filenames and
+  // other metadata are never embedded in synced note content.
+  final clean = _flattenOnWhite(resized);
   final longest = clean.width >= clean.height ? clean.width : clean.height;
   for (final dimension in {longest, 768, 512, 384, 256, 192, 128}) {
     if (dimension > longest) continue;
@@ -346,6 +372,19 @@ String _compressImage((Uint8List, int) request) {
   }
   throw const EditorMediaException(
       'This image could not fit within 60 KB and the note’s remaining image space. Choose a smaller image or remove another image.');
+}
+
+/// Fresh opaque RGB pixels: each source pixel blended over white by its alpha.
+image.Image _flattenOnWhite(image.Image source) {
+  final clean = image.Image(width: source.width, height: source.height);
+  for (final pixel in source) {
+    final alpha = pixel.aNormalized;
+    int blend(num channel) =>
+        (channel * alpha + 255 * (1 - alpha)).round().clamp(0, 255);
+    clean.setPixelRgb(
+        pixel.x, pixel.y, blend(pixel.r), blend(pixel.g), blend(pixel.b));
+  }
+  return clean;
 }
 
 image.Image _resizeWithin(image.Image source, int maxDimension) {
