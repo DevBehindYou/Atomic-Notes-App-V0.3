@@ -1060,7 +1060,19 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     report?.received(reply);
     final versions = pending['versions'] as Map;
     final sentEncryption = {for (final row in rows) row['id'] as String: row['enc_v']};
-    var conflicted = false;
+    final requestId = pending['requestId'];
+    bool settlementActive() => _activeFor(uid) && lifecycle == _lifecycleRevision &&
+        session == _api.sessionRevision && cloudWipe == _cloudWipeRevision &&
+        !_wipingCloud && !_lockingVault && loggingOut == _loggingOut;
+    bool settlementCurrent() {
+      final saved = _box.get(_pendingPushKey);
+      return settlementActive() && saved is Map && saved['userId'] == uid &&
+          saved['requestId'] == requestId;
+    }
+
+    // An encrypted note may be absent from memory when replaying while locked.
+    final conflicted = results.any((result) =>
+        result['ok'] != true && result['error'] == 'note_conflict');
     var deletedConflict = false;
     var failed = false;
     final writtenSeqs = <int>[];
@@ -1070,7 +1082,6 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
       if (local == null) continue;
       if (result['ok'] != true) {
         failed = true;
-        if (result['error'] == 'note_conflict') conflicted = true;
         if (result['error'] == 'note_conflict' && local.dirty) {
           // Freeze content before persistence/encryption yields to another edit.
           final source = local.copy();
@@ -1080,14 +1091,6 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
                 current.contentSig == source.contentSig &&
                 current.updatedAt == source.updatedAt &&
                 current.deleted == source.deleted;
-          }
-          bool settlementCurrent() {
-            final saved = _box.get(_pendingPushKey);
-            return _activeFor(uid) && lifecycle == _lifecycleRevision &&
-                session == _api.sessionRevision && cloudWipe == _cloudWipeRevision &&
-                !_wipingCloud && !_lockingVault && loggingOut == _loggingOut &&
-                saved is Map && saved['userId'] == uid &&
-                saved['requestId'] == pending!['requestId'];
           }
           if (!settlementCurrent()) return _PushOutcome.retired;
           // Preserve deletion intent without copying or rebasing it. This reply
@@ -1168,8 +1171,18 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
       await _persist(id);
     }
     if (!_activeFor(uid)) return _PushOutcome.retired;
+    if (conflicted) {
+      // The remote version can be behind the saved cursor. Keep the request
+      // replayable until the full-pull decision is durable.
+      if (!settlementCurrent()) return _PushOutcome.retired;
+      await _resetCursor();
+      if (!settlementCurrent()) return _PushOutcome.retired;
+      await _box.flush();
+      if (!settlementCurrent()) return _PushOutcome.retired;
+    }
     await _box.delete(_pendingPushKey);
-    await _skipOwnPushedRows(writtenSeqs);
+    if (conflicted && !settlementActive()) return _PushOutcome.retired;
+    if (!conflicted) await _skipOwnPushedRows(writtenSeqs);
     // The Server takes a standard sync once per hour, so the next one is not open yet. A replayed
     // instant request does not close it, whatever started this attempt.
     if (closesAutomaticSync(sentInstant: pending['instant'] == true, results: results)) {
@@ -1178,9 +1191,8 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
           lifecycle: lifecycle, session: session);
     }
     if (failed) {
-      // The pull cursor is already past the version that conflicted, so start over.
-      if (conflicted) await _resetCursor();
       notifyListeners();
+      if (conflicted && !settlementActive()) return _PushOutcome.retired;
       await _pull(uid);
       throw ApiException(
           deletedConflict
@@ -1190,6 +1202,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
               : 'Some notes could not be uploaded. They stay on this device and will retry.',
           409);
     }
+    if (conflicted && !settlementActive()) return _PushOutcome.retired;
     return _notes.values.any((n) => n.dirty) ? _PushOutcome.pending : _PushOutcome.drained;
   }
 
