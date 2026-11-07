@@ -41,6 +41,7 @@ import 'package:atomic_notes/theme/app_tokens.dart';
 import 'package:atomic_notes/theme/editorial.dart';
 import 'package:atomic_notes/utility/intropages/onboarding_screen.dart';
 import 'package:atomic_notes/utility/intropages/energy_intro_screen.dart';
+import 'package:atomic_notes/utility/startup_trace.dart';
 import 'package:bloc/bloc.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
@@ -55,6 +56,9 @@ Future<void> main() async {
     return;
   }
   Bloc.observer = const AppBlocObserver();
+  // Opt-in phase timing (--dart-define=ATOMIC_STARTUP_TRACE=true, never in
+  // release). Off, each step below runs exactly as written.
+  final trace = StartupTrace.fromEnvironment();
 
   try {
     // Bounded so startup can't hang forever. ApiClient.init() only reads a
@@ -62,36 +66,39 @@ Future<void> main() async {
     // timeout mirrors the old Supabase.initialize() one so a slow keystore
     // read still can't block the app opening.
     try {
-      await ApiClient.instance.init().timeout(const Duration(seconds: 8));
+      await trace.step(StartupStep.apiInit,
+          () => ApiClient.instance.init().timeout(const Duration(seconds: 8)));
     } catch (e) {
       // Local-first: a slow or absent secure-storage read must never block
       // startup. Continue so local notes always open.
       debugPrint('ApiClient.init slow/failed; continuing local-first: $e');
     }
 
-    await Hive.initFlutter();
+    await trace.step(StartupStep.hiveInit, () => Hive.initFlutter());
     // open the Hive Boxes. These stay open for the life of the process —
     // individual screens must not close them (see splash_screen.dart).
-    await Hive.openBox<bool>('authBox');
+    await trace.step(StartupStep.authBox, () => Hive.openBox<bool>('authBox'));
     // "No screenshots" is a device-wide choice: apply it before any screen shows.
-    await ScreenSecurity.applySaved();
+    await trace.step(StartupStep.screenSecurity, ScreenSecurity.applySaved);
     // Avatar and profile switches are local: read them before any screen draws.
-    await ProfileStore.instance.init();
-    await Hive.openBox<bool>('syncBox');
-    await SyncStatusHelper.init();
-    await NoteQuota.init();
+    await trace.step(StartupStep.profile, ProfileStore.instance.init);
+    await trace.step(StartupStep.syncBox, () => Hive.openBox<bool>('syncBox'));
+    await trace.step(StartupStep.syncStatus, SyncStatusHelper.init);
+    await trace.step(StartupStep.quota, NoteQuota.init);
     // Determine encryption state and auto-unlock from a cached key (if any)
     // before the repository loads, so encrypted notes can be decrypted on load.
     // The splash's first check may reuse this one result (see initAfterStartup).
-    await Vault.instance.initAtStartup();
-    await NotesRepository.instance.init();
+    await trace.step(StartupStep.vault, Vault.instance.initAtStartup);
+    await trace.step(StartupStep.repository, NotesRepository.instance.init);
   } catch (error) {
+    trace.finish();
     // This used to be `exit(0)`: the app vanished on launch with no message,
     // indistinguishable from a crash and impossible to report.
     runApp(StartupFailedApp(error: error.toString()));
     return;
   }
 
+  trace.finish();
   runApp(const MascotScope(child: MyApp()));
 }
 
