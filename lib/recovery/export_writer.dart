@@ -198,6 +198,7 @@ class ExportWriter {
     ArchiveKey? key,
     ArchiveVault? vault,
     ExportCancel? cancel,
+    void Function(int written, int total)? onProgress,
   }) async {
     final snapshot = [
       for (final source in sources)
@@ -243,6 +244,7 @@ class ExportWriter {
           throw const ExportFailed('A note changed during export. Try again.');
         }
         await frame(bytes);
+        onProgress?.call(i + 1, snapshot.length);
       }
       if (cancel?.isCancelled ?? false) throw const ExportCancelled();
       await frame(utf8.encode(jsonEncode({'entries': snapshot.length})),

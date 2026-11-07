@@ -248,3 +248,67 @@ Full suite: 1117 passed, 33 skipped.
 - How long backups are kept, and the UI to undo a finished restore (C15/C20).
 - Whether a partial restore (skipping invalid notes) is allowed.
 - The native store adapter, which waits for B05.
+
+## Recovery UI and backup status (C15)
+
+`lib/recovery/recovery_page.dart` adds the "Backup and restore" page.
+
+### Availability
+
+The page is not on any route yet. It only works in builds made with
+`--dart-define=ATOMIC_RECOVERY_PREVIEW=true`. In every other build it shows a
+plain "not available yet" message and offers no actions. The native port
+adapter waits for B05, because `notes_repository.dart` is reserved.
+
+### Status shown
+
+The page reports three facts. It never combines them into a single "your notes
+are safe" claim:
+
+- the number of notes saved on this device;
+- the cloud sync status as the port states it, or "unknown";
+- the last backup that actually finished.
+
+### Backing up
+
+- The user can set an optional password. The helper text warns that without
+  one, anyone who has the file can read the notes.
+- Progress is shown as "Saving n of m notes", using
+  `ExportWriter.write(onProgress:)`, with a Cancel button.
+- `recordBackup` runs only after the archive has been committed to its final
+  location. If the export fails or is cancelled, no backup is recorded and the
+  previous backup record is left unchanged.
+
+### Restoring
+
+1. Choose an archive. If it is encrypted, it opens locked: enter the password
+   and choose "Open with the password above".
+2. The `ImportPreviewView` summary appears.
+3. Each note that differs between the backup and the device gets its own
+   switch. The default is "Choose before restoring", and "Review restore" stays
+   disabled until every differing note has a choice.
+4. `RestoreCoordinator` then restores the archive and reports how many notes
+   were written and how many were kept as they were on the device.
+
+The preview never shows note content.
+
+### Verification
+
+`test/recovery/recovery_page_test.dart` has 7 tests:
+
+- the feature gate is off by default and the page offers no actions;
+- the three status facts appear separately;
+- a finished backup is recorded;
+- a failed backup and a cancelled backup are both never recorded, and the
+  previous record stays unchanged;
+- restore waits for every choice and then reports the result, with the
+  replaced version backed up;
+- a protected archive stays locked until its password is entered.
+
+Full suite: 1124 passed, 33 skipped.
+
+### Open decisions
+
+- Export password policy and final wording.
+- Where the page sits in Settings.
+- Who owns `recordBackup` storage and the native adapters (B05).
