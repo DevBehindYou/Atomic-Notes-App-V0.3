@@ -28,11 +28,24 @@ enum IntegrityProblem {
 }
 
 class IntegrityFinding {
-  const IntegrityFinding(this.key, this.problem);
+  IntegrityFinding(this.rawKey, this.problem, {String? locator})
+      : locator = locator ?? RecordIntegrity.locatorFor(rawKey);
 
-  /// The storage key, rendered as text. Keys are note ids, never content.
-  final String key;
+  /// The storage key exactly as stored, with its type (Hive keys are `int`
+  /// or `String`).
+  final Object? rawKey;
+
+  /// A collision-free, type-tagged name for [rawKey]: `i:<int>` for an int
+  /// key, `s:<text>` for a String key. Int `1` and String `'1'` are distinct
+  /// (`i:1`, `s:1`), and no String key can forge another key's locator,
+  /// because every String locator starts with `s:`.
+  final String locator;
   final IntegrityProblem problem;
+
+  /// The storage key rendered as text, for display only. Different keys can
+  /// render alike (`1` and `'1'`); identify a record by [rawKey] or [locator].
+  /// Keys are note ids, never content.
+  String get key => '$rawKey';
 }
 
 /// The result of scanning one notes store without changing it (C19).
@@ -53,16 +66,20 @@ class IntegrityReport {
 
   bool get clean => findings.isEmpty;
 
-  /// Keys to set aside. Each is copied, never moved or deleted: the
+  /// Locators (see [IntegrityFinding.locator]) of the records to set aside,
+  /// one per flagged record. Each is copied, never moved or deleted: the
   /// original stays where it is until an owner-gated repair decides.
-  List<String> get quarantine => {for (final f in findings) f.key}.toList();
+  List<String> get quarantine => {for (final f in findings) f.locator}.toList();
 }
 
 /// Where a quarantined copy is preserved. It only adds; there is no delete
 /// or repair operation here by design.
 abstract class QuarantinePort {
-  Future<void> preserve(
-      String key, Object? original, List<IntegrityProblem> why);
+  /// Preserves one flagged record. [locator] is unique per stored key and
+  /// type-tagged (see [IntegrityFinding.locator]); [rawKey] is the key exactly
+  /// as stored.
+  Future<void> preserve(String locator, Object? rawKey, Object? original,
+      List<IntegrityProblem> why);
 }
 
 /// Detects unsound note records in a raw notes store.
@@ -79,24 +96,40 @@ abstract final class RecordIntegrity {
   /// Repository bookkeeping (`__cache_owner__`, `__sync_cursor__`, …).
   static bool isReserved(Object? key) => key is String && key.startsWith('__');
 
+  /// The type-tagged locator for an `int` or `String` key, the only key types
+  /// Hive stores. Any other key gets an ordinal locator from [scan].
+  static String locatorFor(Object? key) => switch (key) {
+        int() => 'i:$key',
+        String() => 's:$key',
+        _ => throw ArgumentError.value(
+            key.runtimeType, 'key', 'not an int or String storage key'),
+      };
+
   static IntegrityReport scan(Map<Object?, Object?> store) {
     final sound = <String>[];
     final findings = <IntegrityFinding>[];
     final byLowerId = <String, List<String>>{};
     var scanned = 0;
+    var otherKeys = 0;
     for (final entry in store.entries) {
-      if (isReserved(entry.key)) continue;
+      final rawKey = entry.key;
+      if (isReserved(rawKey)) continue;
       scanned++;
-      final key = '${entry.key}';
-      final problems = _problems(entry.key, entry.value);
-      if (entry.key is String && _uuid.hasMatch(key)) {
-        (byLowerId[key.toLowerCase()] ??= []).add(key);
+      final problems = _problems(rawKey, entry.value);
+      // Keys of any other type cannot come from Hive; an ordinal keeps their
+      // locators unique without relying on how they print.
+      final locator = rawKey is int || rawKey is String
+          ? locatorFor(rawKey)
+          : 'o:${otherKeys++}:${rawKey.runtimeType}';
+      if (rawKey is String && _uuid.hasMatch(rawKey)) {
+        (byLowerId[rawKey.toLowerCase()] ??= []).add(rawKey);
       }
       if (problems.isEmpty) {
-        sound.add(key);
+        // Only String note-id keys can be sound.
+        sound.add(rawKey as String);
       } else {
         for (final problem in problems) {
-          findings.add(IntegrityFinding(key, problem));
+          findings.add(IntegrityFinding(rawKey, problem, locator: locator));
         }
       }
     }
@@ -181,19 +214,21 @@ abstract final class RecordIntegrity {
         optionalString('syncedSig');
   }
 
-  /// Copies every flagged record, as stored, to [port]. Returns the number of
+  /// Copies every flagged record, as stored, to [port] under its
+  /// collision-free locator. Records are looked up by their typed raw key, so
+  /// int `1` and String `'1'` are preserved separately. Returns the number of
   /// records copied. The source store is not modified.
   static Future<int> preserveCopies(Map<Object?, Object?> store,
       IntegrityReport report, QuarantinePort port) async {
-    final byKey = <String, Object?>{
-      for (final entry in store.entries) '${entry.key}': entry.value
-    };
+    final byLocator = <String, List<IntegrityFinding>>{};
+    for (final finding in report.findings) {
+      (byLocator[finding.locator] ??= []).add(finding);
+    }
     var copied = 0;
-    for (final key in report.quarantine) {
-      await port.preserve(key, _deepCopy(byKey[key]), [
-        for (final f in report.findings)
-          if (f.key == key) f.problem
-      ]);
+    for (final MapEntry(key: locator, value: findings) in byLocator.entries) {
+      final rawKey = findings.first.rawKey;
+      await port.preserve(locator, rawKey, _deepCopy(store[rawKey]),
+          [for (final f in findings) f.problem]);
       copied++;
     }
     return copied;

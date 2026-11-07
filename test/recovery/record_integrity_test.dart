@@ -122,13 +122,56 @@ void main() {
     final port = _Port();
     expect(await RecordIntegrity.preserveCopies(store, report, port), 2);
     expect(jsonEncode(store), before, reason: 'originals retained as stored');
-    expect(port.copies.keys, [_id(9), 'bbbbbbbb-0000-4000-8000-00000000000b']);
-    expect(port.copies[_id(9)], 'just a string');
-    expect(port.why['bbbbbbbb-0000-4000-8000-00000000000b'],
+    expect(port.copies.keys,
+        ['s:${_id(9)}', 's:bbbbbbbb-0000-4000-8000-00000000000b']);
+    expect(port.copies['s:${_id(9)}'], 'just a string');
+    expect(port.why['s:bbbbbbbb-0000-4000-8000-00000000000b'],
         [IntegrityProblem.idMismatch]);
     // A preserved copy is independent of the source.
-    (port.copies['bbbbbbbb-0000-4000-8000-00000000000b'] as Map)['title'] = 'x';
+    (port.copies['s:bbbbbbbb-0000-4000-8000-00000000000b'] as Map)['title'] =
+        'x';
     expect(jsonEncode(store), before);
+  });
+
+  test('int and String keys that print alike stay distinct', () async {
+    final intValue = {'id': 'int row', 'title': 'one'};
+    final stringValue = {'id': 'string row', 'title': 'uno'};
+    final store = <Object?, Object?>{
+      1: intValue,
+      '1': stringValue,
+      // A String key shaped like another key's locator must not collide.
+      'i:1': 'forged int locator',
+      's:1': 'forged string locator',
+    };
+    final before = store.toString();
+    final report = RecordIntegrity.scan(store);
+    expect(report.scanned, 4);
+    expect(report.findings.map((f) => f.rawKey), [1, '1', 'i:1', 's:1']);
+    expect(report.findings.map((f) => f.rawKey.runtimeType),
+        [int, String, String, String]);
+    expect(report.quarantine, ['i:1', 's:1', 's:i:1', 's:s:1']);
+
+    final port = _Port();
+    expect(await RecordIntegrity.preserveCopies(store, report, port), 4);
+    expect(store.toString(), before, reason: 'source unchanged');
+    expect(port.copies, {
+      'i:1': intValue,
+      's:1': stringValue,
+      's:i:1': 'forged int locator',
+      's:s:1': 'forged string locator',
+    });
+    expect(port.rawKeys['i:1'], isA<int>().having((k) => k, 'key', 1));
+    expect(port.rawKeys['s:1'], isA<String>().having((k) => k, 'key', '1'));
+    expect(port.why['i:1'], [IntegrityProblem.invalidKey]);
+  });
+
+  test('keys of other types get unique ordinal locators', () async {
+    final store = <Object?, Object?>{null: 'a', 2.0: 'b', const _Key(): 'c'};
+    final report = RecordIntegrity.scan(store);
+    expect(report.quarantine, ['o:0:Null', 'o:1:double', 'o:2:_Key']);
+    final port = _Port();
+    expect(await RecordIntegrity.preserveCopies(store, report, port), 3);
+    expect(port.copies.values, ['a', 'b', 'c']);
   });
 
   test('findings carry ids and codes only, never content', () {
@@ -148,11 +191,21 @@ void main() {
 
 class _Port implements QuarantinePort {
   final copies = <String, Object?>{};
+  final rawKeys = <String, Object?>{};
   final why = <String, List<IntegrityProblem>>{};
   @override
-  Future<void> preserve(
-      String key, Object? original, List<IntegrityProblem> problems) async {
-    copies[key] = original;
-    why[key] = problems;
+  Future<void> preserve(String locator, Object? rawKey, Object? original,
+      List<IntegrityProblem> problems) async {
+    expect(copies.containsKey(locator), isFalse,
+        reason: 'locators never collide');
+    copies[locator] = original;
+    rawKeys[locator] = rawKey;
+    why[locator] = problems;
   }
+}
+
+class _Key {
+  const _Key();
+  @override
+  String toString() => '1';
 }
