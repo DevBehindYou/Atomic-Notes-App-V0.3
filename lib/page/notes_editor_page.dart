@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:atomic_notes/editor/editor_media.dart';
 import 'package:atomic_notes/editor/editor_popup.dart';
+import 'package:atomic_notes/editor/note_image_decode.dart';
 import 'package:atomic_notes/editor/note_image_viewer.dart';
 import 'package:atomic_notes/editor/rich_selection_toolbar.dart';
 import 'package:atomic_notes/editor/rich_text_controller.dart';
@@ -45,6 +46,8 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
   late final EditorImageInput _imageInput;
   late final EditorSpeechInput _speechInput;
   final Map<String, Uint8List> _images = {};
+  // One size-bounded thumbnail provider per image, reused across builds.
+  final Map<String, ResizeImage> _thumbnails = {};
   bool _picking = false, _listening = false, _starting = false;
   bool _speechExplained = false, _applyingSpeech = false;
   int _speechSession = 0;
@@ -153,6 +156,10 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
       _releaseImage(bytes);
     }
     _images.clear();
+    for (final thumbnail in _thumbnails.values) {
+      NoteImageDecode.release(thumbnail);
+    }
+    _thumbnails.clear();
     super.dispose();
   }
 
@@ -296,6 +303,8 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
         !_document.lines.any((line) => line.imageBase64 == removedImage)) {
       final bytes = _images.remove(removedImage);
       if (bytes != null) _releaseImage(bytes);
+      final thumbnail = _thumbnails.remove(removedImage);
+      if (thumbnail != null) NoteImageDecode.release(thumbnail);
     }
   }
 
@@ -612,6 +621,7 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
     if (line.isImage) {
       final data = line.imageBase64!;
       final bytes = _images.putIfAbsent(data, () => base64Decode(data));
+      final thumbnail = _thumbnailFor(data, bytes);
       return Column(key: ObjectKey(_lines[index]), children: [
         Semantics(
           button: true,
@@ -623,8 +633,9 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
               borderRadius: AppRadius.std,
               child: ConstrainedBox(
                 constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-                child: Image.memory(bytes,
-                    height: 220,
+                child: Image(
+                    image: thumbnail,
+                    height: _thumbnailHeight,
                     fit: BoxFit.contain,
                     semanticLabel: 'Note image',
                     errorBuilder: (_, __, ___) =>
@@ -691,6 +702,29 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
         ),
       ],
     );
+  }
+
+  static const double _thumbnailHeight = 220;
+
+  /// The thumbnail decodes no larger than its box: the screen width by 220,
+  /// in physical pixels. A size change replaces (and releases) the provider.
+  ResizeImage _thumbnailFor(String data, Uint8List bytes) {
+    final ratio = MediaQuery.devicePixelRatioOf(context);
+    final width = MediaQuery.sizeOf(context).width;
+    final wanted = NoteImageDecode.thumbnail(bytes,
+        logicalWidth: width,
+        logicalHeight: _thumbnailHeight,
+        devicePixelRatio: ratio);
+    // _images keeps one byte buffer per data string, so only the size can
+    // change between builds.
+    final current = _thumbnails[data];
+    if (current != null &&
+        current.width == wanted.width &&
+        current.height == wanted.height) {
+      return current;
+    }
+    if (current != null) NoteImageDecode.release(current);
+    return _thumbnails[data] = wanted;
   }
 
   Future<void> _viewImage(Uint8List bytes) async {
