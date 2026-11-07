@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:atomic_notes/database/note.dart';
 import 'package:atomic_notes/database/note_document.dart';
 import 'package:atomic_notes/recovery/archive_manifest.dart';
@@ -52,8 +50,9 @@ class ImportPreview {
   final int live;
   final int deleted;
 
-  /// Notes kept as vault payloads. Their content is checked when the vault
-  /// opens them; here only their framing, size and checksum are verified.
+  /// Notes kept as vault payloads. Each one is also an issue
+  /// (`sealed_unsupported`), so an archive holding any of them cannot be
+  /// restored yet: see [ImportValidator.inspect].
   final int sealed;
   final int checklists;
   final int images;
@@ -108,8 +107,15 @@ abstract final class ImportValidator {
       final existing = local.byId(note.id);
       if (archived.sealed) {
         sealed++;
-        _sealedIssue(archived, issues);
-        // Sealed content cannot be compared until the vault opens it.
+        // A vault payload is sealed under a key derived from the recovery
+        // phrase and a salt bound to the source account's user id. The
+        // export password protects the archive, not that inner key, so the
+        // payload opens only in the source account, and nothing in the
+        // archive proves which account that is. Until a verified source
+        // context and rekeying exist, sealed rows are never offered for
+        // restore rather than written as notes that may never open.
+        issues.add(ImportIssue(note.id, 'sealed_unsupported',
+            'Encrypted vault notes cannot be restored from an archive yet'));
         existing == null ? added.add(note.id) : conflicts.add(note.id);
         continue;
       }
@@ -144,18 +150,6 @@ abstract final class ImportValidator {
       conflicts: List.unmodifiable(conflicts),
       issues: List.unmodifiable(issues),
     );
-  }
-
-  static void _sealedIssue(ArchivedNote archived, List<ImportIssue> issues) {
-    // The codec already bounds the payload to the Server's sealed limit; a
-    // sealed row's wire form must also fit the note wire budget.
-    final row = archived.note.toRemote('')
-      ..['enc_v'] = 1
-      ..['payload'] = archived.payload;
-    if (utf8.encode(jsonEncode(row)).length > NoteContentBudget.maxWireBytes) {
-      issues.add(ImportIssue(archived.note.id, 'too_large',
-          'This note exceeds the sync size limit'));
-    }
   }
 
   static String _code(Note note, NoteDocument document) {
