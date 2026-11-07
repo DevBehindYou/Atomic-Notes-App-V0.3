@@ -82,7 +82,8 @@ Future<void> main() async {
     await NoteQuota.init();
     // Determine encryption state and auto-unlock from a cached key (if any)
     // before the repository loads, so encrypted notes can be decrypted on load.
-    await Vault.instance.init();
+    // The splash's first check may reuse this one result (see initAfterStartup).
+    await Vault.instance.initAtStartup();
     await NotesRepository.instance.init();
   } catch (error) {
     // This used to be `exit(0)`: the app vanished on launch with no message,
