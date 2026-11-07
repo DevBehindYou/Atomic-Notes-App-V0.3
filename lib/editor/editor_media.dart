@@ -341,10 +341,9 @@ String _compressImage((Uint8List, int) request) {
       info.width > 4096 ||
       info.height > 4096 ||
       info.width * info.height > maxPixels) {
-    throw const EditorMediaException(
-        'The image is invalid or too large. Choose a smaller image.');
+    throw _invalidImage;
   }
-  final decoded = decoder.decodeFrame(0);
+  final decoded = _decodeFirstFrame(decoder, info);
   if (decoded == null) {
     throw const EditorMediaException(
         'The image could not be read. Choose another image.');
@@ -352,11 +351,12 @@ String _compressImage((Uint8List, int) request) {
   // Normalize every source layout (16-bit, grayscale with alpha, palette) to
   // 8-bit RGBA first. Resizing and compositing other layouts directly turned
   // 16-bit images white and gray transparency black.
-  final rgba = decoded.format == image.Format.uint8 &&
+  final normalized = decoded.format == image.Format.uint8 &&
           decoded.numChannels == 4 &&
           !decoded.hasPalette
       ? decoded
       : decoded.convert(format: image.Format.uint8, numChannels: 4);
+  final rgba = _placeOnLogicalCanvas(normalized, info);
   final resized = _resizeWithin(image.bakeOrientation(rgba), 1024);
   // Flatten onto white into fresh pixels so EXIF/GPS, source filenames and
   // other metadata are never embedded in synced note content.
@@ -372,6 +372,78 @@ String _compressImage((Uint8List, int) request) {
   }
   throw const EditorMediaException(
       'This image could not fit within 60 KB and the note’s remaining image space. Choose a smaller image or remove another image.');
+}
+
+const _invalidImage = EditorMediaException(
+    'The image is invalid or too large. Choose a smaller image.');
+
+/// GIF and animated WebP frames are rectangles on a logical canvas, and the
+/// first one need not cover it. Returns where frame 0 sits, or null when the
+/// decoded image is already the whole canvas (still images).
+({int x, int y})? _firstFrameOffset(image.DecodeInfo info) {
+  if (info is image.GifInfo && info.frames.isNotEmpty) {
+    final frame = info.frames.first;
+    return (x: frame.x, y: frame.y);
+  }
+  if (info is image.WebPInfo && info.hasAnimation && info.frames.isNotEmpty) {
+    final frame = info.frames.first;
+    return (x: frame.x, y: frame.y);
+  }
+  return null;
+}
+
+/// Decodes frame 0 only; later animation frames are never decoded.
+image.Image? _decodeFirstFrame(image.Decoder decoder, image.DecodeInfo info) {
+  if (info is image.GifInfo && info.frames.isNotEmpty) {
+    final frame = info.frames.first;
+    if (frame.x + frame.width > info.width ||
+        frame.y + frame.height > info.height) {
+      throw _invalidImage;
+    }
+    // image 4.12 writes interlaced rows at their canvas row into a frame-sized
+    // buffer (GifDecoder._decodeImage), which overruns once the frame starts
+    // below row 0. The frame's own rows are wanted, so decode it from row 0;
+    // _placeOnLogicalCanvas applies the real offset afterwards.
+    if (frame.interlaced && frame.y != 0) {
+      final y = frame.y;
+      frame.y = 0;
+      try {
+        return decoder.decodeFrame(0);
+      } finally {
+        frame.y = y;
+      }
+    }
+  }
+  return decoder.decodeFrame(0);
+}
+
+/// Composites frame 0 at its declared offset onto a transparent canvas of the
+/// logical size, which startDecode's info has already bounded. Uncovered
+/// canvas stays transparent and later flattens to white: browsers and libwebp
+/// both ignore the GIF background index and the ANIM background color.
+image.Image _placeOnLogicalCanvas(image.Image frame, image.DecodeInfo info) {
+  final offset = _firstFrameOffset(info);
+  if (offset == null) return frame;
+  final (:x, :y) = offset;
+  if (x < 0 ||
+      y < 0 ||
+      x + frame.width > info.width ||
+      y + frame.height > info.height) {
+    throw _invalidImage;
+  }
+  if (x == 0 &&
+      y == 0 &&
+      frame.width == info.width &&
+      frame.height == info.height) {
+    return frame;
+  }
+  final canvas = image.Image(
+      width: info.width, height: info.height, numChannels: 4); // all alpha 0
+  for (final pixel in frame) {
+    canvas.setPixelRgba(
+        x + pixel.x, y + pixel.y, pixel.r, pixel.g, pixel.b, pixel.a);
+  }
+  return canvas;
 }
 
 /// Fresh opaque RGB pixels: each source pixel blended over white by its alpha.

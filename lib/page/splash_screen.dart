@@ -38,8 +38,13 @@ class SplashStartupServices {
   bool get hasForeignPendingCache =>
       NotesRepository.instance.hasForeignPendingCache;
   bool get twoFactorArmed => TwoFactor.instance.isArmed;
-  bool get vaultLocked => Vault.instance.isLocked;
-  Future<void> initVault() => Vault.instance.init();
+  bool get vaultLocked => vault.isLocked;
+  Vault get vault => Vault.instance;
+  Future<void> initVault() => vault.initAfterStartup();
+
+  /// A splash that leaves before its vault check must not hand main()'s
+  /// result to a later one.
+  void discardStartupVault() => vault.discardStartupHandoff();
   Future<void> startNotes() => NotesRepository.instance.start();
   Future<void> stopNotes() => NotesRepository.instance.stop();
   void clearNotesMemory() => NotesRepository.instance.clearMemory();
@@ -96,6 +101,12 @@ class _SplashPageState extends State<SplashPage> {
     _redirect();
   }
 
+  @override
+  void dispose() {
+    _startup.discardStartupVault();
+    super.dispose();
+  }
+
   Future<void> _redirect() async {
     final revision = _startup.sessionRevision;
     try {
@@ -126,7 +137,9 @@ class _SplashPageState extends State<SplashPage> {
       // second phone showed no notes: the unlock screen never appeared,
       // encrypted rows were skipped as unreadable, and new notes were written
       // in the clear. The splash runs on every launch AND after every login,
-      // which makes it the one place this is always correct.
+      // which makes it the one place this is always correct. On the first
+      // launch splash it may reuse main()'s check once, when that check
+      // confirmed a vault for this same session and nothing has changed since.
       await _startup.initVault();
       if (!_canContinue(revision)) return;
       if (_startup.hasForeignPendingCache) {
