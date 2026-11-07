@@ -232,9 +232,49 @@ void main() {
       final heavy = Uint8List.fromList(encrypted)
         ..setRange(7, 11, [0xff, 0xff, 0xff, 0xff]); // Argon2 memory
       final reader = ArchiveReader(ArchiveByteSource.bytes(heavy));
-      await expectLater(reader.readHeader(), _code('malformed'));
+      await expectLater(reader.readHeader(), _code('unsupported_kdf'));
       await expectLater(
           _read(utf8.encode('PK\u0003\u0004 not ours')), _code('malformed'));
+    });
+
+    test('only the vault KDF profile is accepted, before any derivation',
+        () async {
+      final encrypted = await export(key: _key());
+      Uint8List withParams(int memory, int iterations, int parallelism) {
+        final params = ByteData(9)
+          ..setUint32(0, memory)
+          ..setUint32(4, iterations)
+          ..setUint8(8, parallelism);
+        return Uint8List.fromList(encrypted)
+          ..setRange(7, 16, params.buffer.asUint8List());
+      }
+
+      // Within the old structural bounds, but not the supported profile:
+      // 4 GiB, 64 iterations, more lanes, and a cheap downgrade.
+      for (final (memory, iterations, parallelism) in [
+        (1 << 22, 3, 1),
+        (65536, 64, 1),
+        (65536, 3, 16),
+        (8, 1, 1),
+        (65535, 3, 1),
+      ]) {
+        final reader = ArchiveReader(ArchiveByteSource.bytes(
+            withParams(memory, iterations, parallelism)));
+        await expectLater(reader.readHeader(), _code('unsupported_kdf'),
+            reason: '$memory/$iterations/$parallelism');
+        // A caller that skips the header check is refused too. Deriving a
+        // 4 GiB key would not return within the test timeout, so refusing
+        // here also shows no derivation started.
+        await expectLater(
+            ArchiveKey.derive('password', List.filled(16, 1),
+                memory: memory,
+                iterations: iterations,
+                parallelism: parallelism),
+            _code('unsupported_kdf'));
+      }
+      final reader =
+          ArchiveReader(ArchiveByteSource.bytes(withParams(65536, 3, 1)));
+      expect((await reader.readHeader()).memory, 65536);
     });
   });
 
@@ -252,6 +292,48 @@ void main() {
         expect(leftovers(), isEmpty, reason: 'budget $budget');
       }
     });
+
+    test('a new export replaces the previous one in a single step', () async {
+      await target.writeAsString('previous export');
+      await export();
+      expect((await _read(await target.readAsBytes())).notes, hasLength(4));
+      expect(leftovers(), isEmpty);
+    });
+
+    test('a failed final rename keeps the previous export intact', () async {
+      await target.writeAsString('previous export');
+      var attempts = 0;
+      await expectLater(
+          ExportWriter(clock: () => _time).write(
+              FileExportTarget(target, replace: (temporary, _) async {
+                attempts++;
+                expect(await target.readAsString(), 'previous export',
+                    reason: 'nothing removes the target before replacing');
+                throw const FileSystemException('Access is denied');
+              }),
+              _sources(),
+              vault: _vault),
+          throwsA(isA<ExportFailed>()));
+      expect(attempts, 1);
+      expect(await target.readAsString(), 'previous export');
+      expect(leftovers(), isEmpty);
+    });
+
+    test('Windows: a locked previous export is kept when replacement fails',
+        () async {
+      await target.writeAsString('previous export');
+      final lock = await target.open(mode: FileMode.append);
+      try {
+        await expectLater(
+            ExportWriter(clock: () => _time)
+                .write(FileExportTarget(target), _sources(), vault: _vault),
+            throwsA(isA<ExportFailed>()));
+      } finally {
+        await lock.close();
+      }
+      expect(await target.readAsString(), 'previous export');
+      expect(leftovers(), isEmpty);
+    }, skip: Platform.isWindows ? false : 'Windows file locking only');
 
     test('an invalid export is refused before any file is created', () async {
       // A sealed note without vault parameters could never be restored.
