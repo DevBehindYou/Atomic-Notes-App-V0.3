@@ -241,4 +241,127 @@ void main() {
     expect(
         middle.style!.decoration!.contains(TextDecoration.lineThrough), isTrue);
   });
+  group('C04 paragraph-start and grapheme-cluster defects', () {
+    test(
+        'typing at the start of an unheaded paragraph does not inherit the '
+        'previous heading through its newline', () {
+      final c = RichNoteController(text: 'one\ntwo');
+      addTearDown(c.dispose);
+      c.selection = const TextSelection(baseOffset: 0, extentOffset: 7);
+      c.toggleStyle(NoteTextStyle.heading);
+      c.selection = const TextSelection.collapsed(offset: 5);
+      c.toggleStyle(NoteTextStyle.heading);
+      c.selection = const TextSelection.collapsed(offset: 4);
+      expect(c.hasStyle(NoteTextStyle.heading), isFalse);
+      c.value = const TextEditingValue(
+          text: 'one\nXtwo', selection: TextSelection.collapsed(offset: 5));
+      expect(
+          runs(c),
+          [
+            [0, 4, 16]
+          ],
+          reason: 'X belongs to the ordinary second paragraph');
+    });
+
+    test(
+        'a paragraph start takes that paragraph\'s formatting, as offset 0 '
+        'does', () {
+      final c = RichNoteController(
+          text: 'plain\nbold', styles: const [NoteStyleRun(6, 10, 1)]);
+      addTearDown(c.dispose);
+      c.selection = const TextSelection.collapsed(offset: 6);
+      expect(c.hasStyle(NoteTextStyle.bold), isTrue);
+      c.value = const TextEditingValue(
+          text: 'plain\nXbold', selection: TextSelection.collapsed(offset: 7));
+      expect(runs(c), [
+        [6, 11, 1]
+      ]);
+    });
+
+    test('a new empty paragraph after a heading keeps today\'s inheritance',
+        () {
+      final c = RichNoteController(
+          text: 'Title', styles: const [NoteStyleRun(0, 5, 16)]);
+      addTearDown(c.dispose);
+      c.selection = const TextSelection.collapsed(offset: 5);
+      c.value = const TextEditingValue(
+          text: 'Title\n', selection: TextSelection.collapsed(offset: 6));
+      c.value = const TextEditingValue(
+          text: 'Title\nnext', selection: TextSelection.collapsed(offset: 10));
+      expect(runs(c), [
+        [0, 10, 16]
+      ]);
+    });
+
+    test('styling never splits a combining-mark cluster', () {
+      final c = RichNoteController(text: 'éx');
+      addTearDown(c.dispose);
+      c.selection = const TextSelection(baseOffset: 0, extentOffset: 1);
+      c.toggleStyle(NoteTextStyle.bold);
+      expect(runs(c), [
+        [0, 2, 1]
+      ]);
+    });
+
+    test('styling never splits a ZWJ emoji sequence', () {
+      final c = RichNoteController(text: 'a\u{1F468}‍\u{1F469}b');
+      addTearDown(c.dispose);
+      c.selection = const TextSelection(baseOffset: 0, extentOffset: 3);
+      c.toggleStyle(NoteTextStyle.bold);
+      expect(runs(c), [
+        [0, 6, 1]
+      ]);
+    });
+
+    test('saved runs that split a cluster load whole clusters', () {
+      final c = RichNoteController(
+          text: 'xé\u{1F1EE}\u{1F1F3}',
+          styles: const [NoteStyleRun(1, 2, 2), NoteStyleRun(4, 5, 1)]);
+      addTearDown(c.dispose);
+      expect(runs(c), [
+        [1, 3, 2],
+        [3, 7, 1]
+      ]);
+    });
+
+    test('typing a combining mark joins the styled base character', () {
+      final c =
+          RichNoteController(text: 'ex', styles: const [NoteStyleRun(0, 1, 1)]);
+      addTearDown(c.dispose);
+      c.selection = const TextSelection.collapsed(offset: 1);
+      c.value = const TextEditingValue(
+          text: 'éx', selection: TextSelection.collapsed(offset: 2));
+      expect(runs(c), [
+        [0, 2, 1]
+      ]);
+    });
+
+    test('a regional indicator typed before a flag re-pairs the whole run', () {
+      // "IN" then "US" flags; bold only the US flag.
+      final c = RichNoteController(
+          text: '\u{1F1EE}\u{1F1F3}\u{1F1FA}\u{1F1F8}',
+          styles: const [NoteStyleRun(4, 8, 1)]);
+      addTearDown(c.dispose);
+      c.selection = const TextSelection.collapsed(offset: 0);
+      // An extra indicator at the start shifts every following pair.
+      c.value = const TextEditingValue(
+          text: '\u{1F1FD}\u{1F1EE}\u{1F1F3}\u{1F1FA}\u{1F1F8}',
+          selection: TextSelection.collapsed(offset: 2));
+      // Clusters are now [0,4) [4,8) [8,10); the old bold US code units now
+      // fall in [4,8) (N,U) and [8,10) (S): no cluster may be half bold.
+      final flags = runs(c);
+      for (final cluster in const [
+        [0, 4],
+        [4, 8],
+        [8, 10]
+      ]) {
+        final covering = flags.where(
+            (r) => r[0] < cluster[1] && r[1] > cluster[0] && r[2] & 1 != 0);
+        for (final r in covering) {
+          expect(r[0] <= cluster[0] && r[1] >= cluster[1], isTrue,
+              reason: 'cluster $cluster is partly bold: $flags');
+        }
+      }
+    });
+  });
 }
