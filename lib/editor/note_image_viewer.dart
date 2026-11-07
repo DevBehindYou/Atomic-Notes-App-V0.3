@@ -41,6 +41,7 @@ class _NoteImageViewerState extends State<NoteImageViewer> {
     super.didUpdateWidget(oldWidget);
     if (!identical(oldWidget.bytes, widget.bytes)) {
       _detachListener();
+      _release();
       _provider = MemoryImage(widget.bytes);
       _imageSize = null;
       _failed = false;
@@ -75,9 +76,15 @@ class _NoteImageViewerState extends State<NoteImageViewer> {
     _listener = null;
   }
 
+  /// The viewer's full-size decode is its own: drop it from the cache once
+  /// nothing shows it, so it is not kept after the popup closes.
+  void _release() =>
+      PaintingBinding.instance.imageCache.evict(_provider, includeLive: false);
+
   @override
   void dispose() {
     _detachListener();
+    _release();
     _transform.dispose();
     super.dispose();
   }
