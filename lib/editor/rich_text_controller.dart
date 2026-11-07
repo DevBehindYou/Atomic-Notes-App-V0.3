@@ -1,7 +1,10 @@
 import 'package:atomic_notes/database/note_rich_content.dart';
 import 'package:flutter/widgets.dart';
 
-/// Rich styles use the same UTF-16 offsets as Flutter text selections.
+/// Rich styles use the same UTF-16 offsets as Flutter text selections. Every
+/// grapheme cluster (an emoji sequence, a letter with combining marks) carries
+/// one style, so a style boundary never falls inside what the reader sees as a
+/// single character.
 class RichNoteController extends TextEditingController {
   RichNoteController({String text = '', List<NoteStyleRun> styles = const []})
       : super(text: text) {
@@ -83,8 +86,20 @@ class RichNoteController extends TextEditingController {
 
   int _flagsAtCaret(int offset) {
     if (_flags.isEmpty) return 0;
-    return _flags[offset == 0 ? 0 : (offset - 1).clamp(0, _flags.length - 1)];
+    final at = offset.clamp(0, _flags.length);
+    // At a paragraph start, new text takes that paragraph's own formatting, as
+    // it already does at offset 0. Inheriting the previous paragraph through
+    // its newline would, for example, put a heading into an ordinary line.
+    final paragraphStart = at == 0 || text.codeUnitAt(at - 1) == _newline;
+    if (paragraphStart &&
+        at < _flags.length &&
+        text.codeUnitAt(at) != _newline) {
+      return _flags[at];
+    }
+    return _flags[at == 0 ? 0 : at - 1];
   }
+
+  static const _newline = 0x0a;
 
   @override
   set value(TextEditingValue next) {
@@ -99,14 +114,9 @@ class RichNoteController extends TextEditingController {
               : _flagsAtCaret(change.start));
       _flags.replaceRange(
           change.start, change.end, List.filled(inserted, inherit));
-      // Even malformed external offsets must never split a surrogate pair.
-      for (var i = 1; i < next.text.length; i++) {
-        if (_splitsPair(next.text, i)) {
-          final flags = _flags[i - 1] | _flags[i];
-          _flags[i - 1] = flags;
-          _flags[i] = flags;
-        }
-      }
+      // The edit can join or split clusters only around itself (and along a
+      // run of regional indicators), so only that window is made uniform.
+      _unifyClusters(next.text, change.start, change.start + inserted);
     } else if (old.selection != next.selection) {
       _typingFlags = null;
     }
@@ -162,17 +172,55 @@ class RichNoteController extends TextEditingController {
     return TextRange(start: start, end: end);
   }
 
-  static bool _splitsPair(String text, int offset) =>
-      offset > 0 &&
-      offset < text.length &&
-      text.codeUnitAt(offset - 1) >= 0xd800 &&
-      text.codeUnitAt(offset - 1) <= 0xdbff &&
-      text.codeUnitAt(offset) >= 0xdc00 &&
-      text.codeUnitAt(offset) <= 0xdfff;
-  static int _boundaryStart(String text, int offset) =>
-      _splitsPair(text, offset) ? offset - 1 : offset;
-  static int _boundaryEnd(String text, int offset) =>
-      _splitsPair(text, offset) ? offset + 1 : offset;
+  /// Gives each grapheme cluster overlapping [start, end) of [text] the union
+  /// of its code units' styles.
+  void _unifyClusters(String text, int start, int end) {
+    if (text.isEmpty) return;
+    var from = _boundaryStart(text, start.clamp(0, text.length));
+    var to = _boundaryEnd(text, end.clamp(0, text.length));
+    // Flags pair regional indicators from the start of their run, so one
+    // inserted or removed indicator re-pairs the whole run.
+    while (from >= 2 && _isRegionalIndicator(text, from - 2)) {
+      from -= 2;
+    }
+    while (to + 2 <= text.length && _isRegionalIndicator(text, to)) {
+      to += 2;
+    }
+    from = _boundaryStart(text, from);
+    to = _boundaryEnd(text, to);
+    final clusters = CharacterRange.at(text, from, to);
+    var offset = clusters.stringBeforeLength;
+    for (final cluster in clusters.current.characters) {
+      final clusterEnd = offset + cluster.length;
+      if (cluster.length > 1) {
+        var flags = 0;
+        for (var i = offset; i < clusterEnd; i++) {
+          flags |= _flags[i];
+        }
+        _flags.fillRange(offset, clusterEnd, flags);
+      }
+      offset = clusterEnd;
+    }
+  }
+
+  static bool _isRegionalIndicator(String text, int offset) =>
+      offset + 1 < text.length &&
+      text.codeUnitAt(offset) == 0xd83c &&
+      text.codeUnitAt(offset + 1) >= 0xdde6 &&
+      text.codeUnitAt(offset + 1) <= 0xddff;
+
+  /// The start of the grapheme cluster containing [offset].
+  static int _boundaryStart(String text, int offset) => text.isEmpty
+      ? 0
+      : CharacterRange.at(text, offset.clamp(0, text.length))
+          .stringBeforeLength;
+
+  /// The end of the grapheme cluster containing [offset].
+  static int _boundaryEnd(String text, int offset) {
+    if (text.isEmpty) return 0;
+    final range = CharacterRange.at(text, offset.clamp(0, text.length));
+    return range.stringBeforeLength + range.current.length;
+  }
 
   @override
   TextSpan buildTextSpan(

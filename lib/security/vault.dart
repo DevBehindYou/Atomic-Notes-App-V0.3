@@ -95,6 +95,19 @@ class Vault {
   final _pendingCacheDeletes = <String, Future<void>>{};
   final _failedCacheDeletes = <String>{};
 
+  // Single-use result of the vault check made by main() before the first
+  // frame, offered to the first splash of the same owner/session/generation so
+  // it does not repeat an identical cloud check. Only a confirmed existing
+  // cloud vault with a completed key-cache read is offered. Any other vault
+  // call bumps [_handoffEpoch], which withdraws an offer and stops an in-flight
+  // startup check from making one.
+  int _handoffEpoch = 0;
+  ({_VaultOwner owner, Stopwatch age})? _startupHandoff;
+
+  /// The splash follows main() within one frame; an older offer is stale.
+  @visibleForTesting
+  static Duration startupHandoffMaxAge = const Duration(seconds: 30);
+
   final ApiClient _api;
   String? get _uid => _api.currentUserId;
   String _keyStore(String uid) => 'atomic_vault_key_$uid';
@@ -145,6 +158,52 @@ class Vault {
   /// notes were written in the clear. splash_screen now calls this on every
   /// launch and after every login, which is what makes it correct.
   Future<void> init() {
+    _dropStartupHandoff();
+    return _beginInit(null);
+  }
+
+  /// The pre-first-frame check in main(). Behaves exactly like [init], and may
+  /// additionally leave one [initAfterStartup] call a reusable result.
+  Future<void> initAtStartup() {
+    _dropStartupHandoff();
+    return _beginInit(_handoffEpoch);
+  }
+
+  /// The splash check. Reuses main()'s result once when it confirmed an
+  /// existing cloud vault for this unchanged owner/session/generation, with no
+  /// vault call, key-cache failure or pending key deletion since. Otherwise,
+  /// and on every later call, this is an ordinary [init] refresh.
+  Future<void> initAfterStartup() {
+    final handoff = _startupHandoff;
+    _dropStartupHandoff();
+    if (handoff != null) {
+      final owner = _captureOwner();
+      if (owner != null &&
+          owner == handoff.owner &&
+          handoff.age.elapsed <= startupHandoffMaxAge &&
+          _enabled &&
+          !_pendingCacheDeletes.containsKey(owner.user) &&
+          !_failedCacheDeletes.contains(owner.user)) {
+        return Future<void>.value();
+      }
+    }
+    return _beginInit(null);
+  }
+
+  /// Withdraw main()'s result without making a vault call.
+  void discardStartupHandoff() => _dropStartupHandoff();
+
+  void _dropStartupHandoff() {
+    _handoffEpoch++;
+    _startupHandoff = null;
+  }
+
+  void _offerStartupHandoff(_VaultOwner owner, int? epoch) {
+    if (epoch == null || epoch != _handoffEpoch || !_isCurrent(owner)) return;
+    _startupHandoff = (owner: owner, age: Stopwatch()..start());
+  }
+
+  Future<void> _beginInit(int? startupEpoch) {
     final owner = _captureOwner();
     if (owner == null) return Future<void>.value();
     if (_initializingOwner == owner && _initializing != null) {
@@ -154,7 +213,7 @@ class Vault {
     // state, including after an earlier response said no vault existed.
     _initializingOwner = owner;
     late final Future<void> pending;
-    pending = _initialize(owner).whenComplete(() {
+    pending = _initialize(owner, startupEpoch).whenComplete(() {
       if (identical(_initializing, pending)) {
         _initializing = null;
         _initializingOwner = null;
@@ -164,8 +223,9 @@ class Vault {
     return pending;
   }
 
-  Future<void> _initialize(_VaultOwner owner) async {
+  Future<void> _initialize(_VaultOwner owner, int? startupEpoch) async {
     var cloudUnavailable = false;
+    var cloudVault = false;
     try {
       // Bounded: offline with an expired token, the client tries to refresh
       // before this request and would otherwise retry indefinitely — which,
@@ -174,6 +234,7 @@ class Vault {
       // always opens (local-first).
       final row = await _api.getVault().timeout(const Duration(seconds: 5));
       if (!_isCurrent(owner)) return;
+      cloudVault = row != null;
       _enabled = row != null || _key != null;
     } catch (_) {
       if (!_isCurrent(owner)) return;
@@ -182,7 +243,10 @@ class Vault {
     }
 
     if (!_enabled && !cloudUnavailable) return;
-    if (_key != null) return;
+    if (_key != null) {
+      if (cloudVault) _offerStartupHandoff(owner, startupEpoch);
+      return;
+    }
 
     try {
       // An explicit lock may already have queued removal of this device key.
@@ -203,6 +267,7 @@ class Vault {
         _enabled = true;
         debugPrint('Vault: unlocked from device key store');
       }
+      if (cloudVault) _offerStartupHandoff(owner, startupEpoch);
     } catch (_) {
       if (!_isCurrent(owner) || _key != null) return;
       // A failed read is not an absent vault. Preserve the entry and require
@@ -220,6 +285,7 @@ class Vault {
   /// rather than trusting cached state. Replacing a vault row is the one
   /// operation that can permanently orphan notes.
   Future<void> createVault(List<String> phrase) async {
+    _dropStartupHandoff();
     final owner = _captureOwner();
     if (owner == null) throw StateError('Not signed in');
     final uid = owner.user;
@@ -275,6 +341,7 @@ class Vault {
   /// [VaultUnverifiableError] when neither the verifier nor a sample is
   /// available, rather than accepting a phrase it could not check.
   Future<bool> unlock(List<String> phrase, {String? sampleCiphertext}) async {
+    _dropStartupHandoff();
     final owner = _captureOwner();
     if (owner == null || _pendingCacheDeletes.containsKey(owner.user)) {
       return false;
@@ -398,6 +465,7 @@ class Vault {
   /// Forget the key on this device only. The account stays encrypted and the
   /// phrase is needed to open it here again.
   Future<void> lockThisDevice() async {
+    _dropStartupHandoff();
     final uid = _uid;
     _generation++;
     _key = null;
@@ -412,6 +480,7 @@ class Vault {
   /// user gets nothing — [init] rebinds per account and only reads that
   /// account's key store entry.
   void lockMemory() {
+    _dropStartupHandoff();
     _generation++;
     _key = null;
   }
@@ -419,6 +488,7 @@ class Vault {
   /// Wipe key material for this device. Call on logout BEFORE signOut, while
   /// the user id is still readable.
   Future<void> clearLocal() async {
+    _dropStartupHandoff();
     final uid = _uid;
     _generation++;
     _key = null;
