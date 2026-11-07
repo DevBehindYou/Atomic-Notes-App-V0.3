@@ -272,8 +272,9 @@ void main() {
     final before = note.toMap();
     await _open(tester, note);
     await tester.enterText(_body, 'Unsaved draft');
+    final thumbnail = tester.widget<Image>(find.byType(Image)).image;
     final originalBytes =
-        (tester.widget<Image>(find.byType(Image)).image as MemoryImage).bytes;
+        ((thumbnail as ResizeImage).imageProvider as MemoryImage).bytes;
     for (final dismiss in ['close', 'back', 'barrier']) {
       await _view(tester);
       final shownBytes =
