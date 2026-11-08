@@ -294,4 +294,75 @@ void main() {
         'Line 1');
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('line keys follow the line and keep a valid equality contract',
+      (tester) async {
+    await openEditor(
+        tester,
+        Note(id: 'line-keys', kind: NoteKind.todo, body: 'Context', items: [
+          TodoItem(text: 'First'),
+          TodoItem(text: 'Second'),
+        ]));
+    await tester.tap(find.byTooltip('Add text line'));
+    await tester.pumpAndSettle();
+
+    final page = find.byType(NotesCreaterPage);
+    final keys = <Key>{
+      for (final widget in tester.widgetList(find.descendant(
+          of: page, matching: find.byWidgetPredicate((w) => w.key != null))))
+        widget.key!,
+    };
+    final positionNames = [
+      'note-body',
+      for (var i = 0; i < 6; i++) ...['note-text-$i', 'note-item-$i'],
+    ];
+    final lines = [
+      for (final state
+          in tester.stateList<EditableTextState>(find.byType(EditableText)))
+        if (state.widget.controller is RichNoteController)
+          state.widget.controller as RichNoteController,
+    ];
+    expect(lines.length, 4, reason: 'context, two items and a new text line');
+
+    // No key on the page stands in for a line's position name.
+    for (final name in positionNames) {
+      expect(find.byKey(ValueKey(name)), findsNothing, reason: name);
+    }
+
+    // Each line's widget is keyed by its controller's identity alone.
+    for (final line in lines) {
+      final probe = ObjectKey(line);
+      final element = tester.element(find.byWidgetPredicate(
+          (w) => w is EditableText && identical(w.controller, line)));
+      final lineKeys = <Key>[];
+      element.visitAncestorElements((ancestor) {
+        if (ancestor.widget is NotesCreaterPage) return false;
+        final key = ancestor.widget.key;
+        if (key != null && key == probe && probe == key) lineKeys.add(key);
+        return true;
+      });
+      expect(lineKeys, isNotEmpty, reason: line.text);
+      expect(lineKeys.every((key) => key.hashCode == probe.hashCode), isTrue);
+    }
+
+    // Equality is reflexive, symmetric, transitive and hash-consistent across
+    // every key on the page and every position-name or identity probe.
+    final all = <Key>[
+      ...keys,
+      for (final name in positionNames) ValueKey(name),
+      for (final line in lines) ObjectKey(line),
+    ];
+    for (final a in all) {
+      expect(a == a, isTrue, reason: '$a');
+      for (final b in all) {
+        expect(a == b, b == a, reason: '$a vs $b');
+        if (a == b) expect(a.hashCode, b.hashCode, reason: '$a vs $b');
+        if (a != b) continue;
+        for (final c in all) {
+          if (b == c) expect(a == c, isTrue, reason: '$a, $b, $c');
+        }
+      }
+    }
+    expect(tester.takeException(), isNull);
+  });
 }

@@ -654,20 +654,22 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
       ]);
     }
     if (!line.isChecklist) {
-      return TextField(
-        key: _LineKey(
-            _lines[index], index == 0 ? 'note-body' : 'note-text-$index'),
-        readOnly: _document.isReadOnly,
-        contextMenuBuilder: (context, state) => _selectionMenu(state, index),
-        controller: _lines[index],
-        focusNode: _focus[index],
-        keyboardType: TextInputType.multiline,
-        textCapitalization: TextCapitalization.sentences,
-        maxLines: null,
-        minLines: _document.lines.length == 1 ? 5 : null,
-        style: AppType.bodyLg,
-        cursorColor: AppColors.signal,
-        decoration: _decoration('Start writing…'),
+      return NoteFieldLocator(
+        key: ObjectKey(_lines[index]),
+        name: index == 0 ? 'note-body' : 'note-text-$index',
+        child: TextField(
+          readOnly: _document.isReadOnly,
+          contextMenuBuilder: (context, state) => _selectionMenu(state, index),
+          controller: _lines[index],
+          focusNode: _focus[index],
+          keyboardType: TextInputType.multiline,
+          textCapitalization: TextCapitalization.sentences,
+          maxLines: null,
+          minLines: _document.lines.length == 1 ? 5 : null,
+          style: AppType.bodyLg,
+          cursorColor: AppColors.signal,
+          decoration: _decoration('Start writing…'),
+        ),
       );
     }
     return Row(
@@ -682,21 +684,23 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
               setState(() => _document.setDone(index, value!)),
         ),
         Expanded(
-          child: TextField(
-            key: _LineKey(_lines[index], 'note-item-$index'),
-            readOnly: _document.isReadOnly,
-            contextMenuBuilder: (context, state) =>
-                _selectionMenu(state, index),
-            controller: _lines[index],
-            focusNode: _focus[index],
-            textCapitalization: TextCapitalization.sentences,
-            textInputAction: TextInputAction.next,
-            maxLines: null,
-            onSubmitted: (_) => _insertLine(checklist: true, after: index),
-            style: AppType.bodyMd.copyWith(
-              decoration: line.done ? TextDecoration.lineThrough : null,
+          child: NoteFieldLocator(
+            name: 'note-item-$index',
+            child: TextField(
+              readOnly: _document.isReadOnly,
+              contextMenuBuilder: (context, state) =>
+                  _selectionMenu(state, index),
+              controller: _lines[index],
+              focusNode: _focus[index],
+              textCapitalization: TextCapitalization.sentences,
+              textInputAction: TextInputAction.next,
+              maxLines: null,
+              onSubmitted: (_) => _insertLine(checklist: true, after: index),
+              style: AppType.bodyMd.copyWith(
+                decoration: line.done ? TextDecoration.lineThrough : null,
+              ),
+              decoration: _decoration('List item'),
             ),
-            decoration: _decoration('List item'),
           ),
         ),
         IconButton(
@@ -1103,32 +1107,20 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
   }
 }
 
-/// The key of a line's text field.
+/// Names a line's text field by its current position: `note-body`,
+/// `note-text-N` or `note-item-N`.
 ///
-/// Flutter matches a line's widgets to its existing elements by this key, so
-/// it follows the line's controller, not its position. Inserting or removing
-/// a line keeps every other line's editing state instead of recreating or
-/// rebinding each field after it. [label] keeps the position-based names
-/// (`note-body`, `note-text-N`, `note-item-N`) that tests and tooling find
-/// fields by: `find.byKey(ValueKey('note-item-2'))` matches the field now at
-/// position 2.
-@immutable
-class _LineKey extends LocalKey {
-  const _LineKey(this.line, this.label);
+/// Tests and tooling find a field by this name. It is plain metadata: it is
+/// not a key, so it plays no part in matching widgets to elements. A line's
+/// widget is keyed by its controller ([ObjectKey]), so inserting or removing a
+/// line keeps every other line's editing state, and the name always describes
+/// the field's position now.
+class NoteFieldLocator extends StatelessWidget {
+  const NoteFieldLocator({required this.name, required this.child, super.key});
 
-  final RichNoteController line;
-  final String label;
+  final String name;
+  final Widget child;
 
   @override
-  bool operator ==(Object other) {
-    if (other is _LineKey) return identical(line, other.line);
-    // One-way match for finders that look a field up by its position name.
-    return other is ValueKey<String> && other.value == label;
-  }
-
-  @override
-  int get hashCode => identityHashCode(line);
-
-  @override
-  String toString() => '[_LineKey $label]';
+  Widget build(BuildContext context) => child;
 }

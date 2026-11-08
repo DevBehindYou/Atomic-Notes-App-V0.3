@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as image;
 import 'package:image_picker/image_picker.dart';
+import '../notes_editor_page_test.dart' show field;
 
 class _ImageInput implements EditorImageInput {
   String? result;
@@ -93,7 +94,7 @@ class _SpeechInput implements EditorSpeechInput {
       result!(words, finalResult);
 }
 
-Finder get _body => find.byKey(const ValueKey('note-body'));
+Finder get _body => field('note-body');
 TextEditingController _controller(WidgetTester tester) =>
     tester.widget<TextField>(_body).controller!;
 
@@ -676,7 +677,7 @@ void main() {
     await tester.pump();
     final before = _controller(tester).text;
     final canceledBefore = input.cancels;
-    final other = find.byKey(const ValueKey('note-item-1'));
+    final other = field('note-item-1');
     await tester.ensureVisible(other);
     await tester.tap(other);
     await tester.pump();

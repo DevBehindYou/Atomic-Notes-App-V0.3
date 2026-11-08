@@ -8,6 +8,7 @@ import 'package:atomic_notes/profile/guest_workspace_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive_ce.dart';
+import '../notes_editor_page_test.dart' as editor show field;
 
 /// Any attempt to open a network connection fails the test.
 class _NoNetwork extends HttpOverrides {
@@ -140,8 +141,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.enterText(
         find.byKey(const ValueKey('note-title')), 'Groceries');
-    await tester.enterText(
-        find.byKey(const ValueKey('note-body')), 'Milk and eggs');
+    await tester.enterText(editor.field('note-body'), 'Milk and eggs');
     await tester.tap(find.text('Done'));
     await tester.pumpAndSettle();
     expect(find.text('Groceries'), findsOneWidget);
@@ -192,13 +192,13 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('guest-new-note')));
     await tester.pumpAndSettle();
     await tester.enterText(find.byKey(const ValueKey('note-title')), title);
-    await tester.enterText(find.byKey(const ValueKey('note-body')), body);
+    await tester.enterText(editor.field('note-body'), body);
     await tester.tap(find.text('Done'));
     await tester.pumpAndSettle();
   }
 
   String field(WidgetTester tester, String key) =>
-      tester.widget<TextField>(find.byKey(ValueKey(key))).controller!.text;
+      tester.widget<TextField>(editor.field(key)).controller!.text;
 
   testWidgets('nothing can be edited while the store is still opening',
       (tester) async {
