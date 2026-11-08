@@ -2,16 +2,9 @@ import 'dart:async';
 import 'mascot/mascot_runtime.dart';
 import 'page/endpage/mascot_settings_page.dart';
 
-import 'package:atomic_notes/api/atomic_notes_api.dart';
 import 'package:atomic_notes/authentication/auth_pages/login_page.dart';
 import 'package:atomic_notes/authentication/auth_services/session_guard.dart';
-import 'package:atomic_notes/database/note_quota.dart';
-import 'package:atomic_notes/database/notes_repository.dart';
-import 'package:atomic_notes/database/sync_status.dart';
-import 'package:atomic_notes/profile/profile_store.dart';
 import 'package:atomic_notes/platform/browser_preview_gate.dart';
-import 'package:atomic_notes/security/screen_security.dart';
-import 'package:atomic_notes/security/vault.dart';
 import 'package:atomic_notes/state/app_bloc_observer.dart';
 import 'package:atomic_notes/state/app_blocs.dart';
 import 'package:atomic_notes/page/endpage/about_us_page.dart';
@@ -41,10 +34,11 @@ import 'package:atomic_notes/theme/app_tokens.dart';
 import 'package:atomic_notes/theme/editorial.dart';
 import 'package:atomic_notes/utility/intropages/onboarding_screen.dart';
 import 'package:atomic_notes/utility/intropages/energy_intro_screen.dart';
+import 'package:atomic_notes/utility/startup_sequence.dart';
+import 'package:atomic_notes/utility/startup_trace.dart';
 import 'package:bloc/bloc.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
-import 'package:hive_ce_flutter/hive_ce_flutter.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -55,42 +49,21 @@ Future<void> main() async {
     return;
   }
   Bloc.observer = const AppBlocObserver();
+  // Opt-in phase timing (--dart-define=ATOMIC_STARTUP_TRACE=true, never in
+  // release). Off, each step below runs exactly as written.
+  final trace = StartupTrace.fromEnvironment();
 
   try {
-    // Bounded so startup can't hang forever. ApiClient.init() only reads a
-    // local secure-storage token — no network — so this is fast; the
-    // timeout mirrors the old Supabase.initialize() one so a slow keystore
-    // read still can't block the app opening.
-    try {
-      await ApiClient.instance.init().timeout(const Duration(seconds: 8));
-    } catch (e) {
-      // Local-first: a slow or absent secure-storage read must never block
-      // startup. Continue so local notes always open.
-      debugPrint('ApiClient.init slow/failed; continuing local-first: $e');
-    }
-
-    await Hive.initFlutter();
-    // open the Hive Boxes. These stay open for the life of the process —
-    // individual screens must not close them (see splash_screen.dart).
-    await Hive.openBox<bool>('authBox');
-    // "No screenshots" is a device-wide choice: apply it before any screen shows.
-    await ScreenSecurity.applySaved();
-    // Avatar and profile switches are local: read them before any screen draws.
-    await ProfileStore.instance.init();
-    await Hive.openBox<bool>('syncBox');
-    await SyncStatusHelper.init();
-    await NoteQuota.init();
-    // Determine encryption state and auto-unlock from a cached key (if any)
-    // before the repository loads, so encrypted notes can be decrypted on load.
-    await Vault.instance.init();
-    await NotesRepository.instance.init();
+    await runStartupSequence(const StartupServices(), trace);
   } catch (error) {
+    trace.finish();
     // This used to be `exit(0)`: the app vanished on launch with no message,
     // indistinguishable from a crash and impossible to report.
     runApp(StartupFailedApp(error: error.toString()));
     return;
   }
 
+  trace.finish();
   runApp(const MascotScope(child: MyApp()));
 }
 

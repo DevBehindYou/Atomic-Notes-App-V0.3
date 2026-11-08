@@ -39,6 +39,15 @@ abstract final class ArchiveContainer {
 
   /// Name stem of the temporary file next to the target. Never a backup.
   static const partialSuffix = '.partial';
+
+  /// The only key-derivation profile an archive may use: the vault's own
+  /// Argon2id parameters. The header is read before anything is
+  /// authenticated, so any other profile is refused before derivation rather
+  /// than letting an archive choose how much memory and time it costs.
+  static bool supportedKdf(int memory, int iterations, int parallelism) =>
+      memory == Vault.kdfMemory &&
+      iterations == Vault.kdfIterations &&
+      parallelism == Vault.kdfParallelism;
 }
 
 /// The export password's key and the context needed to derive it again.
@@ -71,6 +80,10 @@ class ArchiveKey {
       {required int memory,
       required int iterations,
       required int parallelism}) async {
+    if (!ArchiveContainer.supportedKdf(memory, iterations, parallelism)) {
+      throw const ArchiveFormatException(
+          'unsupported_kdf', 'The archive key settings are not supported');
+    }
     if (password.isEmpty) {
       throw const ArchiveFormatException(
           'key_required', 'Enter the export password');
@@ -108,14 +121,26 @@ abstract class ExportTarget {
 }
 
 /// Writes to `<file>.partial-<random>`, flushes, then renames over [file].
+///
+/// The rename replaces [file] in one step on every platform Dart supports
+/// (Windows included, via MoveFileEx with replace), so the previous export is
+/// never deleted first. If the rename fails, [file] still holds the previous
+/// export and [abort] removes only the temporary file.
 class FileExportTarget implements ExportTarget {
-  FileExportTarget(this.file, {Random? random})
+  FileExportTarget(this.file, {Random? random, this.replace = _rename})
       : _temp = File('${file.path}${ArchiveContainer.partialSuffix}-'
             '${(random ?? Random.secure()).nextInt(1 << 32).toRadixString(16)}');
 
   final File file;
   final File _temp;
   RandomAccessFile? _handle;
+
+  /// Moves the finished temporary file over the target. Injectable so tests
+  /// can make the final step fail.
+  final Future<void> Function(File temporary, File target) replace;
+
+  static Future<void> _rename(File temporary, File target) =>
+      temporary.rename(target.path);
 
   File get temporaryFile => _temp;
 
@@ -135,10 +160,7 @@ class FileExportTarget implements ExportTarget {
     _handle = null;
     await handle.flush();
     await handle.close();
-    // rename replaces an existing file on Android and iOS. Windows refuses,
-    // so the old export is removed only after the new one is complete.
-    if (Platform.isWindows && await file.exists()) await file.delete();
-    await _temp.rename(file.path);
+    await replace(_temp, file);
   }
 
   @override
@@ -353,6 +375,15 @@ class ArchiveReader {
 
   ArchiveHeader? _header;
   List<int>? _headerHash;
+  Uint8List? _manifestBytes;
+
+  /// SHA-256 of the header bytes, once [readHeader] has run.
+  List<int>? get headerDigest => _headerHash;
+
+  /// The authenticated manifest frame exactly as stored, once
+  /// [readManifest] has run. Every entry is later checked against the
+  /// checksums it lists.
+  Uint8List? get manifestBytes => _manifestBytes;
   ArchiveKey? _key;
   int _index = 0;
 
@@ -397,16 +428,11 @@ class ArchiveReader {
     final memory = view.getUint32(1);
     final iterations = view.getUint32(5);
     final parallelism = view.getUint8(9);
-    // The same bounds the archive manifest applies to vault parameters, so a
-    // hostile header cannot demand an unbounded derivation.
-    if (memory < 8 ||
-        memory > 1 << 22 ||
-        iterations < 1 ||
-        iterations > 64 ||
-        parallelism < 1 ||
-        parallelism > 16) {
+    // Checked here, before any key is derived: the header is not yet
+    // authenticated, so it must not choose the derivation cost.
+    if (!ArchiveContainer.supportedKdf(memory, iterations, parallelism)) {
       throw const ArchiveFormatException(
-          'malformed', 'The archive key settings are invalid');
+          'unsupported_kdf', 'The archive key settings are not supported');
     }
     return ArchiveHeader._(true, Uint8List.fromList(rest.sublist(10)), memory,
         iterations, parallelism, Uint8List.fromList([...fixed, ...rest]));
@@ -451,8 +477,12 @@ class ArchiveReader {
     }
   }
 
-  Future<ArchiveManifest> readManifest() async =>
-      ArchiveManifest.parse(await _frame(ArchiveLimits.maxManifestBytes));
+  Future<ArchiveManifest> readManifest() async {
+    final bytes = await _frame(ArchiveLimits.maxManifestBytes);
+    final manifest = ArchiveManifest.parse(bytes);
+    _manifestBytes = bytes;
+    return manifest;
+  }
 
   Future<ArchivedNote> readEntry(ArchiveEntry entry) async =>
       ArchiveNoteCodec.decode(await _frame(ArchiveLimits.maxEntryBytes), entry);

@@ -30,14 +30,13 @@ Map<String, Map<String, Object?>> _device() => {
       _d: _note(_d, 'D only here').toMap(),
     };
 
-/// Archive: A, B, C, new E, and new sealed F.
-List<ArchiveSource> _sources() => [
+/// Archive: A, B, C, new E and new F.
+List<ArchiveSource> _sources({String b = 'B in archive'}) => [
       ArchiveSource(_note(_a, 'A')),
-      ArchiveSource(_note(_b, 'B in archive')),
+      ArchiveSource(_note(_b, b)),
       ArchiveSource(_note(_c, 'C in archive')),
       ArchiveSource(_note(_e, 'E new')),
-      ArchiveSource(Note(id: _f, createdAt: _time, updatedAt: _time),
-          sealedPayload: 'sealed-payload'),
+      ArchiveSource(_note(_f, 'F new')),
     ];
 
 final _choices = {
@@ -58,12 +57,19 @@ class _MemoryTarget implements ExportTarget {
   Future<void> abort() async {}
 }
 
-Future<Uint8List> _archive({ArchiveKey? key}) async {
+Future<Uint8List> _archive(
+    {ArchiveKey? key, List<ArchiveSource>? sources}) async {
   final target = _MemoryTarget();
   await ExportWriter(clock: () => _time)
-      .write(target, _sources(), key: key, vault: _vault);
+      .write(target, sources ?? _sources(), key: key, vault: _vault);
   return target.committed!;
 }
+
+/// The preview a user would approve for [bytes] on this device.
+Future<ImportPreview> _approve(List<int> bytes, {ArchiveKey? key}) =>
+    ImportValidator.inspect(ArchiveByteSource.bytes(bytes),
+        local: _View(_Store(_device())),
+        unlock: key == null ? null : (_) async => key);
 
 class _Crash implements Exception {
   const _Crash();
@@ -181,8 +187,7 @@ void _expectRestored(_Store store, Map<String, Map<String, Object?>> device) {
   expect(store.target[_c], device[_c], reason: 'device version kept');
   expect(store.target[_d], device[_d], reason: 'not in archive: untouched');
   expect(_title(store, _e), 'E new');
-  expect(store.target[_f]!['payload'], 'sealed-payload');
-  expect(store.target[_f]!['enc_v'], 1);
+  expect(_title(store, _f), 'F new');
   final backup = store.backups.values.single;
   expect(backup[_b], device[_b], reason: 'replaced version preserved');
   expect(backup.containsKey(_e) && backup[_e] == null, isTrue);
@@ -198,6 +203,7 @@ void main() {
     final bytes = await _archive();
     final result = await RestoreCoordinator(store, random: Random(1)).restore(
         () => ArchiveByteSource.bytes(bytes),
+        approved: await _approve(bytes),
         local: _View(store),
         choices: _choices);
     expect(result.written, [_e, _f, _b]);
@@ -214,6 +220,7 @@ void main() {
       await expectLater(
           RestoreCoordinator(store).restore(
               () => ArchiveByteSource.bytes(bytes),
+              approved: await _approve(bytes),
               local: _View(store),
               choices: {_b: ConflictChoice.useArchive}),
           throwsA(isA<RestoreRefused>()));
@@ -228,6 +235,7 @@ void main() {
       await expectLater(
           RestoreCoordinator(store).restore(
               () => ArchiveByteSource.bytes(target.committed!),
+              approved: await _approve(target.committed!),
               local: _View(store)),
           throwsA(isA<RestoreRefused>()));
       expect(store.writes, isEmpty);
@@ -239,6 +247,7 @@ void main() {
       await expectLater(
           RestoreCoordinator(store).restore(
               () => ArchiveByteSource.bytes(bytes),
+              approved: await _approve(bytes, key: _key()),
               local: _View(store),
               choices: _choices,
               key: _key(2)),
@@ -254,6 +263,7 @@ void main() {
       await expectLater(
           RestoreCoordinator(store).restore(
               () => ArchiveByteSource.bytes(bytes),
+              approved: await _approve(bytes),
               local: _View(store),
               choices: _choices),
           throwsA(isA<RestoreRefused>()));
@@ -267,10 +277,104 @@ void main() {
       final bytes = await _archive(key: key);
       await RestoreCoordinator(store).restore(
           () => ArchiveByteSource.bytes(bytes),
+          approved: await _approve(bytes, key: key),
           local: _View(store),
           choices: _choices,
           key: key);
       _expectRestored(store, device);
+    });
+  });
+
+  group('restore is bound to the approved archive', () {
+    // Same ids, sizes and structure; only B's content differs.
+    Future<Uint8List> replacement() =>
+        _archive(sources: _sources(b: 'B swapped in'));
+
+    test('an archive replaced after approval is refused', () async {
+      final store = _Store(_device());
+      final approved = await _approve(await _archive());
+      final other = await replacement();
+      await expectLater(
+          RestoreCoordinator(store).restore(
+              () => ArchiveByteSource.bytes(other),
+              approved: approved,
+              local: _View(store),
+              choices: _choices),
+          throwsA(isA<RestoreRefused>()
+              .having((e) => e.message, 'message', contains('changed'))));
+      expect(store.writes, isEmpty);
+    });
+
+    test('an archive replaced between preflight and staging is refused',
+        () async {
+      final device = _device();
+      final store = _Store(_device());
+      final original = await _archive();
+      final other = await replacement();
+      var opens = 0;
+      await expectLater(
+          RestoreCoordinator(store).restore(
+              () => ArchiveByteSource.bytes(opens++ == 0 ? original : other),
+              approved: await _approve(original),
+              local: _View(store),
+              choices: _choices),
+          throwsA(isA<RestoreRefused>()));
+      expect(opens, 2);
+      expect(store.writes, isEmpty, reason: 'refused before the marker');
+      expect(store.target, device);
+    });
+
+    test('the same ids with different content have different digests',
+        () async {
+      final a = await _approve(await _archive());
+      final b = await _approve(await replacement());
+      expect([a.added, a.conflicts, a.unchanged],
+          [b.added, b.conflicts, b.unchanged]);
+      expect(a.digest, isNotNull);
+      expect(a.digest, isNot(b.digest));
+      expect((await _approve(await _archive())).digest, a.digest,
+          reason: 'deterministic for the same archive bytes');
+    });
+
+    test('a locked or unrestorable preview cannot authorize a restore',
+        () async {
+      final store = _Store(_device());
+      final bytes = await _archive();
+      for (final approved in [
+        ImportPreview.locked(),
+        await _approve(await _archive(sources: [
+          ArchiveSource(Note(id: _f, createdAt: _time, updatedAt: _time),
+              sealedPayload: 'sealed-payload'),
+        ])),
+      ]) {
+        await expectLater(
+            RestoreCoordinator(store).restore(
+                () => ArchiveByteSource.bytes(bytes),
+                approved: approved,
+                local: _View(store),
+                choices: _choices),
+            throwsA(isA<RestoreRefused>()));
+      }
+      expect(store.writes, isEmpty);
+    });
+
+    test('a sealed archive is refused without writing', () async {
+      final store = _Store(_device());
+      final bytes = await _archive(sources: [
+        ..._sources(),
+        ArchiveSource(Note(id: _id('9'), createdAt: _time, updatedAt: _time),
+            sealedPayload: 'sealed-payload'),
+      ]);
+      final approved = await _approve(bytes);
+      expect(approved.canRestore, isFalse);
+      await expectLater(
+          RestoreCoordinator(store).restore(
+              () => ArchiveByteSource.bytes(bytes),
+              approved: approved,
+              local: _View(store),
+              choices: _choices),
+          throwsA(isA<RestoreRefused>()));
+      expect(store.writes, isEmpty);
     });
   });
 
@@ -280,6 +384,7 @@ void main() {
       final probe = _Store(_device());
       await RestoreCoordinator(probe).restore(
           () => ArchiveByteSource.bytes(bytes),
+          approved: await _approve(bytes),
           local: _View(probe),
           choices: _choices);
       final boundaries = probe.calls;
@@ -291,6 +396,7 @@ void main() {
         await expectLater(
             RestoreCoordinator(store).restore(
                 () => ArchiveByteSource.bytes(bytes),
+                approved: await _approve(bytes),
                 local: _View(store),
                 choices: _choices),
             throwsA(isA<_Crash>()),
@@ -318,8 +424,9 @@ void main() {
 
     test('a crash during resume is itself resumable', () async {
       final bytes = await _archive();
-      Future<void> run(_Store store) => RestoreCoordinator(store).restore(
+      Future<void> run(_Store store) async => RestoreCoordinator(store).restore(
           () => ArchiveByteSource.bytes(bytes),
+          approved: await _approve(bytes),
           local: _View(store),
           choices: _choices);
       // The first boundary at which a crash leaves a note already written.

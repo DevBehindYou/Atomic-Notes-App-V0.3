@@ -1,6 +1,5 @@
-import 'dart:convert';
-
 import 'package:atomic_notes/database/note.dart';
+import 'package:cryptography/cryptography.dart';
 import 'package:atomic_notes/database/note_document.dart';
 import 'package:atomic_notes/recovery/archive_manifest.dart';
 import 'package:atomic_notes/recovery/export_writer.dart';
@@ -40,6 +39,7 @@ class ImportPreview {
     this.unchanged = const [],
     this.conflicts = const [],
     this.issues = const [],
+    this.digest,
   });
 
   factory ImportPreview.locked() =>
@@ -52,8 +52,9 @@ class ImportPreview {
   final int live;
   final int deleted;
 
-  /// Notes kept as vault payloads. Their content is checked when the vault
-  /// opens them; here only their framing, size and checksum are verified.
+  /// Notes kept as vault payloads. Each one is also an issue
+  /// (`sealed_unsupported`), so an archive holding any of them cannot be
+  /// restored yet: see [ImportValidator.inspect].
   final int sealed;
   final int checklists;
   final int images;
@@ -68,6 +69,11 @@ class ImportPreview {
   /// content cannot be compared yet). Restore must ask; it never merges.
   final List<String> conflicts;
   final List<ImportIssue> issues;
+
+  /// Identifies exactly the archive this preview describes: see
+  /// [archiveDigest]. Null for a locked preview. Restore (C14) proceeds only
+  /// for an archive with this same digest.
+  final String? digest;
 
   /// Restore may be offered only for a fully validated, unlocked archive.
   bool get canRestore => !locked && issues.isEmpty;
@@ -108,8 +114,15 @@ abstract final class ImportValidator {
       final existing = local.byId(note.id);
       if (archived.sealed) {
         sealed++;
-        _sealedIssue(archived, issues);
-        // Sealed content cannot be compared until the vault opens it.
+        // A vault payload is sealed under a key derived from the recovery
+        // phrase and a salt bound to the source account's user id. The
+        // export password protects the archive, not that inner key, so the
+        // payload opens only in the source account, and nothing in the
+        // archive proves which account that is. Until a verified source
+        // context and rekeying exist, sealed rows are never offered for
+        // restore rather than written as notes that may never open.
+        issues.add(ImportIssue(note.id, 'sealed_unsupported',
+            'Encrypted vault notes cannot be restored from an archive yet'));
         existing == null ? added.add(note.id) : conflicts.add(note.id);
         continue;
       }
@@ -129,6 +142,7 @@ abstract final class ImportValidator {
       }
     }
     await reader.readTrailer(manifest);
+    final digest = await archiveDigest(reader);
     return ImportPreview._(
       locked: false,
       encrypted: header.encrypted,
@@ -143,19 +157,8 @@ abstract final class ImportValidator {
       unchanged: List.unmodifiable(unchanged),
       conflicts: List.unmodifiable(conflicts),
       issues: List.unmodifiable(issues),
+      digest: digest,
     );
-  }
-
-  static void _sealedIssue(ArchivedNote archived, List<ImportIssue> issues) {
-    // The codec already bounds the payload to the Server's sealed limit; a
-    // sealed row's wire form must also fit the note wire budget.
-    final row = archived.note.toRemote('')
-      ..['enc_v'] = 1
-      ..['payload'] = archived.payload;
-    if (utf8.encode(jsonEncode(row)).length > NoteContentBudget.maxWireBytes) {
-      issues.add(ImportIssue(archived.note.id, 'too_large',
-          'This note exceeds the sync size limit'));
-    }
   }
 
   static String _code(Note note, NoteDocument document) {
@@ -163,4 +166,22 @@ abstract final class ImportValidator {
     if (document.isReadOnly) return 'unsupported_format';
     return 'too_large';
   }
+}
+
+/// Hex SHA-256 over an archive's header digest and its manifest frame exactly
+/// as stored, once [ArchiveReader.readManifest] has run.
+///
+/// The manifest lists every entry's id, kind, flags, size and SHA-256, and
+/// the reader refuses any entry that does not match it, so two archives with
+/// the same digest yield the same notes. Archives with the same ids but
+/// different content have different digests.
+Future<String> archiveDigest(ArchiveReader reader) async {
+  final header = reader.headerDigest;
+  final manifest = reader.manifestBytes;
+  if (header == null || manifest == null) {
+    throw StateError('Read the header and manifest first');
+  }
+  final digest = await Sha256().hash([...header, ...manifest]);
+  return [for (final b in digest.bytes) b.toRadixString(16).padLeft(2, '0')]
+      .join();
 }

@@ -90,11 +90,15 @@ class RestoreResult {
 /// Restores a validated archive in two durable phases, with no silent merge.
 ///
 /// 1. **Preflight**, with no writes: the archive is inspected again
-///    ([ImportValidator]) and must be restorable; every conflict must have a
+///    ([ImportValidator]) and must be restorable and have the digest of the
+///    preview the user approved; every conflict must have a
 ///    [ConflictChoice]; a restore already in progress must be finished first.
-/// 2. **Staging**: a `staging` marker is written, then each planned note is
-///    read from the archive again (authenticated and checksummed) and staged.
-///    A failure here leaves the target untouched; [resume] discards it.
+/// 2. **Staging**: the archive is opened once more and its header and
+///    manifest must still have the approved digest, and it must hold no
+///    sealed entries, before anything is written. Then a `staging` marker is
+///    written and each planned note is read (authenticated and checked
+///    against the approved manifest's checksum) and staged. A failure here
+///    leaves the target untouched; [resume] discards it.
 /// 3. **Commit**: the marker moves to `committing`. For each note, the
 ///    target's previous version is backed up once, then the staged copy is
 ///    written. Each step is idempotent, so [resume] simply repeats the
@@ -111,8 +115,12 @@ class RestoreCoordinator {
   final RestoreStore store;
   final Random _random;
 
+  /// [approved] is the preview the user reviewed. The archive [open] yields
+  /// must be exactly that archive, on every read; a changed or replaced
+  /// archive is refused before anything is written.
   Future<RestoreResult> restore(
     ArchiveByteSource Function() open, {
+    required ImportPreview approved,
     required LocalNotesView local,
     Map<String, ConflictChoice> choices = const {},
     ArchiveKey? key,
@@ -121,8 +129,13 @@ class RestoreCoordinator {
       throw const RestoreRefused(
           'An earlier restore has not finished. Finish it before starting another.');
     }
+    final approvedDigest = approved.digest;
+    if (!approved.canRestore || approvedDigest == null) {
+      throw const RestoreRefused('This archive cannot be restored as it is.');
+    }
     final preview = await ImportValidator.inspect(open(),
         local: local, unlock: key == null ? null : (_) async => key);
+    if (preview.digest != approvedDigest) throw const RestoreRefused(_changed);
     if (!preview.canRestore) {
       throw const RestoreRefused('This archive cannot be restored as it is.');
     }
@@ -142,14 +155,24 @@ class RestoreCoordinator {
     ];
     final operationId = _operationId();
 
-    // Staging: the target is not touched.
-    await store.writeMarker(RestoreMarker(
-        operationId: operationId, phase: RestorePhase.staging, ids: ids));
-    final wanted = ids.toSet();
+    // The archive read for staging must be the approved one. Entries are
+    // checked against this manifest's checksums as they are read.
     final reader = ArchiveReader(open());
     final header = await reader.readHeader();
     if (header.encrypted) reader.useKey(key!);
     final manifest = await reader.readManifest();
+    if (await archiveDigest(reader) != approvedDigest) {
+      throw const RestoreRefused(_changed);
+    }
+    if (manifest.entries.any((entry) => entry.sealed)) {
+      throw const RestoreRefused(
+          'Encrypted vault notes cannot be restored from an archive yet.');
+    }
+
+    // Staging: the target is not touched.
+    await store.writeMarker(RestoreMarker(
+        operationId: operationId, phase: RestorePhase.staging, ids: ids));
+    final wanted = ids.toSet();
     for (final entry in manifest.entries) {
       final archived = await reader.readEntry(entry);
       if (wanted.contains(entry.id)) {
@@ -204,6 +227,9 @@ class RestoreCoordinator {
     await store.discardStaged(operationId);
     await store.clearMarker();
   }
+
+  static const _changed =
+      'This archive changed after it was reviewed. Review it again.';
 
   String _operationId() => List.generate(
       16, (_) => _random.nextInt(256).toRadixString(16).padLeft(2, '0')).join();
