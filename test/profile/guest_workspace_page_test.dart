@@ -19,9 +19,9 @@ class _NoNetwork extends HttpOverrides {
   }
 }
 
-/// In-memory guest notes. Widget tests run on fake time, where real Hive
-/// I/O cannot complete; the real store is covered by the adapter test below
-/// and by guest_profile_store_test.dart.
+/// In-memory guest notes for most widget tests. The real store is covered
+/// by the reset regression (driving Hive I/O with settleIo), the adapter test
+/// and guest_profile_store_test.dart.
 class _MemoryNotes implements GuestNotesPort {
   _MemoryNotes([List<Note> notes = const []])
       : _notes = {for (final n in notes) n.id: n.copy()};
@@ -32,6 +32,12 @@ class _MemoryNotes implements GuestNotesPort {
 
   /// Errors the next saves throw, in order.
   List<Object> failures = [];
+
+  /// Runs before a save, to hold it in flight.
+  Future<void> Function()? saveWith;
+
+  /// Like a real ended session: reads throw too, until the next open.
+  bool invalidated = false;
   int opens = 0;
   int writes = 0;
 
@@ -39,13 +45,23 @@ class _MemoryNotes implements GuestNotesPort {
   Future<void> open() async {
     opens++;
     await openWith?.call();
+    invalidated = false;
   }
 
   @override
-  List<Note> notes() => [for (final n in _notes.values) n.copy()];
+  List<Note> notes() {
+    if (invalidated) throw const GuestSessionStale();
+    return [for (final n in _notes.values) n.copy()];
+  }
+
   @override
   Future<void> save(Note note) async {
-    if (failures.isNotEmpty) throw failures.removeAt(0);
+    await saveWith?.call();
+    if (failures.isNotEmpty) {
+      final failure = failures.removeAt(0);
+      if (failure is GuestSessionStale) invalidated = true;
+      throw failure;
+    }
     writes++;
     _notes[note.id] = note.copy();
   }
@@ -259,7 +275,7 @@ void main() {
     await openWorkspace(tester, notes);
     await writeNote(tester, 'Plan', 'Call the plumber');
 
-    expect(notes.notes(), isEmpty);
+    expect(notes.writes, 0);
     expect(find.textContaining('was reset'), findsOneWidget);
     expect(find.text('Unsaved note: Plan'), findsOneWidget);
 
@@ -317,5 +333,169 @@ void main() {
     final reopened = GuestStoreNotes(GuestProfileStore());
     await reopened.open();
     expect(reopened.notes().map((n) => n.title), ['Kept']);
+  });
+
+  /// Lets real Hive I/O started from widget code finish: the event loop runs
+  /// in real time, then the test clock delivers the callbacks.
+  Future<void> settleIo(WidgetTester tester, bool Function() done) async {
+    for (var i = 0; i < 100 && !done(); i++) {
+      await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 10)));
+      await tester.pump();
+    }
+    expect(done(), isTrue, reason: 'real store I/O finished');
+  }
+
+  testWidgets(
+      'a real store reset during save keeps the draft, renders recovery and '
+      'retry saves into the current generation', (tester) async {
+    phone(tester);
+    final directory = (await tester.runAsync(
+        () => Directory.systemTemp.createTemp('atomic-guest-reset-')))!;
+    Hive.init(directory.path);
+    final store = GuestProfileStore();
+    final port = GuestStoreNotes(store);
+    await tester.pumpWidget(MaterialApp(home: GuestWorkspacePage(notes: port)));
+    await settleIo(tester, () => newNote(tester).onPressed != null);
+
+    // Another part of the app resets the guest workspace: this page's
+    // session ends, and real reads and writes through it now throw.
+    // Hive I/O stays in the widget test's zone, driven by [settleIo].
+    var reset = false;
+    unawaited(store.open().then(store.reset).then((_) => reset = true));
+    await settleIo(tester, () => reset);
+    expect(port.notes, throwsA(isA<GuestSessionStale>()));
+
+    await writeNote(tester, 'Plan', 'Call the plumber');
+    expect(tester.takeException(), isNull,
+        reason: 'the page never reads the ended session while rebuilding');
+    expect(find.textContaining('was reset'), findsOneWidget);
+    expect(find.text('Unsaved note: Plan'), findsOneWidget);
+    expect(newNote(tester).onPressed, isNull);
+
+    await tester.tap(find.byKey(const ValueKey('guest-pending-retry')));
+    await settleIo(tester,
+        () => find.byKey(const ValueKey('guest-pending')).evaluate().isEmpty);
+    expect(tester.takeException(), isNull);
+    List<Note>? current;
+    unawaited(store.open().then((session) => current = store.notes(session)));
+    await settleIo(tester, () => current != null);
+    expect(
+        current!.map((n) => (n.title, n.body)), [('Plan', 'Call the plumber')]);
+    expect(find.text('Plan'), findsOneWidget);
+
+    var closed = false;
+    unawaited(
+        store.close().then((_) => Hive.close()).then((_) => closed = true));
+    await settleIo(tester, () => closed);
+    await tester.runAsync(() => directory.delete(recursive: true));
+  });
+
+  testWidgets('if reopening fails the pending draft stays reachable',
+      (tester) async {
+    phone(tester);
+    final notes = _MemoryNotes()..failures = [const GuestSessionStale()];
+    await openWorkspace(tester, notes);
+    await writeNote(tester, 'Keep', 'Do not lose this');
+    expect(tester.takeException(), isNull);
+
+    notes.openWith = () async => throw StateError('cannot reopen');
+    await tester.tap(find.byKey(const ValueKey('guest-pending-retry')));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(notes.opens, 2);
+    expect(find.byKey(const ValueKey('guest-open-failed')), findsOneWidget);
+    expect(find.text('Unsaved note: Keep'), findsOneWidget);
+    expect(newNote(tester).onPressed, isNull);
+
+    // The draft is still readable in full.
+    await tester.tap(find.byKey(const ValueKey('guest-pending-edit')));
+    await tester.pumpAndSettle();
+    expect(field(tester, 'note-body'), 'Do not lose this');
+  });
+
+  Future<void> openPushed(WidgetTester tester, _MemoryNotes notes) async {
+    await tester.pumpWidget(MaterialApp(
+      home: Builder(
+        builder: (context) => Scaffold(
+          body: TextButton(
+            onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute<void>(
+                    builder: (_) => GuestWorkspacePage(notes: notes))),
+            child: const Text('Open guest'),
+          ),
+        ),
+      ),
+    ));
+    await tester.tap(find.text('Open guest'));
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('Back never drops a pending draft without a choice',
+      (tester) async {
+    phone(tester);
+    final notes = _MemoryNotes()..failures = [StateError('disk full')];
+    await openPushed(tester, notes);
+    await writeNote(tester, 'Draft', 'Unsaved words');
+    expect(find.text('Unsaved note: Draft'), findsOneWidget);
+
+    // System Back asks first; keeping the note stays on the page.
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(find.text('Unsaved note'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('guest-leave-keep')));
+    await tester.pumpAndSettle();
+    expect(find.text('Unsaved note: Draft'), findsOneWidget);
+    expect(find.text('Open guest'), findsNothing);
+
+    // The app bar's back block asks too; only an explicit discard leaves.
+    await tester.tap(find.byIcon(Icons.arrow_back));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('guest-leave-discard')));
+    await tester.pumpAndSettle();
+    expect(find.text('Open guest'), findsOneWidget);
+    expect(notes.notes(), isEmpty);
+
+    // Re-entering shows the workspace with nothing pending.
+    await tester.tap(find.text('Open guest'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('guest-pending')), findsNothing);
+    await tester.tap(find.byIcon(Icons.arrow_back));
+    await tester.pumpAndSettle();
+    expect(find.text('Open guest'), findsOneWidget,
+        reason: 'with nothing pending, Back leaves at once');
+  });
+
+  testWidgets('Back is held while a save is in flight', (tester) async {
+    phone(tester);
+    final hold = Completer<void>();
+    final notes = _MemoryNotes()..saveWith = (() => hold.future);
+    await openPushed(tester, notes);
+    await writeNote(tester, 'Slow', 'Saving');
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(find.byType(GuestWorkspacePage), findsOneWidget);
+    hold.complete();
+    await tester.pumpAndSettle();
+    expect(notes.notes().single.title, 'Slow');
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(find.text('Open guest'), findsOneWidget);
+  });
+
+  testWidgets('a save finishing after the page is gone is harmless',
+      (tester) async {
+    phone(tester);
+    final hold = Completer<void>();
+    final notes = _MemoryNotes()
+      ..failures = [StateError('disk full')]
+      ..saveWith = (() => hold.future);
+    await openWorkspace(tester, notes);
+    await writeNote(tester, 'Late', 'Body');
+    await tester.pumpWidget(const SizedBox());
+    hold.complete();
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
   });
 }
