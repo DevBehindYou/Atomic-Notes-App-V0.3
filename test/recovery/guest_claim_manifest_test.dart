@@ -49,6 +49,10 @@ class _Library implements ClaimDestination {
   final notes = <String, Map<String, dynamic>>{};
   int? capacity;
   int puts = 0;
+
+  /// The most live notes the library ever held.
+  int maxLive = 0;
+  int get live => notes.values.where((n) => n['deleted'] != true).length;
   @override
   Future<Set<String>> existingIds() async => notes.keys.toSet();
   @override
@@ -63,6 +67,7 @@ class _Library implements ClaimDestination {
     b.hit();
     puts++;
     notes[note.id] = note.toMap();
+    if (live > maxLive) maxLive = live;
   }
 }
 
@@ -251,6 +256,57 @@ void main() {
       expect(w.library.puts, lessThanOrEqualTo(3 + 1),
           reason: 'boundary $k: at most the crashed put is repeated');
     }
+  });
+
+  Note revived(Note note) => note.copy()
+    ..deleted = false
+    ..title = 'Restored'
+    ..touch();
+  Note binned(Note note) => note.copy()
+    ..deleted = true
+    ..touch();
+  List<Note> deletedAThenLiveB() =>
+      [_note(1, 'A', deleted: true), _note(2, 'B')];
+  final capacityRefused = throwsA(isA<ClaimRefused>()
+      .having((e) => e.code, 'code', 'claim_capacity_exceeded'));
+
+  test('a note restored from the recycle bin during the claim must fit',
+      () async {
+    final w = _world(deletedAThenLiveB(), capacity: 1);
+    w.guest.onRead = (read) {
+      // After the snapshot was copied (A in the bin, B live).
+      if (read == 3) w.guest.notes[_id(1)] = revived(w.guest.notes[_id(1)]!);
+    };
+    await expectLater(_claim(w), capacityRefused);
+    expect(w.library.maxLive, 1, reason: 'never over the limit');
+    expect(Note.fromMap(w.library.notes[_id(1)]!).deleted, isTrue);
+    expect(w.journal.stored, isNotNull, reason: 'the claim can be resumed');
+
+    // Moving B to the guest's recycle bin makes room; the claim then finishes.
+    w.guest.onRead = null;
+    w.guest.notes[_id(2)] = binned(w.guest.notes[_id(2)]!);
+    await _coordinator(w).resume();
+    _expectLibraryMatchesGuest(w);
+    expect(w.library.maxLive, 1);
+    expect(w.journal.stored, isNull);
+  });
+
+  test('a note restored before a resume must fit', () async {
+    final w = _world(deletedAThenLiveB(), capacity: 1)..b.failAt = 4;
+    // Boundaries: journal, put A, put B, then the crash on clearing.
+    await expectLater(_claim(w), throwsA(isA<_Crash>()));
+    w.b.failAt = null;
+    expect(w.library.live, 1);
+    w.guest.notes[_id(1)] = revived(w.guest.notes[_id(1)]!);
+    await expectLater(_coordinator(w).resume(), capacityRefused);
+    expect(w.library.maxLive, 1, reason: 'never over the limit');
+    expect(w.journal.stored, isNotNull);
+
+    w.guest.notes[_id(2)] = binned(w.guest.notes[_id(2)]!);
+    await _claim(w);
+    _expectLibraryMatchesGuest(w);
+    expect(w.library.maxLive, 1);
+    expect(w.journal.stored, isNull);
   });
 
   test('the manifest round-trips and refuses unknown versions', () {

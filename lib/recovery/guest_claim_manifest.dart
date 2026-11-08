@@ -143,6 +143,10 @@ class ClaimResult {
 ///    after the snapshot form a new snapshot round, and a copied note the
 ///    Guest has since removed goes to the library's recycle bin. Rounds repeat
 ///    until a read matches the library. No edit made during the claim is lost.
+///    Each round first writes the copies the Guest has binned or removed, so
+///    room is freed only by written changes. Every note the round would make
+///    live, new or restored from the recycle bin, must then fit, or the
+///    claim stops with its journal kept.
 /// 4. The journal is cleared last. The guest's own notes are never removed
 ///    here: releasing the Guest profile is a separate, later step.
 class GuestClaimCoordinator {
@@ -231,15 +235,28 @@ class GuestClaimCoordinator {
     var rounds = round;
     while (true) {
       final byId = {for (final n in await source.current()) n.id: n};
-      // Notes added during the claim must still fit the library.
+      // Copies the Guest has since binned or removed leave the live library
+      // first. Only a written change frees room for the check below.
+      for (final id in claimed) {
+        final held = await destination.get(id);
+        if (held == null || held.deleted) continue;
+        final note = byId[id];
+        if (note == null) {
+          await destination.put(held.copy()
+            ..deleted = true
+            ..touch());
+        } else if (note.deleted) {
+          await destination.put(note.copy());
+        }
+      }
+      // Every note this round makes live must fit: a new copy, or a copy in
+      // the library's recycle bin that the Guest has restored.
       var adding = 0;
       for (final entry in current.entries) {
         final note = byId[entry.id];
-        if (note != null &&
-            !note.deleted &&
-            await destination.get(entry.id) == null) {
-          adding++;
-        }
+        if (note == null || note.deleted) continue;
+        final held = await destination.get(entry.id);
+        if (held == null || held.deleted) adding++;
       }
       final room = await destination.remainingCapacity();
       if (room != null && adding > room) {
