@@ -525,21 +525,25 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
                                 ],
                               ),
                               const SizedBox(height: AppSpace.md),
-                              TextField(
-                                key: const ValueKey('note-title'),
-                                readOnly: _document.isReadOnly,
-                                controller: _title,
-                                focusNode: _titleFocus,
-                                textCapitalization:
-                                    TextCapitalization.sentences,
-                                maxLines: null,
-                                style: AppType.displayLg.copyWith(
-                                  fontSize: AppType.displayLg.fontSize! * 2 / 3,
-                                ),
-                                cursorColor: AppColors.signal,
-                                decoration: _decoration('Title'),
-                                onChanged: (_) => _contentRevision.value++,
-                              ),
+                              _FieldName(
+                                  name: 'Title',
+                                  controller: _title,
+                                  child: TextField(
+                                    key: const ValueKey('note-title'),
+                                    readOnly: _document.isReadOnly,
+                                    controller: _title,
+                                    focusNode: _titleFocus,
+                                    textCapitalization:
+                                        TextCapitalization.sentences,
+                                    maxLines: null,
+                                    style: AppType.displayLg.copyWith(
+                                      fontSize:
+                                          AppType.displayLg.fontSize! * 2 / 3,
+                                    ),
+                                    cursorColor: AppColors.signal,
+                                    decoration: _decoration('Title'),
+                                    onChanged: (_) => _contentRevision.value++,
+                                  )),
                               _tags(),
                               const SizedBox(height: AppSpace.md),
                               for (var i = 0; i < _document.lines.length; i++)
@@ -629,8 +633,11 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
         Semantics(
           button: true,
           label: 'View note image',
+          // One stop named once: the Semantics label above, without the
+          // tooltip or the image repeating it inside the button.
           child: Tooltip(
             message: 'View note image',
+            excludeFromSemantics: true,
             child: InkWell(
               onTap: () => _viewImage(bytes),
               borderRadius: AppRadius.std,
@@ -640,7 +647,9 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
                     image: thumbnail,
                     height: _thumbnailHeight,
                     fit: BoxFit.contain,
+                    // Kept for finders; the button above is the only name.
                     semanticLabel: 'Note image',
+                    excludeFromSemantics: true,
                     errorBuilder: (_, __, ___) =>
                         const Text('Image could not be displayed')),
               ),
@@ -654,23 +663,27 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
       ]);
     }
     if (!line.isChecklist) {
-      return NoteFieldLocator(
-        key: ObjectKey(_lines[index]),
-        name: index == 0 ? 'note-body' : 'note-text-$index',
-        child: TextField(
-          readOnly: _document.isReadOnly,
-          contextMenuBuilder: (context, state) => _selectionMenu(state, index),
+      return _FieldName(
+          key: ObjectKey(_lines[index]),
+          name: 'Note text',
           controller: _lines[index],
-          focusNode: _focus[index],
-          keyboardType: TextInputType.multiline,
-          textCapitalization: TextCapitalization.sentences,
-          maxLines: null,
-          minLines: _document.lines.length == 1 ? 5 : null,
-          style: AppType.bodyLg,
-          cursorColor: AppColors.signal,
-          decoration: _decoration('Start writing…'),
-        ),
-      );
+          child: NoteFieldLocator(
+            name: index == 0 ? 'note-body' : 'note-text-$index',
+            child: TextField(
+              readOnly: _document.isReadOnly,
+              contextMenuBuilder: (context, state) =>
+                  _selectionMenu(state, index),
+              controller: _lines[index],
+              focusNode: _focus[index],
+              keyboardType: TextInputType.multiline,
+              textCapitalization: TextCapitalization.sentences,
+              maxLines: null,
+              minLines: _document.lines.length == 1 ? 5 : null,
+              style: AppType.bodyLg,
+              cursorColor: AppColors.signal,
+              decoration: _decoration('Start writing…'),
+            ),
+          ));
     }
     return Row(
       key: ObjectKey(_lines[index]),
@@ -684,24 +697,28 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
               setState(() => _document.setDone(index, value!)),
         ),
         Expanded(
-          child: NoteFieldLocator(
-            name: 'note-item-$index',
-            child: TextField(
-              readOnly: _document.isReadOnly,
-              contextMenuBuilder: (context, state) =>
-                  _selectionMenu(state, index),
+          child: _FieldName(
+              name: 'List item',
               controller: _lines[index],
-              focusNode: _focus[index],
-              textCapitalization: TextCapitalization.sentences,
-              textInputAction: TextInputAction.next,
-              maxLines: null,
-              onSubmitted: (_) => _insertLine(checklist: true, after: index),
-              style: AppType.bodyMd.copyWith(
-                decoration: line.done ? TextDecoration.lineThrough : null,
-              ),
-              decoration: _decoration('List item'),
-            ),
-          ),
+              child: NoteFieldLocator(
+                name: 'note-item-$index',
+                child: TextField(
+                  readOnly: _document.isReadOnly,
+                  contextMenuBuilder: (context, state) =>
+                      _selectionMenu(state, index),
+                  controller: _lines[index],
+                  focusNode: _focus[index],
+                  textCapitalization: TextCapitalization.sentences,
+                  textInputAction: TextInputAction.next,
+                  maxLines: null,
+                  onSubmitted: (_) =>
+                      _insertLine(checklist: true, after: index),
+                  style: AppType.bodyMd.copyWith(
+                    decoration: line.done ? TextDecoration.lineThrough : null,
+                  ),
+                  decoration: _decoration('List item'),
+                ),
+              )),
         ),
         IconButton(
           onPressed: () => _removeLine(index),
@@ -793,6 +810,7 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
                   materialTapTargetSize: MaterialTapTargetSize.padded),
             Tooltip(
                 message: 'Add tag',
+                excludeFromSemantics: true,
                 child: TextButton.icon(
                     onPressed:
                         _document.tags.length < NoteDocument.maxTagsPerNote
@@ -801,7 +819,7 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
                     style:
                         TextButton.styleFrom(minimumSize: const Size(48, 48)),
                     icon: const Icon(Icons.add, size: 16),
-                    label: const Text('Tag'))),
+                    label: const Text('Tag', semanticsLabel: 'Add tag'))),
           ],
         );
 
@@ -1105,6 +1123,33 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
     String pad(int number) => number.toString().padLeft(2, '0');
     return '${local.year}-${pad(local.month)}-${pad(local.day)} ${pad(local.hour)}:${pad(local.minute)}';
   }
+}
+
+/// Names a text field for screen readers once it has text.
+///
+/// A field's only name is its hint, which Flutter stops reporting when the
+/// field is filled: a filled title was read as its text alone. An empty
+/// field keeps the hint as its single name, so it is not announced twice.
+/// Only this Semantics rebuilds on typing; the field itself is [child].
+class _FieldName extends StatelessWidget {
+  const _FieldName(
+      {required this.name,
+      required this.controller,
+      required this.child,
+      super.key});
+
+  final String name;
+  final TextEditingController controller;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) =>
+      ValueListenableBuilder<TextEditingValue>(
+        valueListenable: controller,
+        child: child,
+        builder: (context, value, child) =>
+            Semantics(label: value.text.isEmpty ? null : name, child: child),
+      );
 }
 
 /// Names a line's text field by its current position: `note-body`,
