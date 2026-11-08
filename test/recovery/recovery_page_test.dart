@@ -97,6 +97,9 @@ class _Ports implements RecoveryPorts, LocalNotesView {
   BackupRecord? last;
   int recorded = 0;
 
+  /// Rows exported as they are, e.g. sealed vault notes.
+  final extra = <ArchiveSource>[];
+
   @override
   int get savedLocally => store.target.length;
   @override
@@ -112,7 +115,8 @@ class _Ports implements RecoveryPorts, LocalNotesView {
   @override
   Future<List<ArchiveSource>> snapshot() async => [
         for (final value in store.target.values)
-          ArchiveSource(Note.fromMap(value))
+          ArchiveSource(Note.fromMap(value)),
+        ...extra,
       ];
   @override
   ArchiveVault? get vault => _vault;
@@ -145,7 +149,8 @@ Future<Uint8List> _archive(List<Note> notes, {ArchiveKey? key}) async {
 }
 
 Future<void> _open(WidgetTester tester, _Ports ports,
-    {bool enabled = true}) async {
+    {bool enabled = true,
+    Future<ArchiveKey> Function(String, ArchiveHeader)? openKey}) async {
   tester.view.devicePixelRatio = 1;
   tester.view.physicalSize = const Size(600, 1400);
   addTearDown(tester.view.reset);
@@ -154,7 +159,7 @@ Future<void> _open(WidgetTester tester, _Ports ports,
           ports: ports,
           enabled: enabled,
           deriveKey: (_) async => _key(),
-          openKey: (_, __) async => _key())));
+          openKey: openKey ?? (_, __) async => _key())));
 }
 
 Future<void> _settle(WidgetTester tester) async {
@@ -276,5 +281,59 @@ void main() {
     await tester.tap(unlock);
     await _settle(tester);
     expect(find.text('1 note'), findsOneWidget);
+  });
+
+  testWidgets('a backup holding vault notes says they cannot be restored',
+      (tester) async {
+    final ports = _Ports()
+      ..extra.add(ArchiveSource(
+          Note(id: _id('f'), createdAt: _time, updatedAt: _time),
+          sealedPayload: 'sealed-payload'));
+    await _open(tester, ports);
+    await tester.tap(find.byKey(const ValueKey('recovery-export')));
+    await _settle(tester);
+    expect(ports.last!.sealed, 1);
+    expect(
+        _text(tester, 'recovery-message'),
+        'Backup saved: 3 notes. 1 encrypted vault note is included but '
+        'cannot be restored from a backup yet.');
+    expect(_text(tester, 'recovery-backup'),
+        contains('cannot be restored from a backup yet'));
+
+    // Restoring that same backup is refused, and nothing is written.
+    final bytes = ports.targets.single.committed!;
+    ports.archive = () => ArchiveByteSource.bytes(bytes);
+    final before = Map.of(ports.store.target);
+    await tester.tap(find.byKey(const ValueKey('recovery-open')));
+    await _settle(tester);
+    expect(find.byKey(const ValueKey('import-preview-issues')), findsOneWidget);
+    final restore = find.byKey(const ValueKey('import-preview-restore'));
+    await tester.ensureVisible(restore);
+    expect(tester.widget<FilledButton>(restore).onPressed, isNull);
+    expect(ports.store.target, before);
+  });
+
+  testWidgets('unsupported password settings are refused before derivation',
+      (tester) async {
+    final ports = _Ports();
+    final bytes = await tester
+        .runAsync(() => _archive([_note('e', 'New E')], key: _key()));
+    // 4 GiB of Argon2id memory in the unauthenticated header.
+    final hostile = Uint8List.fromList(bytes!)
+      ..setRange(7, 11, [0xff, 0xff, 0xff, 0xff]);
+    ports.archive = () => ArchiveByteSource.bytes(hostile);
+    var derivations = 0;
+    await _open(tester, ports, openKey: (_, __) async {
+      derivations++;
+      return _key();
+    });
+    await tester.enterText(
+        find.byKey(const ValueKey('recovery-password')), 'pw');
+    await tester.tap(find.byKey(const ValueKey('recovery-open')));
+    await _settle(tester);
+    expect(derivations, 0);
+    expect(_text(tester, 'recovery-message'),
+        contains('password settings this version does not support'));
+    expect(find.byKey(const ValueKey('import-preview-restore')), findsNothing);
   });
 }

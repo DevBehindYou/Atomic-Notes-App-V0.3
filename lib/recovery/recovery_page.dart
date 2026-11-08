@@ -16,11 +16,29 @@ abstract final class RecoveryFeature {
 /// The last export that actually finished. Only a committed export is ever
 /// recorded; a failed or cancelled one leaves the previous record as it was.
 class BackupRecord {
-  const BackupRecord(this.finishedAt, this.notes, this.encrypted);
+  const BackupRecord(this.finishedAt, this.notes, this.encrypted,
+      {this.sealed = 0});
   final DateTime finishedAt;
   final int notes;
   final bool encrypted;
+
+  /// Encrypted vault notes in the archive. They are kept in it but cannot be
+  /// restored from it yet (C13), so they are never counted as backed up.
+  final int sealed;
 }
+
+/// The user-facing text for an archive the reader refused.
+String archiveProblem(ArchiveFormatException error) => switch (error.code) {
+      'unsupported_kdf' =>
+        'This backup uses password settings this version does not support. '
+            'Nothing was opened or changed.',
+      _ => error.message,
+    };
+
+/// Why a backup holding encrypted vault notes is not a full backup.
+String sealedNotice(int sealed) =>
+    '$sealed encrypted vault ${sealed == 1 ? 'note is' : 'notes are'} '
+    'included but cannot be restored from a backup yet.';
 
 /// The device facts the page shows and the ports it acts through. A native
 /// adapter is not part of this change.
@@ -129,14 +147,19 @@ class _RecoveryPageState extends State<RecoveryPage> {
         }
       });
       // Recorded only after the archive was committed to its final place.
+      final sealed = result.manifest.entries.where((e) => e.sealed).length;
       await ports.recordBackup(BackupRecord(
-          DateTime.now().toUtc(), result.manifest.entries.length, key != null));
-      _say('Backup saved: ${result.manifest.entries.length} notes.');
+          DateTime.now().toUtc(), result.manifest.entries.length, key != null,
+          sealed: sealed));
+      _say([
+        'Backup saved: ${result.manifest.entries.length} notes.',
+        if (sealed > 0) sealedNotice(sealed),
+      ].join(' '));
     } on ExportCancelled {
       _say(
           'Backup cancelled. Nothing was saved; your last backup is unchanged.');
     } on ArchiveFormatException catch (error) {
-      _say(error.message, failed: true);
+      _say(archiveProblem(error), failed: true);
     } on ExportFailed catch (error) {
       _say(error.message, failed: true);
     } catch (_) {
@@ -161,7 +184,7 @@ class _RecoveryPageState extends State<RecoveryPage> {
       _archive = archive;
       await _inspect();
     } on ArchiveFormatException catch (error) {
-      _say(error.message, failed: true);
+      _say(archiveProblem(error), failed: true);
     }
   }
 
@@ -186,7 +209,7 @@ class _RecoveryPageState extends State<RecoveryPage> {
     try {
       await _inspect();
     } on ArchiveFormatException catch (error) {
-      _say(error.message, failed: true);
+      _say(archiveProblem(error), failed: true);
     }
   }
 
@@ -195,6 +218,7 @@ class _RecoveryPageState extends State<RecoveryPage> {
     try {
       final result = await RestoreCoordinator(widget.ports.restoreStore)
           .restore(_archive!,
+              approved: _preview!,
               local: widget.ports.local,
               choices: Map.of(_choices),
               key: _archiveKey);
@@ -204,7 +228,7 @@ class _RecoveryPageState extends State<RecoveryPage> {
     } on RestoreRefused catch (error) {
       _say(error.message, failed: true);
     } on ArchiveFormatException catch (error) {
-      _say(error.message, failed: true);
+      _say(archiveProblem(error), failed: true);
     } catch (_) {
       _say('The restore stopped. It will finish or be undone next time.',
           failed: true);
@@ -245,7 +269,8 @@ class _RecoveryPageState extends State<RecoveryPage> {
               ? 'No backup made on this device yet'
               : 'Last backup: ${backup.notes} notes, '
                   '${backup.finishedAt.toLocal().toString().substring(0, 16)}'
-                  '${backup.encrypted ? ', password protected' : ''}',
+                  '${backup.encrypted ? ', password protected' : ''}'
+                  '${backup.sealed > 0 ? '. ${sealedNotice(backup.sealed)}' : ''}',
           key: const ValueKey('recovery-backup'),
           style: AppType.bodyMd),
       const SizedBox(height: AppSpace.md),

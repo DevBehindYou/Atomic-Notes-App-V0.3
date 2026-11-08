@@ -297,6 +297,10 @@ are safe" claim:
 - `recordBackup` runs only after the archive has been committed to its final
   location. If the export fails or is cancelled, no backup is recorded and the
   previous backup record is left unchanged.
+- Encrypted vault notes are exported as they are, but restore refuses them
+  (C13). When a backup holds any, the saved message and the "Last backup"
+  line both say how many are included but cannot be restored from a backup
+  yet, so the backup is never presented as a full restorable copy.
 
 ### Restoring
 
@@ -306,14 +310,20 @@ are safe" claim:
 3. Each note that differs between the backup and the device gets its own
    switch. The default is "Choose before restoring", and "Review restore" stays
    disabled until every differing note has a choice.
-4. `RestoreCoordinator` then restores the archive and reports how many notes
-   were written and how many were kept as they were on the device.
+4. `RestoreCoordinator` then restores the archive the user approved, passing
+   that preview, and reports how many notes were written and how many were
+   kept as they were on the device. If the archive changed since the preview,
+   the restore is refused before anything is written.
+
+An archive whose header asks for password settings other than the supported
+profile is refused when its header is read, before any key is derived, with
+a plain "not supported" message.
 
 The preview never shows note content.
 
 ### Verification
 
-`test/recovery/recovery_page_test.dart` has 7 tests:
+`test/recovery/recovery_page_test.dart` has 9 tests:
 
 - the feature gate is off by default and the page offers no actions;
 - the three status facts appear separately;
@@ -322,9 +332,10 @@ The preview never shows note content.
   previous record stays unchanged;
 - restore waits for every choice and then reports the result, with the
   replaced version backed up;
-- a protected archive stays locked until its password is entered.
-
-Full suite: 1124 passed, 33 skipped.
+- a protected archive stays locked until its password is entered;
+- a backup holding vault notes says they cannot be restored, and restoring
+  it is refused with nothing written;
+- unsupported password settings are refused with no key derivation.
 
 ### Open decisions
 
