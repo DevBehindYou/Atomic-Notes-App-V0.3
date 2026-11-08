@@ -193,14 +193,19 @@ waits for B05 and the accepted backup gates.
 
 1. **Preflight (writes nothing).**
    - Refuses if an earlier restore has not finished.
+   - Takes the `ImportPreview` the user approved. It must be unlocked and
+     restorable, and carry a `digest`.
    - Inspects the archive again with `ImportValidator`, and requires
-     `canRestore`.
+     `canRestore` and the approved `digest`.
    - Requires a `ConflictChoice` (`keepDevice` or `useArchive`) for every
      conflicting note. Notes are never merged and never guessed.
 2. **Staging.**
+   - Opens the archive again and reads its header and manifest. Their digest
+     must still be the approved one, and no entry may be sealed. Otherwise
+     the restore is refused before anything is written.
    - Writes a `staging` marker.
-   - Reads every planned note from the archive again. Each frame is
-     authenticated and checksummed.
+   - Reads every planned note. Each frame is authenticated and checked
+     against the approved manifest's SHA-256 for that entry.
    - Writes a staged copy of each note. The target is not touched.
 3. **Commit.**
    - Writes a `committing` marker.
@@ -210,6 +215,15 @@ waits for B05 and the accepted backup gates.
 4. **Cleanup.**
    - Writes a `cleanup` marker, discards the staged copies, then clears the
      marker. Backups are kept for the caller.
+
+### Binding to the approved archive
+
+`archiveDigest` is the SHA-256 of the header digest followed by the
+authenticated manifest frame exactly as stored. The manifest lists each
+entry's id, kind, flags, size and SHA-256, and the reader refuses an entry
+that does not match, so an archive with the same digest yields the same notes.
+An archive replaced after approval, or between preflight and staging, is
+refused even when its ids and sizes match.
 
 ### What gets written
 

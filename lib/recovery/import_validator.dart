@@ -1,4 +1,5 @@
 import 'package:atomic_notes/database/note.dart';
+import 'package:cryptography/cryptography.dart';
 import 'package:atomic_notes/database/note_document.dart';
 import 'package:atomic_notes/recovery/archive_manifest.dart';
 import 'package:atomic_notes/recovery/export_writer.dart';
@@ -38,6 +39,7 @@ class ImportPreview {
     this.unchanged = const [],
     this.conflicts = const [],
     this.issues = const [],
+    this.digest,
   });
 
   factory ImportPreview.locked() =>
@@ -67,6 +69,11 @@ class ImportPreview {
   /// content cannot be compared yet). Restore must ask; it never merges.
   final List<String> conflicts;
   final List<ImportIssue> issues;
+
+  /// Identifies exactly the archive this preview describes: see
+  /// [archiveDigest]. Null for a locked preview. Restore (C14) proceeds only
+  /// for an archive with this same digest.
+  final String? digest;
 
   /// Restore may be offered only for a fully validated, unlocked archive.
   bool get canRestore => !locked && issues.isEmpty;
@@ -135,6 +142,7 @@ abstract final class ImportValidator {
       }
     }
     await reader.readTrailer(manifest);
+    final digest = await archiveDigest(reader);
     return ImportPreview._(
       locked: false,
       encrypted: header.encrypted,
@@ -149,6 +157,7 @@ abstract final class ImportValidator {
       unchanged: List.unmodifiable(unchanged),
       conflicts: List.unmodifiable(conflicts),
       issues: List.unmodifiable(issues),
+      digest: digest,
     );
   }
 
@@ -157,4 +166,22 @@ abstract final class ImportValidator {
     if (document.isReadOnly) return 'unsupported_format';
     return 'too_large';
   }
+}
+
+/// Hex SHA-256 over an archive's header digest and its manifest frame exactly
+/// as stored, once [ArchiveReader.readManifest] has run.
+///
+/// The manifest lists every entry's id, kind, flags, size and SHA-256, and
+/// the reader refuses any entry that does not match it, so two archives with
+/// the same digest yield the same notes. Archives with the same ids but
+/// different content have different digests.
+Future<String> archiveDigest(ArchiveReader reader) async {
+  final header = reader.headerDigest;
+  final manifest = reader.manifestBytes;
+  if (header == null || manifest == null) {
+    throw StateError('Read the header and manifest first');
+  }
+  final digest = await Sha256().hash([...header, ...manifest]);
+  return [for (final b in digest.bytes) b.toRadixString(16).padLeft(2, '0')]
+      .join();
 }
