@@ -92,7 +92,10 @@ class NoteFormatBar extends StatelessWidget {
                   spacing: AppSpace.xs,
                   children: [
                     for (final (letter, label, flag) in _styles)
-                      Semantics(
+                      // Merged so the on/off state is on the button itself,
+                      // not on a separate unnamed node around it.
+                      MergeSemantics(
+                          child: Semantics(
                         toggled: controller.hasStyle(flag),
                         child: IconButton(
                           tooltip: label,
@@ -107,25 +110,28 @@ class NoteFormatBar extends StatelessWidget {
                             shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(12)),
                           ),
-                          icon: Text(letter,
-                              style: TextStyle(
-                                color: AppColors.paper,
-                                fontSize: 18,
-                                fontWeight: letter == 'B' || letter == 'H'
-                                    ? FontWeight.bold
-                                    : FontWeight.normal,
-                                fontStyle: letter == 'I'
-                                    ? FontStyle.italic
-                                    : FontStyle.normal,
-                                decorationColor: AppColors.paper,
-                                decoration: letter == 'U'
-                                    ? TextDecoration.underline
-                                    : letter == 'S'
-                                        ? TextDecoration.lineThrough
-                                        : null,
-                              )),
+                          // The tooltip names the style; the glyph is
+                          // visual only, so it is not read as a letter too.
+                          icon: ExcludeSemantics(
+                              child: Text(letter,
+                                  style: TextStyle(
+                                    color: AppColors.paper,
+                                    fontSize: 18,
+                                    fontWeight: letter == 'B' || letter == 'H'
+                                        ? FontWeight.bold
+                                        : FontWeight.normal,
+                                    fontStyle: letter == 'I'
+                                        ? FontStyle.italic
+                                        : FontStyle.normal,
+                                    decorationColor: AppColors.paper,
+                                    decoration: letter == 'U'
+                                        ? TextDecoration.underline
+                                        : letter == 'S'
+                                            ? TextDecoration.lineThrough
+                                            : null,
+                                  ))),
                         ),
-                      ),
+                      )),
                   ]),
             ),
           ),
