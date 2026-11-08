@@ -8,6 +8,7 @@ import 'package:atomic_notes/recovery/archive_manifest.dart';
 import 'package:atomic_notes/recovery/export_writer.dart';
 import 'package:atomic_notes/recovery/import_preview_view.dart';
 import 'package:atomic_notes/recovery/import_validator.dart';
+import 'package:atomic_notes/security/vault_crypto.dart';
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -111,6 +112,10 @@ Future<ImportPreview> _inspect(List<int> bytes,
         local: local ?? _Local(),
         unlock: key == null ? null : (_) async => key);
 
+/// Every kind of readable note, with no sealed rows.
+List<ArchiveSource> _readable() =>
+    _mixed().where((s) => s.sealedPayload == null).toList();
+
 List<ArchiveSource> _mixed() => [
       ArchiveSource(_plain(1)),
       ArchiveSource(_plain(2, deleted: true)),
@@ -131,9 +136,8 @@ void main() {
       final local = _Local([
         _plain(1), // identical
         _plain(3, title: 'Changed here'), // same id, different content
-        Note(id: _id(5), createdAt: _time, updatedAt: _time), // sealed id
       ]);
-      final preview = await _inspect(await _archive(_mixed()), local: local);
+      final preview = await _inspect(await _archive(_readable()), local: local);
       expect(preview.locked, isFalse);
       expect([
         preview.total,
@@ -143,24 +147,74 @@ void main() {
         preview.images,
         preview.sealed
       ], [
-        5,
         4,
+        3,
         1,
         1,
         1,
-        1
+        0
       ]);
       expect(preview.unchanged, [_id(1)]);
       expect(preview.added, [_id(2), _id(4)]);
-      expect(preview.conflicts, [_id(3), _id(5)],
-          reason: 'sealed content cannot be compared yet');
+      expect(preview.conflicts, [_id(3)]);
       expect(preview.issues, isEmpty);
       expect(preview.canRestore, isTrue);
     });
 
+    test('a sealed row blocks restore and is still counted', () async {
+      final local = _Local(
+          [Note(id: _id(5), createdAt: _time, updatedAt: _time)]); // sealed id
+      final preview = await _inspect(await _archive(_mixed()), local: local);
+      expect([preview.total, preview.sealed], [5, 1]);
+      expect(preview.conflicts, [_id(5)]);
+      expect({for (final i in preview.issues) i.id: i.code},
+          {_id(5): 'sealed_unsupported'});
+      expect(preview.canRestore, isFalse);
+    });
+
+    test(
+        'real vault ciphertext is bound to its source account, so a sealed '
+        'row is never offered for restore', () async {
+      // Two accounts that chose the same recovery phrase.
+      const phrase = 'alpha bravo charlie delta echo foxtrot';
+      Future<SecretKey> vaultKey(String userId) async =>
+          VaultCrypto.deriveKey(phrase, await VaultCrypto.saltForUser(userId),
+              memory: 65536, iterations: 3, parallelism: 1);
+      final source = await vaultKey('source-account');
+      final other = await vaultKey('other-account');
+      final content = {'title': _secretTitle, 'body': 'Vault body'};
+      final payload = await VaultCrypto.sealJson(content, source);
+
+      // The payload opens only with the source account's key: the export
+      // password cannot change that.
+      expect(await VaultCrypto.openJson(payload, source), content);
+      await expectLater(VaultCrypto.openJson(payload, other),
+          throwsA(isA<SecretBoxAuthenticationError>()));
+
+      final key = ArchiveKey.forTesting(
+          SecretKey(List<int>.generate(32, (i) => i)), List.filled(16, 3));
+      final bytes = await _archive([
+        ArchiveSource(_plain(1)),
+        ArchiveSource(Note(id: _id(5), createdAt: _time, updatedAt: _time),
+            sealedPayload: payload),
+      ], key: key);
+      // Whether this device is the source account or another one, the archive
+      // carries no verified source context, so restore is refused.
+      for (final local in [
+        _Local(),
+        _Local([Note(id: _id(5), createdAt: _time, updatedAt: _time)]),
+      ]) {
+        final preview = await _inspect(bytes, local: local, key: key);
+        expect(preview.sealed, 1);
+        expect(preview.issues.single.code, 'sealed_unsupported');
+        expect(preview.issues.single.message, isNot(contains(_secretTitle)));
+        expect(preview.canRestore, isFalse);
+      }
+    }, timeout: const Timeout(Duration(minutes: 2)));
+
     test('an encrypted archive reveals nothing until it is unlocked', () async {
       final key = _key();
-      final bytes = await _archive(_mixed(), key: key);
+      final bytes = await _archive(_readable(), key: key);
       final local = _Local([_plain(1)]);
       final locked = await _inspect(bytes, local: local);
       expect(locked.locked, isTrue);
@@ -169,7 +223,7 @@ void main() {
           [locked.total, locked.added, locked.issues], [0, isEmpty, isEmpty]);
       expect(local.reads, 0, reason: 'not even ids are compared');
       final open = await _inspect(bytes, local: local, key: key);
-      expect(open.total, 5);
+      expect(open.total, 4);
       expect(open.canRestore, isTrue);
     });
   });
@@ -248,12 +302,12 @@ void main() {
     testWidgets('shows counts, never note content, and offers restore',
         (tester) async {
       final preview = await tester.runAsync(
-          () async => _inspect(await _archive(_mixed()), local: _Local()));
+          () async => _inspect(await _archive(_readable()), local: _Local()));
       var restored = 0;
       await show(tester, preview!, onRestore: () => restored++);
-      expect(find.text('5 notes'), findsOneWidget);
+      expect(find.text('4 notes'), findsOneWidget);
       expect(find.textContaining(_secretTitle), findsNothing);
-      expect(find.textContaining('5 new to this device'), findsOneWidget);
+      expect(find.textContaining('4 new to this device'), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('import-preview-restore')));
       expect(restored, 1);
     });

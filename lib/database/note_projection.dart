@@ -21,7 +21,13 @@ class NoteProjection {
             .where((line) => line.isChecklist && line.done)
             .length,
         isReadOnly = document.isReadOnly {
-    _searchText = plainText.toLowerCase();
+    // Search the text a card shows. An image line is shown as an image, so
+    // the "[Image]" placeholder in plainText is not searchable text.
+    _searchText = document.lines
+        .where((line) => !line.isImage)
+        .map((line) => line.text)
+        .join('\n')
+        .toLowerCase();
     _searchTags = tags.map((tag) => tag.toLowerCase()).toList(growable: false);
   }
 
@@ -35,9 +41,21 @@ class NoteProjection {
   late final String _searchText;
   late final List<String> _searchTags;
   bool get hasChecklist => checklistCount != 0;
-  bool matches(String lowerCaseQuery) =>
-      _searchText.contains(lowerCaseQuery) ||
-      _searchTags.any((tag) => tag.contains(lowerCaseQuery));
+
+  /// Case-insensitive substring match on text and tags. A query starting with
+  /// `#` also names a tag from its start, as tags are shown (`#work`) but
+  /// stored without the mark.
+  bool matches(String lowerCaseQuery) {
+    if (_searchText.contains(lowerCaseQuery) ||
+        _searchTags.any((tag) => tag.contains(lowerCaseQuery))) {
+      return true;
+    }
+    if (lowerCaseQuery.length < 2 || !lowerCaseQuery.startsWith('#')) {
+      return false;
+    }
+    final name = lowerCaseQuery.substring(1);
+    return _searchTags.any((tag) => tag.startsWith(name));
+  }
 
   int get _textUnits =>
       plainText.length +

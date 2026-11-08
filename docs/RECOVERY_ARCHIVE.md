@@ -138,8 +138,13 @@ It produces an `ImportPreview`.
   - the format is supported, and images are valid JPEGs within 180 KB;
   - the title is at most 300 characters;
   - the note fits the sync size limits.
-- A sealed note is checked only against its wire bound. Its content is checked
-  when the vault opens it.
+- A sealed (vault) note is always an issue, `sealed_unsupported`, so an
+  archive that holds one cannot be restored yet. Its payload is sealed under a
+  key derived from the recovery phrase and a salt bound to the source
+  account's user id. The export password does not make it portable, and the
+  archive carries no verified source-account context, so restoring it could
+  write notes that never open. Supporting it needs a verified source context
+  and a cross-account rekey path (open decision).
 - The trailer must confirm the archive is complete.
 - If the archive is damaged, truncated, unsupported or opened with the wrong
   password, `inspect` throws `ArchiveFormatException` and returns nothing.
