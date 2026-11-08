@@ -91,34 +91,78 @@ void main() {
       'ya29.a0AfH6SMBxxxxxxxxxxxxxxxxxxxxxxxx',
       'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig',
       'k3yMaterialBase64AAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+      // Short, code-shaped values that pattern redaction would let through.
+      'diabetes',
+      'short-secret',
+      'abc',
     ];
+    for (final canary in canaries) {
+      for (final app in [
+        DiagnosticApp(version: canary),
+        DiagnosticApp(version: '2.0.1+$canary'),
+      ]) {
+        final report = RecoveryDiagnostics.redactedReport(
+            RecoveryFacts(
+                archiveError: canary,
+                integrity: const {IntegrityProblem.idMismatch: 1}),
+            app: app);
+        expect(report, isNot(contains(canary)), reason: canary);
+        final json = jsonDecode(report) as Map<String, Object?>;
+        expect(json['archiveError'], 'other', reason: canary);
+        expect((json['app'] as Map)['version'], 'invalid', reason: canary);
+      }
+      for (final issue in RecoveryDiagnostics.diagnose(
+          RecoveryFacts(archiveError: canary))) {
+        expect(issue.message, isNot(contains(canary)), reason: canary);
+      }
+    }
+  });
+
+  test('the report keeps known codes, counts and typed app facts', () {
     final report = RecoveryDiagnostics.redactedReport(
         const RecoveryFacts(
             pendingWrites: 2,
             archiveError: 'truncated',
-            integrity: {IntegrityProblem.idMismatch: 1}),
-        app: {
-          'version': '2.03.9+2051',
-          'build': 'staging',
-          'lastError': canaries[0],
-          'account': canaries[1],
-          'token': canaries[2],
-          'session': canaries[3],
-          'vaultKey': canaries[4],
-          'Free text key': 'x',
-        });
-    for (final canary in canaries) {
-      expect(report, isNot(contains(canary)), reason: canary);
-    }
+            integrity: {IntegrityProblem.idMismatch: 1},
+            quarantinedCopies: 1),
+        app: const DiagnosticApp(
+            version: '2.03.9+2051',
+            flavor: DiagnosticFlavor.staging,
+            platform: DiagnosticPlatform.android));
     final json = jsonDecode(report) as Map<String, Object?>;
     expect(json['issues'],
         ['pending_writes', 'archive_damaged', 'damaged_records']);
+    expect(json['archiveError'], 'truncated');
     expect(json['integrity'], {'idMismatch': 1});
-    final app = json['app'] as Map<String, Object?>;
-    expect([app['version'], app['build'], app['lastError'], app['token']],
-        ['2.03.9+2051', 'staging', 'redacted', 'redacted']);
-    expect(app.containsKey('Free text key'), isFalse);
-    expect(app['redacted'], 'x', reason: 'unsafe keys are renamed');
+    expect(json['quarantinedCopies'], 1);
+    expect(json['app'],
+        {'version': '2.03.9+2051', 'flavor': 'staging', 'platform': 'android'});
+    expect(
+        jsonDecode(
+            RecoveryDiagnostics.redactedReport(const RecoveryFacts()))['app'],
+        {'version': null, 'flavor': null, 'platform': null});
+    // Every archive code the format can raise is known by name.
+    for (final code in RecoveryDiagnostics.archiveErrorCodes) {
+      expect(
+          jsonDecode(RecoveryDiagnostics.redactedReport(
+              RecoveryFacts(archiveError: code)))['archiveError'],
+          code);
+    }
+  });
+
+  test('damaged records claim neither a note count nor unconfirmed copies', () {
+    String message(RecoveryFacts f) =>
+        RecoveryDiagnostics.diagnose(f).single.message;
+    const findings = {
+      IntegrityProblem.malformedFields: 3,
+      IntegrityProblem.idMismatch: 2
+    };
+    final plain = message(const RecoveryFacts(integrity: findings));
+    expect(plain, 'Some stored records could not be read.');
+    expect(plain, isNot(matches(RegExp(r'\d'))));
+    expect(
+        message(const RecoveryFacts(integrity: findings, quarantinedCopies: 2)),
+        'Some stored records could not be read. 2 copies are kept aside.');
   });
 
   group('status panel', () {
@@ -166,6 +210,12 @@ void main() {
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
       expect(find.byKey(const ValueKey('recovery-failed-vault_locked')),
+          findsOneWidget);
+      // A step can fail part way, so the panel never claims nothing changed.
+      expect(find.textContaining('Nothing was changed'), findsNothing);
+      expect(
+          find.text(
+              'That did not finish. Your notes on this device are kept; you can try again.'),
           findsOneWidget);
       await tester
           .tap(find.byKey(const ValueKey('recovery-action-vault_locked')));

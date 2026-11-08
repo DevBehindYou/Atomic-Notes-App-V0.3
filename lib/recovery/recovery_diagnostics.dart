@@ -32,6 +32,7 @@ class RecoveryFacts {
     this.providerAvailable = true,
     this.online = true,
     this.integrity = const {},
+    this.quarantinedCopies = 0,
   });
 
   /// Encrypted notes exist and the vault key is not on this device.
@@ -50,8 +51,42 @@ class RecoveryFacts {
   final bool providerAvailable;
   final bool online;
 
-  /// Record integrity findings by problem, as counts.
+  /// Record integrity findings by problem, as counts. A count is of
+  /// findings, not of distinct notes: one record can have several.
   final Map<IntegrityProblem, int> integrity;
+
+  /// Unreadable records whose copies are confirmed kept aside. Zero unless
+  /// the integrity source says so; nothing here infers it.
+  final int quarantinedCopies;
+}
+
+/// The build a report comes from. Fixed values only.
+enum DiagnosticFlavor { development, staging, production }
+
+/// The platform a report comes from. Fixed values only.
+enum DiagnosticPlatform { android, ios, web, windows, macos, linux }
+
+/// The app facts a redacted report may carry. Each is typed: there is no
+/// field for free text, and a version that is not `major.minor.patch+build`
+/// is reported as `invalid`.
+class DiagnosticApp {
+  const DiagnosticApp({this.version, this.flavor, this.platform});
+
+  final String? version;
+  final DiagnosticFlavor? flavor;
+  final DiagnosticPlatform? platform;
+
+  static final _version = RegExp(r'^\d{1,4}\.\d{1,4}\.\d{1,4}\+\d{1,9}$');
+
+  Map<String, Object?> toReport() => {
+        'version': version == null
+            ? null
+            : _version.hasMatch(version!)
+                ? version
+                : 'invalid',
+        'flavor': flavor?.name,
+        'platform': platform?.name,
+      };
 }
 
 class RecoveryIssue {
@@ -99,7 +134,8 @@ abstract final class RecoveryDiagnostics {
         if (f.integrity.values.any((n) => n > 0))
           RecoveryIssue(
               'damaged_records',
-              '${f.integrity.values.fold<int>(0, (a, b) => a + b)} stored notes could not be read. Copies are kept aside; nothing was deleted.',
+              'Some stored records could not be read.'
+                  '${f.quarantinedCopies > 0 ? ' ${f.quarantinedCopies} ${f.quarantinedCopies == 1 ? 'copy is' : 'copies are'} kept aside.' : ''}',
               RecoveryAction.none),
       ];
 
@@ -122,11 +158,33 @@ abstract final class RecoveryDiagnostics {
             RecoveryAction.chooseAnotherBackup),
       };
 
-  /// A report for support: issue codes, counts and app facts only. Free text
-  /// is never copied in, and any value that looks like a secret, an email
-  /// address or long text is replaced, so it cannot carry note content.
+  /// The [ArchiveFormatException] codes a report may name. Any other value
+  /// is reported as `other`.
+  static const archiveErrorCodes = {
+    'authentication_failed',
+    'duplicate_id',
+    'invalid_checksum',
+    'invalid_id',
+    'invalid_path',
+    'invalid_size',
+    'key_required',
+    'limit_exceeded',
+    'malformed',
+    'too_large',
+    'truncated',
+    'unknown_field',
+    'unsupported_kdf',
+    'unsupported_version',
+  };
+
+  /// A report for support. Every value comes from a fixed set: issue codes,
+  /// counts, flags, problem names, a known archive error code and typed app
+  /// facts. No string from the caller is copied in except a version that
+  /// matches `major.minor.patch+build`, so the report cannot carry note
+  /// content, a token or a key.
   static String redactedReport(RecoveryFacts f,
-      {Map<String, Object?> app = const {}}) {
+      {DiagnosticApp app = const DiagnosticApp()}) {
+    final error = f.archiveError;
     final report = {
       'v': 1,
       'issues': [for (final issue in diagnose(f)) issue.code],
@@ -135,33 +193,16 @@ abstract final class RecoveryDiagnostics {
       'cacheOwnerMatches': f.cacheOwnerMatches,
       'providerAvailable': f.providerAvailable,
       'online': f.online,
-      'archiveError': f.archiveError == null ? null : _code(f.archiveError!),
+      'archiveError': error == null
+          ? null
+          : archiveErrorCodes.contains(error)
+              ? error
+              : 'other',
       'integrity': {for (final e in f.integrity.entries) e.key.name: e.value},
-      'app': {for (final e in app.entries) _code(e.key): _value(e.value)},
+      'quarantinedCopies': f.quarantinedCopies,
+      'app': app.toReport(),
     };
     return const JsonEncoder.withIndent('  ').convert(report);
-  }
-
-  static final _codePattern = RegExp(r'^[a-z][A-Za-z0-9_.-]{0,39}$');
-  static final _emailPattern = RegExp(r'[^\s@]+@[^\s@]+\.[^\s@]+');
-  static final _secretPattern = RegExp(
-      r'(ya29\.|1//0|GOCSPX-|AIza|eyJ[0-9A-Za-z_-]{8,}\.|-----BEGIN|[0-9A-Za-z+/_-]{32,})');
-
-  static String _code(String value) =>
-      _codePattern.hasMatch(value) ? value : 'redacted';
-
-  static Object? _value(Object? value) {
-    if (value == null || value is bool || value is num) return value;
-    final text = '$value';
-    if (text.length > 40 ||
-        _emailPattern.hasMatch(text) ||
-        _secretPattern.hasMatch(text)) {
-      return 'redacted';
-    }
-    return _codePattern.hasMatch(text) ||
-            RegExp(r'^\d+(\.\d+)*(\+\d+)?$').hasMatch(text)
-        ? text
-        : 'redacted';
   }
 }
 
@@ -230,7 +271,8 @@ class _RecoveryStatusPanelState extends State<RecoveryStatusPanel> {
                 children: [
                   Text(issue.message, style: AppType.bodyMd),
                   if (_failed == issue.action)
-                    Text('That did not work. Nothing was changed; try again.',
+                    Text(
+                        'That did not finish. Your notes on this device are kept; you can try again.',
                         key: ValueKey('recovery-failed-${issue.code}'),
                         style: AppType.bodyMd.copyWith(color: AppColors.error)),
                   if (_labels[issue.action] case final label?)

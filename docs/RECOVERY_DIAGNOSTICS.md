@@ -14,7 +14,7 @@ page stays behind `ATOMIC_RECOVERY_PREVIEW`.
 | `pending_writes` | Local changes are not yet synced | Sync now. When offline or the provider is down, the message says they will upload later instead. |
 | `offline` / `provider_unavailable` | No network, or Google Drive is not answering | Try later. Notes keep saving locally. |
 | `archive_password`, `archive_password_needed`, `archive_unsupported`, `archive_damaged` | Codes from the last backup read | Choose another backup. Nothing was changed. |
-| `damaged_records` | C19 integrity findings | None. Copies are kept aside, and nothing was deleted. |
+| `damaged_records` | C19 integrity findings | None. The message says only that some stored records could not be read. Counts are of findings per problem, not of distinct notes, and appear only in the redacted report. Kept-aside copies are mentioned only when the `quarantinedCopies` fact confirms them. |
 
 Issues are listed in this order: ownership, lock, pending work, then
 connectivity, backups and damaged records. No action deletes or overwrites
@@ -26,8 +26,9 @@ anything.
 
 - **One run at a time.** A running action disables every button and shows
   "Working…", so a retry is never submitted twice.
-- **Failures.** A failed action says that nothing was changed, and it can be
-  tried again.
+- **Failures.** An action can fail part way, so the panel does not claim
+  that nothing changed. It says: "That did not finish. Your notes on this
+  device are kept; you can try again." The action can be tried again.
 - **Accessibility.**
   - Issues are live-region announcements.
   - Buttons are at least 48 dp and labelled.
@@ -35,15 +36,23 @@ anything.
 
 ## Redacted report
 
-`redactedReport` produces JSON with issue codes, counts and a few app facts.
+`redactedReport` produces JSON in which every value comes from a fixed set.
+Redaction does not rely on how a value looks.
 
-- **Allowed values.** App facts are kept only when the value is a short code
-  or a version number.
-- **Redacted.** Anything else becomes `redacted`: long text, email
-  addresses, Google tokens, JWTs, PEM keys and long base64 runs.
-- **Keys.** Keys that are not code-like are renamed to `redacted`.
-- **Test.** A test plants a note title, an email, a token, a JWT and key
-  material, and checks that none of them appear in the report.
+- **Diagnostic facts.** Issue codes, counts, flags, integrity problem names and
+  `quarantinedCopies`.
+- **Archive error.** A known `ArchiveFormatException` code
+  (`RecoveryDiagnostics.archiveErrorCodes`). Any other value becomes `other`.
+- **App facts.** These come from `DiagnosticApp`, which has three typed fields
+  and no free-form map:
+  - `version`: kept only when it matches `major.minor.patch+build`, otherwise
+    `invalid`.
+  - `flavor`: a `DiagnosticFlavor` value.
+  - `platform`: a `DiagnosticPlatform` value.
+- **Tests.** Tests plant canaries in the archive error and the version: a
+  note title, an email, a token, a JWT, key material, and short code-shaped
+  values (`diabetes`, `short-secret`, `abc`). None of them appears in the
+  report or in the issue messages.
 
 ## Open
 
