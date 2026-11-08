@@ -117,3 +117,67 @@ The tests cover the following:
 - **Plaintext rows of a vault account.** For now the writer exports what the
   caller passes. Whether such rows should be exported sealed is undecided.
 - **Bounds.** Whether 5,000 entries and 256 MiB are right.
+
+## Restore validation and preview (C13)
+
+Two pieces cover this step. Neither is connected to a screen yet:
+
+- `lib/recovery/import_validator.dart`
+- `lib/recovery/import_preview_view.dart`
+
+`ImportValidator.inspect` reads an archive through `ArchiveReader` and writes
+nothing. Its only access to the device is a read-only `LocalNotesView.byId`.
+It produces an `ImportPreview`.
+
+### What `inspect` checks
+
+- Every frame is authenticated. Every entry is checked for size and SHA-256
+  before decoding.
+- Each readable note is then held to the rules a save enforces, through
+  `NoteContentBudget.errorFor`:
+  - the format is supported, and images are valid JPEGs within 180 KB;
+  - the title is at most 300 characters;
+  - the note fits the sync size limits.
+- A sealed (vault) note is always an issue, `sealed_unsupported`, so an
+  archive that holds one cannot be restored yet. Its payload is sealed under a
+  key derived from the recovery phrase and a salt bound to the source
+  account's user id. The export password does not make it portable, and the
+  archive carries no verified source-account context, so restoring it could
+  write notes that never open. Supporting it needs a verified source context
+  and a cross-account rekey path (open decision).
+- The trailer must confirm the archive is complete.
+- If the archive is damaged, truncated, unsupported or opened with the wrong
+  password, `inspect` throws `ArchiveFormatException` and returns nothing.
+
+### What the preview contains
+
+- Counts: total, in use, in the recycle bin, checklists, images, encrypted.
+- Ids sorted into three groups: new to this device, unchanged, or in conflict.
+  A sealed note whose id already exists here counts as a conflict.
+- One issue per note that cannot be restored, giving its id, a code and a
+  limit message.
+- No titles, bodies or images.
+- For an encrypted archive opened without a password, a **locked** preview.
+  It holds nothing, and not even the local note ids are compared.
+
+### Restore button
+
+`canRestore` is true only when the preview is unlocked and has no issues.
+`ImportPreviewView` shows the counts and reasons, and enables "Review restore"
+only in that case. Restore itself is C14: conflicts need an explicit choice,
+and notes are never merged silently.
+
+### Verification
+
+`test/recovery/import_validator_test.dart` (9 tests) covers:
+
+- counts and comparison with the device;
+- locked preview, with no local reads;
+- wrong password;
+- corruption and truncation;
+- unsupported container and manifest versions;
+- duplicate ids;
+- a damaged image, an over-long title and an over-size body;
+- the preview widget: no note content shown, restore enabled or disabled.
+
+Full suite: 1109 passed, 33 skipped.
