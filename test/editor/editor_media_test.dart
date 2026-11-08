@@ -446,4 +446,266 @@ void main() {
     await expectLater(
         input.pickJpeg(maxBytes: 60000), throwsA(isA<EditorMediaException>()));
   });
+
+  group('C07 source layouts and formats', () {
+    Future<image.Image> optimize(List<int> source,
+        {int maxBytes = 60000}) async {
+      final picker = FakePicker()
+        ..file = XFile.fromData(Uint8List.fromList(source));
+      final encoded =
+          await PlatformEditorImageInput(picker: picker, isAndroid: false)
+              .pickJpeg(maxBytes: maxBytes);
+      final bytes = base64Decode(encoded!);
+      expect(bytes.length, lessThanOrEqualTo(maxBytes));
+      return image.decodeJpg(bytes)!;
+    }
+
+    void expectNear(image.Pixel pixel, List<int> rgb) {
+      for (var i = 0; i < 3; i++) {
+        expect([pixel.r, pixel.g, pixel.b][i], closeTo(rgb[i], 6),
+            reason: 'got (${pixel.r}, ${pixel.g}, ${pixel.b}), want $rgb');
+      }
+    }
+
+    test('transparent grayscale-with-alpha areas become white, not black',
+        () async {
+      final source = image.Image(width: 64, height: 64, numChannels: 2);
+      for (final pixel in source) {
+        // Left half opaque dark gray, right half fully transparent.
+        pixel.setRgba(60, 60, 60, pixel.x < 32 ? 255 : 0);
+      }
+      final out = await optimize(image.encodePng(source));
+      expectNear(out.getPixel(5, 5), [60, 60, 60]);
+      expectNear(out.getPixel(58, 5), [255, 255, 255]);
+    });
+
+    test('semi-transparent color blends over white', () async {
+      final source = image.Image(width: 32, height: 32, numChannels: 4);
+      for (final pixel in source) {
+        pixel.setRgba(0, 0, 255, 128);
+      }
+      final out = await optimize(image.encodePng(source));
+      expectNear(out.getPixel(16, 16), [127, 127, 255]);
+    });
+
+    test('16-bit PNG keeps its color', () async {
+      final source = image.Image(
+          width: 32, height: 32, numChannels: 4, format: image.Format.uint16);
+      for (final pixel in source) {
+        pixel.setRgba(65535, 0, 0, 65535);
+      }
+      final out = await optimize(image.encodePng(source));
+      expectNear(out.getPixel(16, 16), [255, 0, 0]);
+    });
+
+    test('EXIF orientation is applied, then removed', () async {
+      final source = image.Image(width: 80, height: 40);
+      image.fill(source, color: image.ColorRgb8(0, 200, 0));
+      source.exif.imageIfd.orientation = 6; // rotate 90 degrees clockwise
+      final out = await optimize(image.encodeJpg(source));
+      expect([out.width, out.height], [40, 80]);
+      expect(out.exif.isEmpty, isTrue);
+    });
+
+    test('a GIF is accepted as its first frame', () async {
+      final source = image.Image(width: 40, height: 20);
+      image.fill(source, color: image.ColorRgb8(200, 0, 0));
+      final out = await optimize(image.encodeGif(source));
+      expect([out.width, out.height], [40, 20]);
+      expectNear(out.getPixel(10, 10), [200, 0, 0]);
+    });
+
+    test('a small WebP from the gallery is accepted', () async {
+      // 3 x 2 lossless WebP, red at alpha 128 (generated with Pillow).
+      final webp =
+          base64Decode('UklGRhwAAABXRUJQVlA4TA8AAAAvAkAAEAcQ/Y8CBiKi/wEA');
+      final out = await optimize(webp);
+      expect([out.width, out.height], [3, 2]);
+      expectNear(out.getPixel(1, 1), [255, 127, 127]);
+    });
+
+    test('other formats name the supported ones', () async {
+      for (final source in [
+        image.encodeBmp(image.Image(width: 4, height: 4)),
+        [0, 0, 0, 24, ...ascii.encode('ftypheic'), 0, 0, 0, 0],
+      ]) {
+        await expectLater(
+            optimize(source),
+            throwsA(isA<EditorMediaException>().having((e) => e.message,
+                'message', 'Choose a JPEG, PNG, WebP or GIF image.')));
+      }
+    });
+
+    test('an oversized GIF is refused before its pixels are decoded', () async {
+      // Header claims 4097 x 1: beyond the 4096 dimension bound.
+      final source = image.encodeGif(image.Image(width: 4097, height: 1));
+      await expectLater(optimize(source), throwsA(isA<EditorMediaException>()));
+    });
+
+    group('a first frame smaller than the logical canvas', () {
+      // 20 x 20: columns 0-7 red, 8-19 blue. Placed at (40, 40), every color
+      // edge falls on an 8-pixel JPEG block boundary, so samples are exact.
+      image.Image frame() {
+        final source = image.Image(width: 20, height: 20);
+        for (final pixel in source) {
+          pixel.setRgb(pixel.x < 8 ? 255 : 0, 0, pixel.x < 8 ? 0 : 255);
+        }
+        return source;
+      }
+
+      void expectPlacedAt40(image.Image out) {
+        expect([out.width, out.height], [100, 100],
+            reason: 'the output keeps the logical canvas, not the frame');
+        expectNear(out.getPixel(44, 44), [255, 0, 0]);
+        expectNear(out.getPixel(52, 52), [0, 0, 255]);
+        // Uncovered canvas is white, whatever the background field says.
+        for (final (x, y) in [
+          (36, 44),
+          (44, 36),
+          (36, 36),
+          (66, 50),
+          (50, 66),
+          (5, 5),
+          (95, 95),
+        ]) {
+          expectNear(out.getPixel(x, y), [255, 255, 255]);
+        }
+      }
+
+      test('GIF frame is composited at its declared offset', () async {
+        final gif = offsetGif(frame(), width: 100, height: 100, x: 40, y: 40);
+        final info = image.GifDecoder().startDecode(gif)!;
+        expect([info.width, info.height], [100, 100]);
+        expect([info.frames.first.x, info.frames.first.y], [40, 40]);
+        expect([info.frames.first.width, info.frames.first.height], [20, 20]);
+        expectPlacedAt40(await optimize(gif));
+      });
+
+      test('interlaced GIF frame below the top edge is placed, not refused',
+          () async {
+        // The package writes interlaced rows at their canvas row, which
+        // overruns a frame that starts below row 0.
+        final gif = offsetGif(frame(),
+            width: 100, height: 100, x: 40, y: 40, interlaced: true);
+        expect(image.GifDecoder().startDecode(gif)!.frames.first.interlaced,
+            isTrue);
+        expectPlacedAt40(await optimize(gif));
+      });
+
+      test('a GIF frame overrunning the logical canvas is refused', () async {
+        final gif = offsetGif(frame(), width: 50, height: 50, x: 40, y: 40);
+        await expectLater(optimize(gif), throwsA(isA<EditorMediaException>()));
+      });
+
+      test('animated WebP frame is composited at its declared offset',
+          () async {
+        final webp =
+            animatedWebP(frame(), width: 100, height: 100, x: 40, y: 40);
+        final info = image.WebPDecoder().startDecode(webp)!;
+        expect([info.width, info.height], [100, 100]);
+        expect(info.hasAnimation, isTrue);
+        final first = info.frames.first;
+        expect([first.x, first.y, first.width, first.height], [40, 40, 20, 20]);
+        // The package's own full animation decode agrees on the placement.
+        final reference = image.decodeWebP(webp)!;
+        expect([reference.width, reference.height], [100, 100]);
+        expect(reference.getPixel(44, 44).r, 255);
+        expect(reference.getPixel(5, 5).a, 0);
+        expectPlacedAt40(await optimize(webp));
+      });
+
+      test('a WebP frame overrunning the canvas is refused', () async {
+        final webp = animatedWebP(frame(), width: 50, height: 50, x: 40, y: 40);
+        await expectLater(optimize(webp), throwsA(isA<EditorMediaException>()));
+      });
+
+      test('a full-canvas animated WebP keeps its first frame', () async {
+        final first = image.Image(width: 24, height: 16);
+        image.fill(first, color: image.ColorRgb8(0, 160, 0));
+        final second = image.Image(width: 24, height: 16);
+        image.fill(second, color: image.ColorRgb8(160, 0, 0));
+        first.addFrame(second);
+        final webp = image.encodeWebP(first);
+        expect(image.WebPDecoder().startDecode(webp)!.hasAnimation, isTrue);
+        final out = await optimize(webp);
+        expect([out.width, out.height], [24, 16]);
+        expectNear(out.getPixel(12, 8), [0, 160, 0]);
+      });
+    });
+  });
+}
+
+/// Re-declares a single-frame GIF from the package encoder as a [width] x
+/// [height] logical screen whose only frame sits at ([x], [y]). The background
+/// index is set to 0, a frame color, so honoring it would not produce white.
+Uint8List offsetGif(image.Image frame,
+    {required int width,
+    required int height,
+    required int x,
+    required int y,
+    bool interlaced = false}) {
+  final bytes = Uint8List.fromList(image.encodeGif(frame));
+  final data = ByteData.sublistView(bytes);
+  data.setUint16(6, width, Endian.little);
+  data.setUint16(8, height, Endian.little);
+  bytes[11] = 0;
+  final flags = bytes[10];
+  var p = 13 + ((flags & 0x80) != 0 ? 3 << ((flags & 7) + 1) : 0);
+  while (bytes[p] == 0x21) {
+    // Extension: introducer, label, then data sub-blocks up to a 0 length.
+    p += 2;
+    while (bytes[p] != 0) {
+      p += bytes[p] + 1;
+    }
+    p++;
+  }
+  expect(bytes[p], 0x2c, reason: 'image descriptor');
+  data.setUint16(p + 1, x, Endian.little);
+  data.setUint16(p + 3, y, Endian.little);
+  if (interlaced) bytes[p + 9] |= 0x40;
+  return bytes;
+}
+
+/// A VP8X + ANIM + ANMF animation of one lossless [frame] at ([x], [y]) on a
+/// [width] x [height] canvas. The package encoder always writes frames at the
+/// origin, so the container is assembled around its VP8L chunk. The ANIM
+/// background is opaque black, which libwebp (and the editor) ignore.
+Uint8List animatedWebP(image.Image frame,
+    {required int width, required int height, required int x, required int y}) {
+  final still = image.encodeWebP(frame);
+  expect(ascii.decode(still.sublist(12, 16)), 'VP8L');
+  final vp8l = still.sublist(12); // the VP8L chunk, header and padding
+  Uint8List chunk(String tag, List<int> payload) {
+    final out = BytesBuilder()
+      ..add(ascii.encode(tag))
+      ..add((ByteData(4)..setUint32(0, payload.length, Endian.little))
+          .buffer
+          .asUint8List())
+      ..add(payload);
+    if (payload.length.isOdd) out.addByte(0);
+    return out.toBytes();
+  }
+
+  List<int> u24(int value) => [value & 0xff, (value >> 8) & 0xff, value >> 16];
+  final body = BytesBuilder()
+    ..add(ascii.encode('WEBP'))
+    ..add(chunk('VP8X', [0x12, 0, 0, 0, ...u24(width - 1), ...u24(height - 1)]))
+    ..add(chunk('ANIM', [0, 0, 0, 0xff, 0, 0]))
+    ..add(chunk('ANMF', [
+      ...u24(x ~/ 2),
+      ...u24(y ~/ 2),
+      ...u24(frame.width - 1),
+      ...u24(frame.height - 1),
+      ...u24(100),
+      0,
+      ...vp8l,
+    ]));
+  final payload = body.toBytes();
+  return (BytesBuilder()
+        ..add(ascii.encode('RIFF'))
+        ..add((ByteData(4)..setUint32(0, payload.length, Endian.little))
+            .buffer
+            .asUint8List())
+        ..add(payload))
+      .toBytes();
 }

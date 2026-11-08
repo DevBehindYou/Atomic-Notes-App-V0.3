@@ -123,9 +123,12 @@ abstract final class NoteContentBudget {
   static const maxBodyLength = 262144;
   static const maxPayloadLength = 393216;
   static const maxWireBytes = 400000;
+  // UTF-16 code units, matching the Server's title bound.
+  static const maxTitleLength = 300;
+  static const titleError = 'Keep the title within 300 characters';
 
   static String? errorFor(Note note) {
-    if (note.title.length > 300) return 'Keep the title within 300 characters';
+    if (note.title.length > maxTitleLength) return titleError;
     if (note.body.length > maxBodyLength) {
       return 'This note exceeds the sync size limit';
     }
