@@ -181,3 +181,89 @@ and notes are never merged silently.
 - the preview widget: no note content shown, restore enabled or disabled.
 
 Full suite: 1109 passed, 33 skipped.
+
+## Transactional restore coordinator (C14)
+
+`lib/recovery/restore_coordinator.dart` writes only through the
+`RestoreStore` port. No adapter for the native repository is part of this
+change. `notes_repository.dart` is reserved, and activating restore on devices
+waits for B05 and the accepted backup gates.
+
+### Steps
+
+1. **Preflight (writes nothing).**
+   - Refuses if an earlier restore has not finished.
+   - Takes the `ImportPreview` the user approved. It must be unlocked and
+     restorable, and carry a `digest`.
+   - Inspects the archive again with `ImportValidator`, and requires
+     `canRestore` and the approved `digest`.
+   - Requires a `ConflictChoice` (`keepDevice` or `useArchive`) for every
+     conflicting note. Notes are never merged and never guessed.
+2. **Staging.**
+   - Opens the archive again and reads its header and manifest. Their digest
+     must still be the approved one, and no entry may be sealed. Otherwise
+     the restore is refused before anything is written.
+   - Writes a `staging` marker.
+   - Reads every planned note. Each frame is authenticated and checked
+     against the approved manifest's SHA-256 for that entry.
+   - Writes a staged copy of each note. The target is not touched.
+3. **Commit.**
+   - Writes a `committing` marker.
+   - For each note: backs up the target's previous version (once, or `null`
+     if the note is new), then writes the staged copy.
+   - Every step is idempotent.
+4. **Cleanup.**
+   - Writes a `cleanup` marker, discards the staged copies, then clears the
+     marker. Backups are kept for the caller.
+
+### Binding to the approved archive
+
+`archiveDigest` is the SHA-256 of the header digest followed by the
+authenticated manifest frame exactly as stored. The manifest lists each
+entry's id, kind, flags, size and SHA-256, and the reader refuses an entry
+that does not match, so an archive with the same digest yields the same notes.
+An archive replaced after approval, or between preflight and staging, is
+refused even when its ids and sizes match.
+
+### What gets written
+
+- Notes that are new on this device, and conflicting notes chosen as
+  `useArchive`, are written as local changes: `dirty`, server version 0,
+  empty `syncedSig`. The next sync uploads them.
+- A sealed note keeps its `enc_v` and `payload`.
+- Unchanged notes, notes chosen as `keepDevice`, and notes not in the archive
+  are not touched.
+
+### Resuming after a crash
+
+`resume()` reads the marker:
+
+- `staging`: discards the staged copies. The old target is intact.
+- `committing`: repeats the commit.
+- `cleanup`: finishes the cleanup.
+
+### Verification
+
+`test/recovery/restore_coordinator_test.dart` (8 tests) covers:
+
+- The happy path: new and chosen notes are written, the rest are kept, and
+  replaced versions are backed up.
+- Refusals that write nothing:
+  - a conflict with no choice;
+  - an archive with issues;
+  - a wrong export password;
+  - an unfinished earlier restore.
+- An encrypted archive restored with its key.
+- **A crash at every one of the run's persistence boundaries.** Before
+  `committing`, the target is byte-identical to the original, and `resume`
+  undoes the restore. After it, `resume` finishes the restore exactly.
+- A crash during `resume` itself, at successive boundaries, followed by a
+  successful resume.
+
+Full suite: 1117 passed, 33 skipped.
+
+### Open decisions
+
+- How long backups are kept, and the UI to undo a finished restore (C15/C20).
+- Whether a partial restore (skipping invalid notes) is allowed.
+- The native store adapter, which waits for B05.

@@ -373,6 +373,15 @@ class ArchiveReader {
 
   ArchiveHeader? _header;
   List<int>? _headerHash;
+  Uint8List? _manifestBytes;
+
+  /// SHA-256 of the header bytes, once [readHeader] has run.
+  List<int>? get headerDigest => _headerHash;
+
+  /// The authenticated manifest frame exactly as stored, once
+  /// [readManifest] has run. Every entry is later checked against the
+  /// checksums it lists.
+  Uint8List? get manifestBytes => _manifestBytes;
   ArchiveKey? _key;
   int _index = 0;
 
@@ -466,8 +475,12 @@ class ArchiveReader {
     }
   }
 
-  Future<ArchiveManifest> readManifest() async =>
-      ArchiveManifest.parse(await _frame(ArchiveLimits.maxManifestBytes));
+  Future<ArchiveManifest> readManifest() async {
+    final bytes = await _frame(ArchiveLimits.maxManifestBytes);
+    final manifest = ArchiveManifest.parse(bytes);
+    _manifestBytes = bytes;
+    return manifest;
+  }
 
   Future<ArchivedNote> readEntry(ArchiveEntry entry) async =>
       ArchiveNoteCodec.decode(await _frame(ArchiveLimits.maxEntryBytes), entry);
