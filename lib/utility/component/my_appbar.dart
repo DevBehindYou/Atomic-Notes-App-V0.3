@@ -10,8 +10,14 @@ import 'package:flutter/material.dart';
 class MyAppBar extends StatelessWidget implements PreferredSizeWidget {
   final String text;
 
+  /// Runs instead of popping the route when the back block is tapped, for
+  /// pages that must confirm before leaving (for example with
+  /// `Navigator.maybePop`, which respects `PopScope`).
+  final VoidCallback? onBack;
+
   const MyAppBar({
     required this.text,
+    this.onBack,
     Key? key,
   }) : super(key: key);
 
@@ -31,7 +37,7 @@ class MyAppBar extends StatelessWidget implements PreferredSizeWidget {
       leadingWidth: 56,
       leading: Center(
         child: GestureDetector(
-          onTap: () => Navigator.pop(context),
+          onTap: onBack ?? () => Navigator.pop(context),
           behavior: HitTestBehavior.opaque,
           child: Container(
             margin: const EdgeInsets.only(left: AppSpace.md),
@@ -41,8 +47,8 @@ class MyAppBar extends StatelessWidget implements PreferredSizeWidget {
               color: AppColors.ink,
               borderRadius: AppRadius.std,
             ),
-            child: const Icon(Icons.arrow_back,
-                size: 17, color: AppColors.paper),
+            child:
+                const Icon(Icons.arrow_back, size: 17, color: AppColors.paper),
           ),
         ),
       ),

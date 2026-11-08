@@ -209,6 +209,13 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+          # Reuses the Gradle distribution and dependencies between runs, so a
+          # run does not depend on downloading them again.
+          cache: gradle
+          cache-dependency-path: |
+            android/*.gradle
+            android/app/*.gradle
+            android/gradle/wrapper/gradle-wrapper.properties
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -292,7 +299,23 @@ jobs:
 
       - name: Build verification APK
         id: build
-        run: flutter build apk --debug --no-pub 2>&1 | tee ci-logs/build-apk.log
+        # The Gradle distribution and some dependencies are served from GitHub
+        # release downloads, which intermittently answer 5xx. Retry only those
+        # download failures, at most three attempts; any other failure fails
+        # at once.
+        run: |
+          for attempt in 1 2 3; do
+            if flutter build apk --debug --no-pub > ci-logs/build-apk.log 2>&1; then
+              cat ci-logs/build-apk.log
+              exit 0
+            fi
+            cat ci-logs/build-apk.log
+            if [ "$attempt" = 3 ] || ! grep -Eq 'response code: 5[0-9][0-9]|status code 5[0-9][0-9]' ci-logs/build-apk.log; then
+              exit 1
+            fi
+            echo "::warning::APK build attempt $attempt hit a 5xx download error; retrying"
+            sleep $((attempt * 30))
+          done
 
       - name: Verify retained artwork in the built APK
         run: python3 tool/verify_mascot_assets.py --apk build/app/outputs/flutter-apk/app-debug.apk
