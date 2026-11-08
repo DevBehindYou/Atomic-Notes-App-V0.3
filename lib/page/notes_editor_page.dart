@@ -655,7 +655,8 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
     }
     if (!line.isChecklist) {
       return TextField(
-        key: ValueKey(index == 0 ? 'note-body' : 'note-text-$index'),
+        key: _LineKey(
+            _lines[index], index == 0 ? 'note-body' : 'note-text-$index'),
         readOnly: _document.isReadOnly,
         contextMenuBuilder: (context, state) => _selectionMenu(state, index),
         controller: _lines[index],
@@ -682,7 +683,7 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
         ),
         Expanded(
           child: TextField(
-            key: ValueKey('note-item-$index'),
+            key: _LineKey(_lines[index], 'note-item-$index'),
             readOnly: _document.isReadOnly,
             contextMenuBuilder: (context, state) =>
                 _selectionMenu(state, index),
@@ -1100,4 +1101,34 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
     String pad(int number) => number.toString().padLeft(2, '0');
     return '${local.year}-${pad(local.month)}-${pad(local.day)} ${pad(local.hour)}:${pad(local.minute)}';
   }
+}
+
+/// The key of a line's text field.
+///
+/// Flutter matches a line's widgets to its existing elements by this key, so
+/// it follows the line's controller, not its position. Inserting or removing
+/// a line keeps every other line's editing state instead of recreating or
+/// rebinding each field after it. [label] keeps the position-based names
+/// (`note-body`, `note-text-N`, `note-item-N`) that tests and tooling find
+/// fields by: `find.byKey(ValueKey('note-item-2'))` matches the field now at
+/// position 2.
+@immutable
+class _LineKey extends LocalKey {
+  const _LineKey(this.line, this.label);
+
+  final RichNoteController line;
+  final String label;
+
+  @override
+  bool operator ==(Object other) {
+    if (other is _LineKey) return identical(line, other.line);
+    // One-way match for finders that look a field up by its position name.
+    return other is ValueKey<String> && other.value == label;
+  }
+
+  @override
+  int get hashCode => identityHashCode(line);
+
+  @override
+  String toString() => '[_LineKey $label]';
 }

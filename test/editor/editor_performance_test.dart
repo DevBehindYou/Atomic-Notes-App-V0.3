@@ -210,4 +210,88 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('0 / 0 DONE'), findsNothing);
   });
+
+  Map<TextEditingController, EditableTextState> editableStates(
+          WidgetTester tester) =>
+      {
+        for (final state
+            in tester.stateList<EditableTextState>(find.byType(EditableText)))
+          state.widget.controller: state
+      };
+
+  /// Lines whose existing editing state was replaced or moved to another
+  /// controller between two snapshots.
+  int disturbed(Map<TextEditingController, EditableTextState> before,
+      Map<TextEditingController, EditableTextState> after) {
+    var count = 0;
+    for (final entry in before.entries) {
+      final now = after[entry.key];
+      if (now != null && !identical(now, entry.value)) count++;
+    }
+    return count;
+  }
+
+  testWidgets(
+      'inserting or removing a checklist line keeps every other line\'s state',
+      (tester) async {
+    final note = Note(id: 'long-checklist', kind: NoteKind.todo, items: [
+      for (var i = 0; i < 40; i++) TodoItem(text: 'Item $i of the list'),
+    ]);
+    await openEditor(tester, note, size: const Size(390, 4000));
+    await tester.tap(field('note-item-0'));
+    await tester.pumpAndSettle();
+    final before = editableStates(tester);
+    expect(before.length, 41, reason: 'title and 40 items');
+
+    // Enter on the first item inserts a new item after it.
+    await tester.testTextInput.receiveAction(TextInputAction.next);
+    await tester.pumpAndSettle();
+    final afterInsert = editableStates(tester);
+    // ignore: avoid_print
+    print('checklist insert at top: ${disturbed(before, afterInsert)} '
+        'of 40 existing line states replaced');
+    expect(disturbed(before, afterInsert), 0);
+    expect(afterInsert.length, 42);
+    // Position names still find the field now at that position.
+    expect(tester.widget<TextField>(field('note-item-1')).controller!.text, '');
+    expect(tester.widget<TextField>(field('note-item-2')).controller!.text,
+        'Item 1 of the list');
+    expect(tester.widget<TextField>(field('note-item-1')).focusNode!.hasFocus,
+        isTrue,
+        reason: 'the new item takes focus');
+
+    await tester.tap(find.byTooltip('Remove item 2'));
+    await tester.pumpAndSettle();
+    expect(disturbed(afterInsert, editableStates(tester)), 0);
+    expect(tester.widget<TextField>(field('note-item-1')).controller!.text,
+        'Item 1 of the list');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('inserting a text line keeps every other text line\'s state',
+      (tester) async {
+    await openEditor(tester, Note(id: 'long-text', body: 'Line zero'),
+        size: const Size(390, 4000));
+    for (var i = 1; i < 40; i++) {
+      await tester.tap(find.byTooltip('Add text line'));
+      await tester.pump();
+      await tester.enterText(find.byType(EditableText).last, 'Line $i');
+    }
+    await tester.pumpAndSettle();
+    await tester.tap(field('note-body'));
+    await tester.pumpAndSettle();
+    final before = editableStates(tester);
+    await tester.tap(find.byTooltip('Add text line'));
+    await tester.pumpAndSettle();
+    final after = editableStates(tester);
+    // ignore: avoid_print
+    print('text insert at top: ${disturbed(before, after)} '
+        'of 40 existing line states replaced');
+    expect(disturbed(before, after), 0);
+    expect(tester.widget<TextField>(field('note-body')).controller!.text,
+        'Line zero');
+    expect(tester.widget<TextField>(field('note-text-2')).controller!.text,
+        'Line 1');
+    expect(tester.takeException(), isNull);
+  });
 }
