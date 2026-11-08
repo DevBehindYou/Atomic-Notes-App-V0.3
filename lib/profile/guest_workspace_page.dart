@@ -21,20 +21,29 @@ abstract class GuestNotesPort {
   Future<void> remove(String id);
 }
 
+/// The guest store was used before [GuestNotesPort.open] succeeded.
+class GuestNotesNotOpen implements Exception {
+  const GuestNotesNotOpen();
+  @override
+  String toString() => 'Guest notes are not open yet';
+}
+
 /// [GuestNotesPort] over the isolated [GuestProfileStore].
 class GuestStoreNotes implements GuestNotesPort {
   GuestStoreNotes(this.store);
   final GuestProfileStore store;
   GuestSession? _session;
 
+  GuestSession get _open => _session ?? (throw const GuestNotesNotOpen());
+
   @override
   Future<void> open() async => _session = await store.open();
   @override
-  List<Note> notes() => store.notes(_session!);
+  List<Note> notes() => store.notes(_open);
   @override
-  Future<void> save(Note note) => store.put(_session!, note);
+  Future<void> save(Note note) => store.put(_open, note);
   @override
-  Future<void> remove(String id) => store.remove(_session!, id);
+  Future<void> remove(String id) => store.remove(_open, id);
 }
 
 /// A local-only workspace: create, edit, check off, search and delete notes
@@ -50,8 +59,25 @@ class GuestWorkspacePage extends StatefulWidget {
 
 class _GuestWorkspacePageState extends State<GuestWorkspacePage> {
   final _search = TextEditingController();
-  late final Future<void> _opened = widget.notes.open();
+  late Future<void> _opened = _open();
+  bool _ready = false;
   String? _error;
+
+  /// A note whose save failed. It is kept, and new edits wait, until a save
+  /// succeeds or the user discards it.
+  Note? _pending;
+
+  /// The session ended (reset or replaced): reopen before the next write.
+  bool _stale = false;
+
+  Future<void> _open() async {
+    _ready = false;
+    await widget.notes.open();
+    _stale = false;
+    if (mounted) setState(() => _ready = true);
+  }
+
+  bool get _canEdit => _ready && _pending == null;
 
   @override
   void dispose() {
@@ -82,18 +108,92 @@ class _GuestWorkspacePageState extends State<GuestWorkspacePage> {
           note: draft, onDelete: existing ? () => deleted = true : null),
     );
     if (!mounted) return;
-    try {
-      if (deleted) {
-        await widget.notes.remove(note.id);
-      } else if (saved == true && !draft.isEmpty) {
-        draft.touch();
-        await widget.notes.save(draft);
-      }
-      setState(() => _error = null);
-    } on GuestSessionStale {
-      setState(() =>
-          _error = 'This guest workspace was reset. Reopen it to continue.');
+    if (deleted) {
+      await _write(() => widget.notes.remove(note.id));
+    } else if (saved == true && !draft.isEmpty) {
+      draft.touch();
+      await _persist(draft);
     }
+  }
+
+  /// Saves [draft]. On any failure the draft stays as [_pending].
+  Future<void> _persist(Note draft) async {
+    setState(() => _pending = draft);
+    if (await _write(() => widget.notes.save(draft))) {
+      setState(() => _pending = null);
+    }
+  }
+
+  Future<bool> _write(Future<void> Function() write) async {
+    try {
+      if (_stale) {
+        final reopened = _open();
+        setState(() {
+          _opened = reopened;
+        });
+        await reopened;
+      }
+      await write();
+      if (mounted) setState(() => _error = null);
+      return true;
+    } on GuestSessionStale {
+      _stale = true;
+      if (mounted) {
+        setState(() => _error = 'This guest workspace was reset. Your note '
+            'was not saved; retry to save it in the current workspace.');
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => _error = 'Your note could not be saved on this device. '
+            'It is kept here; retry or discard it.');
+      }
+    }
+    return false;
+  }
+
+  Widget _pendingPanel(Note pending) => Card(
+        key: const ValueKey('guest-pending'),
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpace.sm),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                  'Unsaved note: '
+                  '${pending.title.isEmpty ? 'Untitled' : pending.title}',
+                  style: AppType.bodyMd),
+              Wrap(spacing: AppSpace.sm, children: [
+                TextButton(
+                    key: const ValueKey('guest-pending-retry'),
+                    onPressed: () => _persist(pending),
+                    child: const Text('Retry save')),
+                TextButton(
+                    key: const ValueKey('guest-pending-edit'),
+                    onPressed: () => _editPending(pending),
+                    child: const Text('Edit')),
+                TextButton(
+                    key: const ValueKey('guest-pending-discard'),
+                    onPressed: () => setState(() {
+                          _pending = null;
+                          _error = null;
+                        }),
+                    child: const Text('Discard')),
+              ]),
+            ],
+          ),
+        ),
+      );
+
+  Future<void> _editPending(Note pending) async {
+    final draft = pending.copy();
+    final saved = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => NotesCreaterPage(note: draft),
+    );
+    if (!mounted || saved != true) return;
+    draft.touch();
+    await _persist(draft);
   }
 
   @override
@@ -101,7 +201,8 @@ class _GuestWorkspacePageState extends State<GuestWorkspacePage> {
         appBar: const MyAppBar(text: 'Guest notes'),
         floatingActionButton: FloatingActionButton.extended(
           key: const ValueKey('guest-new-note'),
-          onPressed: () => _edit(Note.create(), existing: false),
+          onPressed:
+              _canEdit ? () => _edit(Note.create(), existing: false) : null,
           icon: const Icon(Icons.add),
           label: const Text('New note'),
         ),
@@ -134,9 +235,13 @@ class _GuestWorkspacePageState extends State<GuestWorkspacePage> {
                       style: AppType.bodyMd),
                 ),
                 if (_error != null)
-                  Text(_error!,
-                      key: const ValueKey('guest-error'),
-                      style: AppType.bodyMd.copyWith(color: AppColors.error)),
+                  Semantics(
+                    liveRegion: true,
+                    child: Text(_error!,
+                        key: const ValueKey('guest-error'),
+                        style: AppType.bodyMd.copyWith(color: AppColors.error)),
+                  ),
+                if (_pending != null) _pendingPanel(_pending!),
                 const SizedBox(height: AppSpace.sm),
                 TextField(
                   key: const ValueKey('guest-search'),
@@ -157,6 +262,7 @@ class _GuestWorkspacePageState extends State<GuestWorkspacePage> {
                     title: Text(note.title.isEmpty ? 'Untitled' : note.title),
                     subtitle: Text(note.preview,
                         maxLines: 2, overflow: TextOverflow.ellipsis),
+                    enabled: _canEdit,
                     onTap: () => _edit(note, existing: true),
                   ),
               ],
