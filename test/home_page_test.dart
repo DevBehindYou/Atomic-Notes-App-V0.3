@@ -15,6 +15,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'support/fake_notes_source.dart';
+import 'notes_editor_page_test.dart' show field;
 
 void _stage(String value) {
   // Fixed public fixture markers only; the CI runner never exports test text.
@@ -762,7 +763,7 @@ void main() {
       await tester.tap(find.text('IDEAS'));
       await tester.pumpAndSettle();
       await tester.enterText(find.byKey(const ValueKey('note-title')), '');
-      await tester.enterText(find.byKey(const ValueKey('note-body')), '');
+      await tester.enterText(field('note-body'), '');
       await tester.tap(find.text('Done'));
       await tester.pumpAndSettle();
       expect(source.saveCalls, 0);
@@ -780,7 +781,7 @@ void main() {
         await tester.tap(find.text('IDEAS'));
         await tester.pumpAndSettle();
         await tester.enterText(
-          find.byKey(const ValueKey('note-body')),
+          field('note-body'),
           'New draft',
         );
         expect(original.body, 'Build a rocket');

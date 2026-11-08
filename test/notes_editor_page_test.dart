@@ -42,7 +42,17 @@ Future<void> openEditor(
   await tester.pumpAndSettle();
 }
 
-Finder field(String key) => find.byKey(ValueKey(key));
+/// Finds an editor text field by name: a line's position name (`note-body`,
+/// `note-text-N`, `note-item-N`) or a fixed key such as `note-title`.
+Finder field(String name) => _lineName.hasMatch(name)
+    ? find.descendant(
+        of: find.byWidgetPredicate(
+            (widget) => widget is NoteFieldLocator && widget.name == name,
+            description: 'line field "$name"'),
+        matching: find.byType(TextField))
+    : find.byKey(ValueKey(name));
+
+final _lineName = RegExp(r'^note-(body|text-\d+|item-\d+)$');
 
 void main() {
   testWidgets('editor_text_save', (tester) async {

@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as image;
+import '../notes_editor_page_test.dart' show field;
 
 class _Speech implements EditorSpeechInput {
   int cancels = 0;
@@ -29,7 +30,7 @@ class _Speech implements EditorSpeechInput {
   Future<void> stop() async {}
 }
 
-Finder get _body => find.byKey(const ValueKey('note-body'));
+Finder get _body => field('note-body');
 Finder get _fullImage => find.byWidgetPredicate((widget) =>
     widget is Image && widget.semanticLabel == 'Full size note image');
 
