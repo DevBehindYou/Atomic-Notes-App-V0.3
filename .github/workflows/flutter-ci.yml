@@ -26,6 +26,8 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Create a per-run secret canary for the artifact scan
+        run: echo "ATOMIC_CI_CANARY=$(openssl rand -hex 24)" >> "$GITHUB_ENV"
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.44.8'
@@ -38,12 +40,26 @@ jobs:
           echo "CHROME_EXECUTABLE=$(command -v google-chrome)" >> "$GITHUB_ENV"
       - name: Verify bounded proof parser
         run: python3 -m unittest discover -s tool -p 'test_web_compile_proof.py'
+      - name: Verify the artifact secret scanner
+        run: python3 -m unittest discover -s tool -p 'test_scan_ci_artifacts.py'
       - name: Compile actual main and verify browser startup guard
         env:
           ATOMIC_WEB_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: python3 tool/run_web_compile_proof.py
-      - name: Upload sanitized compile and gate outcomes only
+      - name: Scan artifacts for secrets before any upload
+        id: secret_scan
         if: always()
+        run: python3 tool/scan_ci_artifacts.py 'ci-web-compile-proof.json'
+      - name: Upload artifact secret scan result
+        if: always() && steps.secret_scan.outcome != 'skipped'
+        uses: actions/upload-artifact@v6
+        with:
+          name: sanitized-artifact-scan-web-feasibility
+          path: ci-artifact-scan-proof.json
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Upload sanitized compile and gate outcomes only
+        if: always() && steps.secret_scan.outcome == 'success'
         uses: actions/upload-artifact@v6
         with:
           name: sanitized-web-compile-proof
@@ -62,6 +78,8 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
+      - name: Create a per-run secret canary for the artifact scan
+        run: echo "ATOMIC_CI_CANARY=$(openssl rand -hex 24)" >> "$GITHUB_ENV"
       - name: Checkout verified Server fixture
         uses: actions/checkout@v5
         with:
@@ -107,8 +125,26 @@ jobs:
         run: python3 tool/run_logout_handoff_wire_fixture.py
       - name: Verify user sign-in APIs and retained Hive work
         run: python3 tool/run_user_sessions_wire_fixture.py
-      - name: Upload sanitized user sign-in wire outcomes
+      - name: Remove owned disposable MongoDB container
         if: always()
+        run: |
+          if docker inspect atomic-wire-mongo > /dev/null 2>&1; then
+            docker rm -f atomic-wire-mongo > /dev/null
+          fi
+      - name: Scan artifacts for secrets before any upload
+        id: secret_scan
+        if: always()
+        run: python3 tool/scan_ci_artifacts.py 'ci-user-sessions-server-wire-proof.json' 'ci-wire-proof.json' 'ci-logout-server-wire-proof.json' 'ci-logout-recovery-server-wire-proof.json' 'ci-logout-handoff-server-wire-proof.json'
+      - name: Upload artifact secret scan result
+        if: always() && steps.secret_scan.outcome != 'skipped'
+        uses: actions/upload-artifact@v6
+        with:
+          name: sanitized-artifact-scan-server-wire
+          path: ci-artifact-scan-proof.json
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Upload sanitized user sign-in wire outcomes
+        if: always() && steps.secret_scan.outcome == 'success'
         continue-on-error: true
         uses: actions/upload-artifact@v6
         with:
@@ -117,7 +153,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 1
       - name: Upload sanitized wire outcomes
-        if: always()
+        if: always() && steps.secret_scan.outcome == 'success'
         continue-on-error: true
         uses: actions/upload-artifact@v6
         with:
@@ -126,7 +162,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 1
       - name: Upload sanitized logout wire outcomes
-        if: always()
+        if: always() && steps.secret_scan.outcome == 'success'
         continue-on-error: true
         uses: actions/upload-artifact@v6
         with:
@@ -135,7 +171,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 1
       - name: Upload sanitized recovery inspection outcome
-        if: always()
+        if: always() && steps.secret_scan.outcome == 'success'
         continue-on-error: true
         uses: actions/upload-artifact@v6
         with:
@@ -144,7 +180,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 1
       - name: Upload sanitized same-owner recovery outcomes
-        if: always()
+        if: always() && steps.secret_scan.outcome == 'success'
         continue-on-error: true
         uses: actions/upload-artifact@v6
         with:
@@ -152,12 +188,6 @@ jobs:
           path: ci-logout-handoff-server-wire-proof.json
           if-no-files-found: warn
           retention-days: 1
-      - name: Remove owned disposable MongoDB container
-        if: always()
-        run: |
-          if docker inspect atomic-wire-mongo > /dev/null 2>&1; then
-            docker rm -f atomic-wire-mongo > /dev/null
-          fi
 
   flutter:
     name: Flutter analyze, tests, and debug APK
@@ -172,6 +202,8 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Create a per-run secret canary for the artifact scan
+        run: echo "ATOMIC_CI_CANARY=$(openssl rand -hex 24)" >> "$GITHUB_ENV"
       - name: Set up Java
         uses: actions/setup-java@v5
         with:
@@ -211,82 +243,24 @@ jobs:
           ATOMIC_UI_CAPTURE: 'true'
         run: python3 tool/run_notes_ui_fixture.py
 
-      - name: Upload bounded notes UI outcomes
-        if: always()
-        uses: actions/upload-artifact@v6
-        with:
-          name: sanitized-notes-ui-proof
-          path: ci-notes-ui-proof.json
-          if-no-files-found: warn
-          retention-days: 1
-
-      - name: Upload synthetic notes UI previews
-        if: always()
-        uses: actions/upload-artifact@v6
-        with:
-          name: synthetic-notes-ui-previews
-          path: ci-notes-ui-previews/*.png
-          if-no-files-found: warn
-          retention-days: 1
-
       - name: Record redacted changed-source diagnostics for repair
         if: always()
         env:
           ATOMIC_REPAIR_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: python3 tool/run_logout_source_diagnostics.py
 
-      - name: Upload redacted changed-source diagnostics
-        if: always()
-        continue-on-error: true
-        uses: actions/upload-artifact@v6
-        with:
-          name: sanitized-logout-source-diagnostics
-          path: ci-logout-source-diagnostics.json
-          if-no-files-found: warn
-          retention-days: 1
-
       - name: Verify committed Android branding assets
         run: |
           python3 tool/test_verify_branding_assets.py
           python3 tool/verify_branding_assets.py --proof ci-branding-assets-proof.json
 
-      - name: Upload sanitized Android branding outcomes
-        if: always()
-        continue-on-error: true
-        uses: actions/upload-artifact@v6
-        with:
-          name: sanitized-branding-assets-proof
-          path: ci-branding-assets-proof.json
-          if-no-files-found: warn
-          retention-days: 1
-
       - name: Verify controlled Cloud Notes automatic activity
         run: python3 tool/run_cloud_activity_fixture.py
-
-      - name: Upload sanitized Cloud Notes activity outcomes
-        if: always()
-        continue-on-error: true
-        uses: actions/upload-artifact@v6
-        with:
-          name: sanitized-cloud-activity-proof
-          path: ci-cloud-activity-proof.json
-          if-no-files-found: warn
-          retention-days: 1
 
       - name: Verify controlled live mascot status
         run: |
           python3 -m unittest discover -s tool -p 'test_run_mascot_status_fixture.py'
           python3 tool/run_mascot_status_fixture.py
-
-      - name: Upload sanitized mascot status outcomes
-        if: always()
-        continue-on-error: true
-        uses: actions/upload-artifact@v6
-        with:
-          name: sanitized-mascot-status-proof
-          path: ci-mascot-status-proof.json
-          if-no-files-found: warn
-          retention-days: 1
 
       - name: Verify historical and current R2 logout preservation
         run: |
@@ -294,30 +268,10 @@ jobs:
           python3 tool/test_run_r2_causal_fixture.py
           python3 tool/run_r2_causal_fixture.py
 
-      - name: Upload sanitized R2 causal outcomes
-        if: always()
-        continue-on-error: true
-        uses: actions/upload-artifact@v6
-        with:
-          name: sanitized-r2-causal-proof
-          path: ci-r2-causal-proof.json
-          if-no-files-found: warn
-          retention-days: 1
-
       - name: Verify controlled user sign-in ownership and safe retry
         run: |
           python3 tool/test_run_user_sessions_fixture.py
           python3 tool/run_user_sessions_fixture.py
-
-      - name: Upload sanitized user sign-in outcomes
-        if: always()
-        continue-on-error: true
-        uses: actions/upload-artifact@v6
-        with:
-          name: sanitized-user-sessions-proof
-          path: ci-user-sessions-proof.json
-          if-no-files-found: warn
-          retention-days: 1
 
       - name: Verify native full-batch push acknowledgement preservation
         env:
@@ -325,15 +279,6 @@ jobs:
         run: |
           python3 tool/test_run_push_ack_proof.py
           python3 tool/run_push_ack_proof.py
-
-      - name: Upload sanitized native push acknowledgement outcomes
-        if: always()
-        uses: actions/upload-artifact@v6
-        with:
-          name: sanitized-push-ack-proof
-          path: ci-push-ack-proof.json
-          if-no-files-found: error
-          retention-days: 1
 
       - name: Run existing tests
         id: tests
@@ -345,8 +290,121 @@ jobs:
           ATOMIC_REPAIR_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: python3 tool/run_logout_recovery_controls.py
 
-      - name: Upload redacted controlled-recovery machine diagnostics
+      - name: Build verification APK
+        id: build
+        run: flutter build apk --debug --no-pub 2>&1 | tee ci-logs/build-apk.log
+
+      - name: Verify retained artwork in the built APK
+        run: python3 tool/verify_mascot_assets.py --apk build/app/outputs/flutter-apk/app-debug.apk
+
+      - name: Report unavailable diagnostic artifact
+        if: always() && steps.diagnostics.outcome == 'failure'
+        run: |
+          echo '::warning::Diagnostic artifact upload failed. Read the step logs above for compiler output and the upload error. If storage quota is exhausted, remove obsolete GitHub Actions artifacts before rerunning.'
+          echo 'Diagnostic artifact upload failed; compiler output remains in the workflow step logs. APK upload is still required for a successful build job.' >> "$GITHUB_STEP_SUMMARY"
+
+
+      - name: Scan artifacts for secrets before any upload
+        id: secret_scan
         if: always()
+        run: python3 tool/scan_ci_artifacts.py 'ci-notes-ui-proof.json' 'ci-notes-ui-previews/*.png' 'ci-logout-source-diagnostics.json' 'ci-branding-assets-proof.json' 'ci-cloud-activity-proof.json' 'ci-mascot-status-proof.json' 'ci-r2-causal-proof.json' 'ci-user-sessions-proof.json' 'ci-push-ack-proof.json' 'ci-logout-machine-diagnostics.json' 'ci-logout-recovery-controls-proof.json' 'ci-logs/' 'pubspec.lock' 'build/app/outputs/flutter-apk/app-debug.apk' 'ci-flutter-verification-proof.json'
+      - name: Upload artifact secret scan result
+        if: always() && steps.secret_scan.outcome != 'skipped'
+        uses: actions/upload-artifact@v6
+        with:
+          name: sanitized-artifact-scan-flutter
+          path: ci-artifact-scan-proof.json
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Upload bounded notes UI outcomes
+        if: always() && steps.secret_scan.outcome == 'success'
+        uses: actions/upload-artifact@v6
+        with:
+          name: sanitized-notes-ui-proof
+          path: ci-notes-ui-proof.json
+          if-no-files-found: warn
+          retention-days: 1
+
+      - name: Upload synthetic notes UI previews
+        if: always() && steps.secret_scan.outcome == 'success'
+        uses: actions/upload-artifact@v6
+        with:
+          name: synthetic-notes-ui-previews
+          path: ci-notes-ui-previews/*.png
+          if-no-files-found: warn
+          retention-days: 1
+
+      - name: Upload redacted changed-source diagnostics
+        if: always() && steps.secret_scan.outcome == 'success'
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: sanitized-logout-source-diagnostics
+          path: ci-logout-source-diagnostics.json
+          if-no-files-found: warn
+          retention-days: 1
+
+      - name: Upload sanitized Android branding outcomes
+        if: always() && steps.secret_scan.outcome == 'success'
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: sanitized-branding-assets-proof
+          path: ci-branding-assets-proof.json
+          if-no-files-found: warn
+          retention-days: 1
+
+      - name: Upload sanitized Cloud Notes activity outcomes
+        if: always() && steps.secret_scan.outcome == 'success'
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: sanitized-cloud-activity-proof
+          path: ci-cloud-activity-proof.json
+          if-no-files-found: warn
+          retention-days: 1
+
+      - name: Upload sanitized mascot status outcomes
+        if: always() && steps.secret_scan.outcome == 'success'
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: sanitized-mascot-status-proof
+          path: ci-mascot-status-proof.json
+          if-no-files-found: warn
+          retention-days: 1
+
+      - name: Upload sanitized R2 causal outcomes
+        if: always() && steps.secret_scan.outcome == 'success'
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: sanitized-r2-causal-proof
+          path: ci-r2-causal-proof.json
+          if-no-files-found: warn
+          retention-days: 1
+
+      - name: Upload sanitized user sign-in outcomes
+        if: always() && steps.secret_scan.outcome == 'success'
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: sanitized-user-sessions-proof
+          path: ci-user-sessions-proof.json
+          if-no-files-found: warn
+          retention-days: 1
+
+      - name: Upload sanitized native push acknowledgement outcomes
+        if: always() && steps.secret_scan.outcome == 'success'
+        uses: actions/upload-artifact@v6
+        with:
+          name: sanitized-push-ack-proof
+          path: ci-push-ack-proof.json
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload redacted controlled-recovery machine diagnostics
+        if: always() && steps.secret_scan.outcome == 'success'
         continue-on-error: true
         uses: actions/upload-artifact@v6
         with:
@@ -356,7 +414,7 @@ jobs:
           retention-days: 1
 
       - name: Upload sanitized logout recovery controls
-        if: always()
+        if: always() && steps.secret_scan.outcome == 'success'
         continue-on-error: true
         uses: actions/upload-artifact@v6
         with:
@@ -365,16 +423,9 @@ jobs:
           if-no-files-found: warn
           retention-days: 1
 
-      - name: Build verification APK
-        id: build
-        run: flutter build apk --debug --no-pub 2>&1 | tee ci-logs/build-apk.log
-
-      - name: Verify retained artwork in the built APK
-        run: python3 tool/verify_mascot_assets.py --apk build/app/outputs/flutter-apk/app-debug.apk
-
       - name: Upload compiler evidence and resolved dependencies
         id: diagnostics
-        if: always()
+        if: always() && steps.secret_scan.outcome == 'success'
         # Console logs remain available even when artifact storage is full.
         continue-on-error: true
         uses: actions/upload-artifact@v6
@@ -386,13 +437,8 @@ jobs:
           if-no-files-found: warn
           retention-days: 1
 
-      - name: Report unavailable diagnostic artifact
-        if: always() && steps.diagnostics.outcome == 'failure'
-        run: |
-          echo '::warning::Diagnostic artifact upload failed. Read the step logs above for compiler output and the upload error. If storage quota is exhausted, remove obsolete GitHub Actions artifacts before rerunning.'
-          echo 'Diagnostic artifact upload failed; compiler output remains in the workflow step logs. APK upload is still required for a successful build job.' >> "$GITHUB_STEP_SUMMARY"
-
       - name: Upload non-production debug APK
+        if: steps.secret_scan.outcome == 'success'
         id: apk-upload
         uses: actions/upload-artifact@v6
         with:
@@ -400,7 +446,6 @@ jobs:
           path: build/app/outputs/flutter-apk/app-debug.apk
           if-no-files-found: error
           retention-days: 1
-
       - name: Record bounded Flutter verification outcomes
         if: always()
         env:
@@ -410,12 +455,16 @@ jobs:
           ATOMIC_VERIFY_BUILD: ${{ steps.build.outcome }}
           ATOMIC_VERIFY_APKUPLOAD: ${{ steps.apk-upload.outcome }}
         run: python3 tool/record_flutter_verification.py
-
-      - name: Upload bounded Flutter verification proof
+      - name: Scan the verification proof for secrets before upload
+        id: secret_scan_proof
         if: always()
+        run: python3 tool/scan_ci_artifacts.py 'ci-flutter-verification-proof.json'
+      - name: Upload bounded Flutter verification proof
+        if: always() && steps.secret_scan_proof.outcome == 'success'
         uses: actions/upload-artifact@v6
         with:
           name: sanitized-flutter-verification-proof
           path: ci-flutter-verification-proof.json
           if-no-files-found: error
           retention-days: 1
+
