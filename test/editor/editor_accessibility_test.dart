@@ -11,6 +11,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as image;
 
+import '../notes_editor_page_test.dart' show field;
+
 // C10: semantics, target size, contrast, large text and keyboard order for the
 // editor, its formatting bar, image controls and dialogs. These run in the
 // widget tester only; TalkBack and VoiceOver on devices remain unverified.
@@ -97,7 +99,10 @@ String _describe(FocusNode? node) {
   final context = node?.context;
   if (context == null) return 'none';
   final field = context.findAncestorWidgetOfExactType<TextField>();
-  if (field != null) return 'field ${field.key}';
+  if (field != null) {
+    final line = context.findAncestorWidgetOfExactType<NoteFieldLocator>();
+    return 'field ${line?.name ?? field.key}';
+  }
   final tip = context.findAncestorWidgetOfExactType<Tooltip>();
   if (tip != null) return tip.message!;
   final box = context.findAncestorWidgetOfExactType<Checkbox>();
@@ -196,9 +201,9 @@ void main() {
     final key = find.byKey;
     expect(tester.getSemantics(key(const ValueKey('note-title'))),
         isSemantics(label: 'Title', value: 'Groceries', isTextField: true));
-    expect(tester.getSemantics(key(const ValueKey('note-body'))),
+    expect(tester.getSemantics(field('note-body')),
         isSemantics(label: 'Note text', value: 'Prose', isTextField: true));
-    expect(tester.getSemantics(key(const ValueKey('note-item-1'))),
+    expect(tester.getSemantics(field('note-item-1')),
         isSemantics(label: 'List item', value: 'Item', isTextField: true));
     expect(
         tester.getSemantics(find.byType(Checkbox)),
@@ -219,7 +224,7 @@ void main() {
     await _open(tester, Note.create());
     expect(tester.getSemantics(find.byKey(const ValueKey('note-title'))),
         isSemantics(label: 'Title', isTextField: true));
-    expect(tester.getSemantics(find.byKey(const ValueKey('note-body'))),
+    expect(tester.getSemantics(field('note-body')),
         isSemantics(label: 'Start writing…', isTextField: true));
     semantics.dispose();
   });
@@ -320,9 +325,9 @@ void main() {
       "field [<'note-title'>]",
       'Remove tag keep',
       'Add tag',
-      'field [_LineKey note-body]',
+      'field note-body',
       'Complete item 2',
-      'field [_LineKey note-item-1]',
+      'field note-item-1',
       'Remove item 2',
       'View note image',
       'Remove image',

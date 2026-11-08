@@ -4,6 +4,7 @@ import 'package:atomic_notes/editor/editor_media.dart';
 import 'package:atomic_notes/page/notes_editor_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import '../notes_editor_page_test.dart' show field;
 
 class _Speech implements EditorSpeechInput {
   int starts = 0;
@@ -75,7 +76,7 @@ Future<void> _action(WidgetTester tester, String label) async {
   await tester.pumpAndSettle();
 }
 
-Finder get _body => find.byKey(const ValueKey('note-body'));
+Finder get _body => field('note-body');
 
 Future<void> _edit(WidgetTester tester, String text) async {
   if (_body.evaluate().isEmpty) {

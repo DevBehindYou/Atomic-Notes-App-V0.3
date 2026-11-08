@@ -8,6 +8,7 @@ import 'package:atomic_notes/theme/app_tokens.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as image;
+import '../notes_editor_page_test.dart' show field;
 
 String _jpeg(int width) =>
     base64Encode(image.encodeJpg(image.Image(width: width, height: 12)));
@@ -130,7 +131,7 @@ void main() {
     final note = _note();
     final before = note.toMap();
     await _open(tester, note);
-    final body = find.byKey(const ValueKey('note-body'));
+    final body = field('note-body');
     await tester.enterText(body, 'Unsaved prose stays');
     final controller = tester.widget<TextField>(body).controller!;
     const selection = TextSelection(baseOffset: 2, extentOffset: 7);

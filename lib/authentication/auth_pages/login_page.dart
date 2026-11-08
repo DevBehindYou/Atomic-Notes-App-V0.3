@@ -1,6 +1,8 @@
 // ignore_for_file: library_private_types_in_public_api, use_build_context_synchronously
 
 import 'package:atomic_notes/api/atomic_notes_api.dart';
+import 'package:atomic_notes/profile/guest_profile_store.dart';
+import 'package:atomic_notes/profile/guest_workspace_page.dart';
 import 'package:atomic_notes/theme/app_tokens.dart';
 import 'package:atomic_notes/theme/editorial.dart';
 import 'package:atomic_notes/utility/component/login_button.dart';
@@ -18,7 +20,11 @@ import 'package:flutter/material.dart';
 /// email. Those three pages were deleted along with their main.dart routes
 /// once Google-only auth was confirmed — there was no live path to them left.
 class LoginPage extends StatefulWidget {
-  const LoginPage({super.key});
+  const LoginPage({this.guestEntry = GuestFeature.enabled, super.key});
+
+  /// Offers "Continue without an account" (local-only Guest notes). Off in
+  /// default builds; the Google-only start is unchanged.
+  final bool guestEntry;
 
   @override
   _LoginPageState createState() => _LoginPageState();
@@ -101,6 +107,22 @@ class _LoginPageState extends State<LoginPage> {
                   text: 'Sign in with Google',
                 ),
               ),
+              if (widget.guestEntry)
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpace.screenMargin),
+                  child: TextButton(
+                    key: const ValueKey('login-guest'),
+                    style: TextButton.styleFrom(
+                        minimumSize: const Size.fromHeight(48)),
+                    onPressed: _isLoading
+                        ? null
+                        : () => Navigator.of(context).push(MaterialPageRoute(
+                            builder: (_) => GuestWorkspacePage(
+                                notes: GuestStoreNotes(GuestProfileStore())))),
+                    child: const Text('Continue without an account'),
+                  ),
+                ),
               const SizedBox(height: AppSpace.lg),
               Padding(
                 padding: const EdgeInsets.symmetric(
