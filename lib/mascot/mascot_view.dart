@@ -35,7 +35,7 @@ class MascotView extends StatefulWidget {
 class _MascotViewState extends State<MascotView> with WidgetsBindingObserver {
   late MascotPlaybackController _player;
   final Set<OwnedMascotFrame> _retired = {};
-  bool _resumed = true, _focused = false;
+  bool _resumed = true, _focused = false, _failed = false;
   @override
   void initState() {
     super.initState();
@@ -52,6 +52,13 @@ class _MascotViewState extends State<MascotView> with WidgetsBindingObserver {
         targetPhysicalPixels: widget.size.round().clamp(1, 480),
         clipRest: widget.clipRest,
         releaseFrame: _release);
+    _failed = _player.state == MascotPlaybackState.failed;
+    _player.addListener(_onPlayerStateChanged);
+  }
+
+  void _onPlayerStateChanged() {
+    final failed = _player.state == MascotPlaybackState.failed;
+    if (failed != _failed) setState(() => _failed = failed);
   }
 
   void _release(OwnedMascotFrame frame) {
@@ -88,6 +95,7 @@ class _MascotViewState extends State<MascotView> with WidgetsBindingObserver {
     if (old.resolver != widget.resolver ||
         old.frameSource != widget.frameSource ||
         old.clipRest != widget.clipRest) {
+      _player.removeListener(_onPlayerStateChanged);
       _player.dispose();
       _create();
     } else {
@@ -115,6 +123,7 @@ class _MascotViewState extends State<MascotView> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _player.removeListener(_onPlayerStateChanged);
     _player.dispose();
     for (final frame in _retired) {
       frame.dispose();
@@ -124,8 +133,8 @@ class _MascotViewState extends State<MascotView> with WidgetsBindingObserver {
   }
 
   @override
-  Widget build(BuildContext context) => AnimatedBuilder(
-      animation: _player, builder: (context, _) => _buildPlayer(context));
+  // Frame notifications rebuild the artwork below, not focus/semantics controls.
+  Widget build(BuildContext context) => _buildPlayer(context);
   Widget _buildPlayer(BuildContext context) {
     if (_player.state == MascotPlaybackState.failed) {
       return SizedBox(
