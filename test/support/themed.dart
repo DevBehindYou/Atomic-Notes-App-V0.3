@@ -34,8 +34,9 @@ Future<void> pumpThemed(
 }
 
 /// Pumps [child] at text scale 2.0 in a 320 dp wide frame: the layout check
-/// every `lib/ui` widget passes (Target-UI-Architecture section 6). Follow it
-/// with `expect(tester.takeException(), isNull)`.
+/// every `lib/ui` widget passes (Target-UI-Architecture section 6). The
+/// frame scrolls vertically, as a page does, so only width can overflow.
+/// Follow it with `expect(tester.takeException(), isNull)`.
 Future<void> pumpNarrow(
   WidgetTester tester,
   Widget child, {
@@ -45,9 +46,11 @@ Future<void> pumpNarrow(
 }) {
   return pumpThemed(
     tester,
-    Align(
-      alignment: Alignment.topLeft,
-      child: SizedBox(width: width, child: child),
+    SingleChildScrollView(
+      child: Align(
+        alignment: Alignment.topLeft,
+        child: SizedBox(width: width, child: child),
+      ),
     ),
     theme: theme,
     textScale: textScale,
