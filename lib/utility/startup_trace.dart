@@ -8,6 +8,7 @@ enum StartupStep {
   apiInit,
   hiveInit,
   authBox,
+  appearance,
   screenSecurity,
   profile,
   syncBox,

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'mascot/mascot_runtime.dart';
 import 'page/endpage/mascot_settings_page.dart';
 
+import 'package:atomic_notes/appearance/appearance_controller.dart';
 import 'package:atomic_notes/authentication/auth_pages/login_page.dart';
 import 'package:atomic_notes/authentication/auth_services/session_guard.dart';
 import 'package:atomic_notes/platform/browser_preview_gate.dart';
@@ -31,6 +32,7 @@ import 'package:atomic_notes/page/splash_screen.dart';
 import 'package:atomic_notes/page/account_cache_recovery_page.dart';
 import 'package:atomic_notes/theme/app_theme.dart';
 import 'package:atomic_notes/theme/app_tokens.dart';
+import 'package:atomic_notes/theme/atomic_theme.dart';
 import 'package:atomic_notes/theme/editorial.dart';
 import 'package:atomic_notes/utility/intropages/onboarding_screen.dart';
 import 'package:atomic_notes/utility/intropages/energy_intro_screen.dart';
@@ -131,13 +133,19 @@ class StartupFailedApp extends StatelessWidget {
 }
 
 class MyApp extends StatefulWidget {
-  const MyApp({super.key});
+  const MyApp({super.key, this.appearance});
+
+  /// Replaced in tests; the app uses the choice read at startup.
+  final AppearanceController? appearance;
 
   @override
   State<MyApp> createState() => _MyAppState();
 }
 
 class _MyAppState extends State<MyApp> {
+  AppearanceController get _appearance =>
+      widget.appearance ?? AppearanceController.instance;
+
   @override
   void initState() {
     super.initState();
@@ -154,55 +162,64 @@ class _MyAppState extends State<MyApp> {
 
   @override
   Widget build(BuildContext context) {
-    return AppBlocs(
-      child: MaterialApp(
-        debugShowCheckedModeBanner: false,
-        theme: AppTheme.light,
-        // Shared with SessionGuard so a sign-out can reset the stack even when it
-        // happens off-screen (a background token refresh failing).
-        navigatorKey: SessionGuard.navigatorKey,
-        initialRoute: '/splashpage',
-        routes: {
-          '/loginpage': (context) => const LoginPage(),
-          '/homepage': (context) => const HomePage(),
-          '/splashpage': (context) => const SplashPage(),
-          '/account-cache-recovery': (context) =>
-              const AccountCacheRecoveryPage(),
-          '/loggedout': (context) => const LoggedOutScreen(),
-          '/mainpage': (context) => const MainPage(),
-          '/settingspage': (context) => const SettingsPage(),
-          '/mascot': (context) {
-            final scope = MascotScope.maybeOf(context);
-            if (scope == null) {
-              return const Scaffold(
-                  body: Center(child: Text('Mascot settings unavailable')));
-            }
-            return MascotSettingsPage(
-                preferences: scope.preferences, resolver: scope.resolver);
-          },
-          '/onboardingscreen': (context) => const OnBoardingScreen(),
-          '/energyintro': (context) => const EnergyIntroScreen(),
-          '/appinfo': (context) => const AppInfo(),
-          '/lockscreen': (context) => const LockScreen(),
-          '/twofactor': (context) => const TwoFactorPage(),
-          '/twofactorgate': (context) => const TwoFactorGatePage(),
-          '/dangerzone': (context) => const DangerZonePage(),
-          '/cloudnotes': (context) => const CloudNotesPage(),
-          '/recyclebin': (context) => const RecycleBinPage(),
-          '/cloudsyncpage': (context) => const CloudSyncPage(),
-          '/biompage': (context) => const BiomPage(),
-          '/encryptionpage': (context) => const EncryptionPage(),
-          '/energypage': (context) => const EnergyPage(),
-          '/usersessions': (context) => const UserSessionsPage(),
-          '/notifications': (context) => const NotificationsPage(),
-          '/vaultunlock': (context) => VaultUnlockPage(
-                // `arguments: true` means the splash sent the user here at
-                // launch, so unlocking continues into the app.
-                fromStartup: ModalRoute.of(context)?.settings.arguments == true,
-              ),
-          '/tcpage': (context) => const TCPage(),
-          '/editprofilepage': (context) => const EditProfilePage(),
-        },
+    // Only MaterialApp listens: a theme change must not rebuild the blocs.
+    return AppearanceScope(
+      controller: _appearance,
+      child: AppBlocs(
+        child: ListenableBuilder(
+          listenable: _appearance,
+          builder: (context, _) => MaterialApp(
+            debugShowCheckedModeBanner: false,
+            theme: AppTheme.light,
+            darkTheme: AtomicTheme.dark,
+            themeMode: _appearance.themeMode,
+            // Shared with SessionGuard so a sign-out can reset the stack even when it
+            // happens off-screen (a background token refresh failing).
+            navigatorKey: SessionGuard.navigatorKey,
+            initialRoute: '/splashpage',
+            routes: {
+              '/loginpage': (context) => const LoginPage(),
+              '/homepage': (context) => const HomePage(),
+              '/splashpage': (context) => const SplashPage(),
+              '/account-cache-recovery': (context) =>
+                  const AccountCacheRecoveryPage(),
+              '/loggedout': (context) => const LoggedOutScreen(),
+              '/mainpage': (context) => const MainPage(),
+              '/settingspage': (context) => const SettingsPage(),
+              '/mascot': (context) {
+                final scope = MascotScope.maybeOf(context);
+                if (scope == null) {
+                  return const Scaffold(
+                      body: Center(child: Text('Mascot settings unavailable')));
+                }
+                return MascotSettingsPage(
+                    preferences: scope.preferences, resolver: scope.resolver);
+              },
+              '/onboardingscreen': (context) => const OnBoardingScreen(),
+              '/energyintro': (context) => const EnergyIntroScreen(),
+              '/appinfo': (context) => const AppInfo(),
+              '/lockscreen': (context) => const LockScreen(),
+              '/twofactor': (context) => const TwoFactorPage(),
+              '/twofactorgate': (context) => const TwoFactorGatePage(),
+              '/dangerzone': (context) => const DangerZonePage(),
+              '/cloudnotes': (context) => const CloudNotesPage(),
+              '/recyclebin': (context) => const RecycleBinPage(),
+              '/cloudsyncpage': (context) => const CloudSyncPage(),
+              '/biompage': (context) => const BiomPage(),
+              '/encryptionpage': (context) => const EncryptionPage(),
+              '/energypage': (context) => const EnergyPage(),
+              '/usersessions': (context) => const UserSessionsPage(),
+              '/notifications': (context) => const NotificationsPage(),
+              '/vaultunlock': (context) => VaultUnlockPage(
+                    // `arguments: true` means the splash sent the user here at
+                    // launch, so unlocking continues into the app.
+                    fromStartup: ModalRoute.of(context)?.settings.arguments == true,
+                  ),
+              '/tcpage': (context) => const TCPage(),
+              '/editprofilepage': (context) => const EditProfilePage(),
+            },
+          ),
+        ),
       ),
     );
   }
