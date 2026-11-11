@@ -124,6 +124,8 @@ void main() {
       expect(tester.takeException(), isNull);
       expect(tester.getSemantics(find.text('Write your first note')),
           isSemantics(isHeader: true));
+      await tester.ensureVisible(find.text('New note'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('New note'));
       expect(taps, 1);
       handle.dispose();
