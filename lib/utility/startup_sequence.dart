@@ -1,4 +1,5 @@
 import 'package:atomic_notes/api/atomic_notes_api.dart';
+import 'package:atomic_notes/appearance/appearance_controller.dart';
 import 'package:atomic_notes/database/note_quota.dart';
 import 'package:atomic_notes/database/notes_repository.dart';
 import 'package:atomic_notes/database/sync_status.dart';
@@ -22,6 +23,8 @@ class StartupServices {
   Future<void> initApi() => ApiClient.instance.init();
   Future<void> initHive() => Hive.initFlutter();
   Future<void> openBox(String name) => Hive.openBox<bool>(name);
+  bool get themeSwitchingEnabled => kAtomicThemeSwitchingEnabled;
+  Future<void> initAppearance() => AppearanceController.instance.init();
   Future<void> applyScreenSecurity() => ScreenSecurity.applySaved();
   Future<void> initProfile() => ProfileStore.instance.init();
   Future<void> initSyncStatus() => SyncStatusHelper.init();
@@ -48,6 +51,16 @@ Future<void> runStartupSequence(
   // open the Hive Boxes. These stay open for the life of the process —
   // individual screens must not close them (see splash_screen.dart).
   await trace.step(StartupStep.authBox, () => services.openBox('authBox'));
+  // The theme choice, so the first themed frame uses it. Skipped while the
+  // app is light-only (redesign ADR-004). Cosmetic: a failed read keeps
+  // System and never stops startup.
+  if (services.themeSwitchingEnabled) {
+    try {
+      await trace.step(StartupStep.appearance, services.initAppearance);
+    } catch (e) {
+      debugPrint('Appearance read failed; using System: $e');
+    }
+  }
   // "No screenshots" is a device-wide choice: apply it before any screen shows.
   await trace.step(StartupStep.screenSecurity, services.applyScreenSecurity);
   // Avatar and profile switches are local: read them before any screen draws.

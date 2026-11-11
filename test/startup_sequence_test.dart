@@ -29,6 +29,10 @@ class _Services implements StartupServices {
   @override
   Future<void> openBox(String name) => _run('box:$name');
   @override
+  bool themeSwitchingEnabled = false;
+  @override
+  Future<void> initAppearance() => _run('appearance');
+  @override
   Future<void> applyScreenSecurity() => _run('screenSecurity');
   @override
   Future<void> initProfile() => _run('profile');
@@ -83,8 +87,35 @@ void main() {
     final t = trace();
     await runStartupSequence(services, t);
     expect(services.calls, _order);
-    expect(t.spans.map((s) => s.step), StartupStep.values);
+    expect(t.spans.map((s) => s.step),
+        StartupStep.values.where((s) => s != StartupStep.appearance),
+        reason: 'the theme choice is not read while the app is light-only');
     expect(t.spans.every((s) => s.outcome == StartupOutcome.ok), isTrue);
+  });
+
+  group('once theme switching is enabled', () {
+    final withTheme = [..._order]
+      ..insert(_order.indexOf('box:authBox') + 1, 'appearance');
+
+    test('the theme choice is read after authBox, before any screen', () async {
+      final services = _Services()..themeSwitchingEnabled = true;
+      final t = trace();
+      await runStartupSequence(services, t);
+      expect(services.calls, withTheme);
+      expect(t.spans.map((s) => s.step), StartupStep.values);
+    });
+
+    test('a failed theme read keeps System and startup goes on', () async {
+      final services = _Services()
+        ..themeSwitchingEnabled = true
+        ..fail.add('appearance');
+      final t = trace();
+      await runStartupSequence(services, t);
+      expect(services.calls, withTheme);
+      expect(
+          t.spans.singleWhere((s) => s.step == StartupStep.appearance).outcome,
+          StartupOutcome.error);
+    });
   });
 
   test('each step waits for the previous one to finish', () async {
