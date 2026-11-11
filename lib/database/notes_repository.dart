@@ -524,29 +524,39 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
 
   // ---- reads ------------------------------------------------------------
 
-  /// Live notes, tombstones excluded, pinned first.
+  /// Live notes, tombstones excluded, pinned first; cut to [type] and an
+  /// exact projected [tag]. A legacy [filter] keeps its old meaning.
   @override
-  List<Note> visible({NoteFilter filter = NoteFilter.newest}) {
+  List<Note> visible({
+    NoteFilter? filter,
+    NoteTypeFilter type = NoteTypeFilter.all,
+    NoteSort sort = NoteSort.newest,
+    String? tag,
+  }) {
+    final shownType = filter?.type ?? type;
+    final order = filter?.sort ?? sort;
     if (!_ownsCache(_userId)) {
       _projections.clear();
       return [];
     }
     final list = _notes.values.where((n) => !n.deleted).toList();
 
-    switch (filter) {
-      case NoteFilter.todos:
+    switch (shownType) {
+      case NoteTypeFilter.todos:
         list.retainWhere((n) =>
             n.kind == NoteKind.todo || projectionFor(n, evict: false).hasChecklist);
-      case NoteFilter.notes:
+      case NoteTypeFilter.notes:
         list.retainWhere((n) => n.kind == NoteKind.text);
-      case NoteFilter.newest:
-      case NoteFilter.oldest:
+      case NoteTypeFilter.all:
         break;
+    }
+    if (tag != null) {
+      list.retainWhere((n) => projectionFor(n, evict: false).tags.contains(tag));
     }
 
     list.sort((a, b) {
       if (a.pinned != b.pinned) return a.pinned ? -1 : 1;
-      return filter == NoteFilter.oldest
+      return order == NoteSort.oldest
           ? a.createdAt.compareTo(b.createdAt)
           : b.createdAt.compareTo(a.createdAt);
     });

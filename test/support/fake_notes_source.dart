@@ -49,20 +49,29 @@ class FakeNotesSource extends ChangeNotifier implements NotesSource {
   final List<String> deletedIds = [];
 
   @override
-  List<Note> visible({NoteFilter filter = NoteFilter.newest}) {
+  List<Note> visible({
+    NoteFilter? filter,
+    NoteTypeFilter type = NoteTypeFilter.all,
+    NoteSort sort = NoteSort.newest,
+    String? tag,
+  }) {
+    final shownType = filter?.type ?? type;
+    final order = filter?.sort ?? sort;
     final list = all.where((n) => !n.deleted).toList();
-    switch (filter) {
-      case NoteFilter.todos:
+    switch (shownType) {
+      case NoteTypeFilter.todos:
         list.retainWhere((n) => n.kind == NoteKind.todo || NoteDocument.fromNote(n).hasChecklist);
-      case NoteFilter.notes:
+      case NoteTypeFilter.notes:
         list.retainWhere((n) => n.kind == NoteKind.text);
-      case NoteFilter.newest:
-      case NoteFilter.oldest:
+      case NoteTypeFilter.all:
         break;
+    }
+    if (tag != null) {
+      list.retainWhere((n) => NoteDocument.fromNote(n).tags.contains(tag));
     }
     list.sort((a, b) {
       if (a.pinned != b.pinned) return a.pinned ? -1 : 1;
-      return filter == NoteFilter.oldest
+      return order == NoteSort.oldest
           ? a.createdAt.compareTo(b.createdAt)
           : b.createdAt.compareTo(a.createdAt);
     });

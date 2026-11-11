@@ -9,8 +9,18 @@ import 'package:flutter/foundation.dart';
 /// It tells listeners when anything changed, including changes that do not touch a note
 /// (a sync starting or ending), so a listener must compare before it rebuilds anything.
 abstract interface class NotesSource implements Listenable {
-  /// Live notes (deleted ones excluded), pinned first, ordered and cut by [filter].
-  List<Note> visible({NoteFilter filter = NoteFilter.newest});
+  /// Live notes of the current owner (deleted ones excluded), pinned first,
+  /// cut to [type] and, when given, to notes carrying exactly [tag], and
+  /// ordered by creation time per [sort].
+  ///
+  /// A legacy [filter], when given, replaces [type] and [sort] with its old
+  /// meaning (see [NoteFilterParts]).
+  List<Note> visible({
+    NoteFilter? filter,
+    NoteTypeFilter type = NoteTypeFilter.all,
+    NoteSort sort = NoteSort.newest,
+    String? tag,
+  });
 
   /// One note by id, deleted or not; null when the device has no such note.
   Note? byId(String id);

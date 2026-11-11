@@ -28,6 +28,9 @@ class NotesBloc extends Bloc<NotesEvent, NotesState> {
     on<_NotesSourceChanged>(_onSourceChanged);
     on<NotesViewReset>(_onViewReset);
     on<NotesFilterChanged>(_onFilterChanged);
+    on<NotesSortChanged>(_onSortChanged);
+    on<NotesTypeFilterChanged>(_onTypeChanged);
+    on<NotesTagFilterChanged>(_onTagChanged);
     on<NotesQueryChanged>(_onQueryChanged);
     on<NoteSelectionToggled>(_onSelectionToggled);
     on<NoteSelectionCleared>(_onSelectionCleared);
@@ -62,27 +65,55 @@ class NotesBloc extends Bloc<NotesEvent, NotesState> {
 
   // ---- the snapshot -----------------------------------------------------
 
-  /// The state for [base]'s filter, search and selection, read from [source] now.
+  /// The state for [base]'s type, tag, order, search and selection, read from [source] now.
+  ///
+  /// Counts and the list on view come from the same read of the current
+  /// owner's notes, on every source change, not only when the notes on view
+  /// change: a note hidden by the search can still change the chip counts.
   static NotesState _snapshot(NotesSource source, NotesState base,
       {bool manualSyncInProgress = false}) {
-    final all = source.visible(filter: base.filter);
+    final eligible = source.visible();
+    final typeCounts = <NoteTypeFilter, int>{
+      NoteTypeFilter.all: eligible.length,
+      NoteTypeFilter.notes: source.visible(type: NoteTypeFilter.notes).length,
+      NoteTypeFilter.todos: source.visible(type: NoteTypeFilter.todos).length,
+    };
+    final tagCounts = <String, int>{};
+    for (final n in eligible) {
+      for (final t in projectNote(source, n, evict: false).tags.toSet()) {
+        tagCounts[t] = (tagCounts[t] ?? 0) + 1;
+      }
+    }
+    // A tag that no live note carries any more falls back to every tag; the
+    // type, order and search stay. A tag missing only from the search
+    // results stays selected.
+    final tag =
+        base.tag != null && tagCounts.containsKey(base.tag) ? base.tag : null;
+
+    final filtered =
+        source.visible(type: base.type, sort: base.sort, tag: tag);
     final q = base.query.trim().toLowerCase();
     final shown = q.isEmpty
-        ? all
-        : all
+        ? filtered
+        : filtered
             .where((n) =>
                 n.title.toLowerCase().contains(q) ||
                 projectNote(source, n, evict: false).matches(q))
             .toList();
-    // Drop selections for notes that vanished under us (deleted on another device, or pulled in
-    // as a tombstone). The same set is kept when nothing was dropped.
-    final stillThere = base.selected
-        .where((id) => !(source.byId(id)?.deleted ?? true))
-        .toSet();
+    // Keep only selected notes that are still on view, so an action never
+    // reaches a note the person can no longer see (deleted, pulled in as a
+    // tombstone, retagged or locked elsewhere). The same set is kept when
+    // nothing was dropped.
+    final shownIds = {for (final n in shown) n.id};
+    final stillThere = base.selected.where(shownIds.contains).toSet();
     final nextAutoSyncAt = source.nextAutoSyncAt;
     return base.copyWith(
       notes: List<Note>.unmodifiable(shown),
       signature: noteSignature(shown),
+      tag: tag,
+      clearTag: tag == null,
+      typeCounts: Map.unmodifiable(typeCounts),
+      tagCounts: Map.unmodifiable(tagCounts),
       selected: stillThere.length == base.selected.length
           ? base.selected
           : stillThere,
@@ -119,14 +150,48 @@ class NotesBloc extends Bloc<NotesEvent, NotesState> {
 
   void _onViewReset(NotesViewReset event, Emitter<NotesState> emit) => _put(
       emit,
-      _currentSnapshot(state
-          .copyWith(filter: NoteFilter.newest, query: '', selected: const {})));
+      _currentSnapshot(state.copyWith(
+          sort: NoteSort.newest,
+          type: NoteTypeFilter.all,
+          clearTag: true,
+          query: '',
+          selected: const {})));
+
+  /// Applies a view change. A change of what is on view (type, tag or search)
+  /// clears the selection and says so, so Delete never reaches a note the
+  /// person stopped seeing; a change of order keeps it.
+  void _changeView(Emitter<NotesState> emit, NotesState next,
+      {required bool narrowsDifferently}) {
+    if (narrowsDifferently && state.selected.isNotEmpty) {
+      next = next.copyWith(
+          selected: const {}, notice: _notice('Selection cleared', 1500));
+    }
+    _put(emit, _currentSnapshot(next));
+  }
 
   void _onFilterChanged(NotesFilterChanged event, Emitter<NotesState> emit) =>
-      _put(emit, _currentSnapshot(state.copyWith(filter: event.filter)));
+      _changeView(emit, state.copyWith(filter: event.filter),
+          narrowsDifferently: event.filter.type != state.type);
+
+  void _onSortChanged(NotesSortChanged event, Emitter<NotesState> emit) =>
+      _changeView(emit, state.copyWith(sort: event.sort),
+          narrowsDifferently: false);
+
+  void _onTypeChanged(NotesTypeFilterChanged event, Emitter<NotesState> emit) =>
+      _changeView(emit, state.copyWith(type: event.type),
+          narrowsDifferently: event.type != state.type);
+
+  void _onTagChanged(NotesTagFilterChanged event, Emitter<NotesState> emit) =>
+      _changeView(
+          emit,
+          event.tag == null
+              ? state.copyWith(clearTag: true)
+              : state.copyWith(tag: event.tag),
+          narrowsDifferently: event.tag != state.tag);
 
   void _onQueryChanged(NotesQueryChanged event, Emitter<NotesState> emit) =>
-      _put(emit, _currentSnapshot(state.copyWith(query: event.query)));
+      _changeView(emit, state.copyWith(query: event.query),
+          narrowsDifferently: event.query.trim() != state.query.trim());
 
   void _onSelectionToggled(
       NoteSelectionToggled event, Emitter<NotesState> emit) {

@@ -27,7 +27,11 @@ final class NotesState extends Equatable {
   const NotesState({
     this.notes = const [],
     this.signature = 0,
-    this.filter = NoteFilter.newest,
+    this.sort = NoteSort.newest,
+    this.type = NoteTypeFilter.all,
+    this.tag,
+    this.typeCounts = const {},
+    this.tagCounts = const {},
     this.query = '',
     this.selected = const {},
     this.count = 0,
@@ -46,7 +50,21 @@ final class NotesState extends Equatable {
 
   /// Changes whenever a note on view changes (its text, ticks, pin, deleted flag or sync state).
   final int signature;
-  final NoteFilter filter;
+
+  /// The order, the kind of note and the exact tag on view. Independent of
+  /// each other and of the search.
+  final NoteSort sort;
+  final NoteTypeFilter type;
+  final String? tag;
+
+  /// Chip counts over every live note of the current owner, before search
+  /// and filters, so they stay put while typing. A mixed note counts under
+  /// both Notes and To-dos; [NoteTypeFilter.all] counts each note once.
+  final Map<NoteTypeFilter, int> typeCounts;
+
+  /// How many live notes carry each tag.
+  final Map<String, int> tagCounts;
+
   final String query;
   final Set<String> selected;
 
@@ -75,16 +93,30 @@ final class NotesState extends Equatable {
   int get remaining => (limit - count).clamp(0, limit);
   String get usageLabel => '$count / $limit';
 
-  /// True when a filter or a search narrows the list.
-  bool get narrowed =>
-      filter == NoteFilter.todos ||
-      filter == NoteFilter.notes ||
-      query.trim().isNotEmpty;
+  /// How many notes are on view after the filters and the search.
+  int get resultCount => notes.length;
 
+  /// Legacy: the old one-value filter for the current type and order (see
+  /// [NoteFilterParts]). Kept until the Home screen moves to [sort], [type]
+  /// and [tag].
+  NoteFilter get filter => NoteFilterParts.of(type, sort);
+
+  /// True when a type, a tag or a search narrows the list.
+  bool get narrowed =>
+      type != NoteTypeFilter.all || tag != null || query.trim().isNotEmpty;
+
+  /// [filter] is the legacy setter: it sets [type] and [sort] with its old
+  /// meaning. [clearTag] removes the tag filter.
   NotesState copyWith({
     List<Note>? notes,
     int? signature,
     NoteFilter? filter,
+    NoteSort? sort,
+    NoteTypeFilter? type,
+    String? tag,
+    bool clearTag = false,
+    Map<NoteTypeFilter, int>? typeCounts,
+    Map<String, int>? tagCounts,
     String? query,
     Set<String>? selected,
     int? count,
@@ -101,7 +133,11 @@ final class NotesState extends Equatable {
       NotesState(
         notes: notes ?? this.notes,
         signature: signature ?? this.signature,
-        filter: filter ?? this.filter,
+        sort: sort ?? filter?.sort ?? this.sort,
+        type: type ?? filter?.type ?? this.type,
+        tag: clearTag ? null : (tag ?? this.tag),
+        typeCounts: typeCounts ?? this.typeCounts,
+        tagCounts: tagCounts ?? this.tagCounts,
         query: query ?? this.query,
         selected: selected ?? this.selected,
         count: count ?? this.count,
@@ -118,7 +154,11 @@ final class NotesState extends Equatable {
   @override
   List<Object?> get props => [
         signature,
-        filter,
+        sort,
+        type,
+        tag,
+        typeCounts,
+        tagCounts,
         query,
         selected,
         count,

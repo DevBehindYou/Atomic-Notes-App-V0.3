@@ -10,9 +10,29 @@ final class NotesViewReset extends NotesEvent {
   const NotesViewReset();
 }
 
+/// Legacy: sets the type and the order together, with the old meaning of
+/// [NoteFilter]. Kept until the Home screen moves to the three events below.
 final class NotesFilterChanged extends NotesEvent {
   const NotesFilterChanged(this.filter);
   final NoteFilter filter;
+}
+
+/// Changes the order only; the type, tag, search and selection stay.
+final class NotesSortChanged extends NotesEvent {
+  const NotesSortChanged(this.sort);
+  final NoteSort sort;
+}
+
+/// Changes which kinds of note are on view.
+final class NotesTypeFilterChanged extends NotesEvent {
+  const NotesTypeFilterChanged(this.type);
+  final NoteTypeFilter type;
+}
+
+/// Shows only notes carrying exactly [tag]; null shows every tag.
+final class NotesTagFilterChanged extends NotesEvent {
+  const NotesTagFilterChanged(this.tag);
+  final String? tag;
 }
 
 final class NotesQueryChanged extends NotesEvent {
