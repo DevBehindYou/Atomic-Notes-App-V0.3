@@ -285,6 +285,11 @@ String newId() {
 }
 
 /// How the notes list is ordered / narrowed on the home screen.
+///
+/// Legacy: one value mixes the order with the type. The redesign keeps them
+/// apart ([NoteSort], [NoteTypeFilter] and an optional tag); this enum stays
+/// until the Home screen moves to them, with exactly its old meaning
+/// (see [NoteFilterParts]).
 enum NoteFilter { newest, oldest, todos, notes }
 
 extension NoteFilterLabel on NoteFilter {
@@ -293,6 +298,35 @@ extension NoteFilterLabel on NoteFilter {
         NoteFilter.oldest => 'Oldest',
         NoteFilter.todos => 'To-dos',
         NoteFilter.notes => 'Notes',
+      };
+}
+
+/// The order of the notes on view. Pinned notes always come first.
+enum NoteSort { newest, oldest }
+
+/// Which kinds of note are on view. A text note with a checklist is both a
+/// note and a to-do, so it shows under either.
+enum NoteTypeFilter { all, notes, todos }
+
+/// The old [NoteFilter] split into its order and its type, unchanged in
+/// meaning: `todos` and `notes` were always newest first.
+extension NoteFilterParts on NoteFilter {
+  NoteSort get sort =>
+      this == NoteFilter.oldest ? NoteSort.oldest : NoteSort.newest;
+
+  NoteTypeFilter get type => switch (this) {
+        NoteFilter.todos => NoteTypeFilter.todos,
+        NoteFilter.notes => NoteTypeFilter.notes,
+        NoteFilter.newest || NoteFilter.oldest => NoteTypeFilter.all,
+      };
+
+  /// The legacy value closest to a type and an order. Not every pair has
+  /// one (to-dos oldest first), so the type wins, as on the old chip row.
+  static NoteFilter of(NoteTypeFilter type, NoteSort sort) => switch (type) {
+        NoteTypeFilter.todos => NoteFilter.todos,
+        NoteTypeFilter.notes => NoteFilter.notes,
+        NoteTypeFilter.all =>
+          sort == NoteSort.oldest ? NoteFilter.oldest : NoteFilter.newest,
       };
 }
 
