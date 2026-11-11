@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:atomic_notes/theme/app_tokens.dart';
+import 'package:atomic_notes/theme/atomic_colors.dart';
 
 /// Assembles the tokens in [AppColors]/[AppType] into a single ThemeData, so
 /// widgets that aren't explicitly styled (dialogs, text selection, the default
@@ -45,6 +46,12 @@ class AppTheme {
     return ThemeData(
       useMaterial3: true,
       colorScheme: scheme,
+      // Redesign bridge (ADR-011): pages migrated to the new components read
+      // their colours through `context.colors`. Until every page has moved
+      // and dark mode is switched on (M9), this legacy light theme carries
+      // the redesign's light palette explicitly, so they never rely on a
+      // silent fallback. Unmigrated pages keep the colours below.
+      extensions: const [AtomicColors.light],
       scaffoldBackgroundColor: AppColors.paper,
       canvasColor: AppColors.paper,
       fontFamily: AppFonts.body,
