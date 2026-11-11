@@ -13,7 +13,9 @@ import 'package:flutter/widgets.dart';
 /// - Focus: a 3 dp ring in the focus colour, 3 dp outside the child, while
 ///   it has keyboard or switch-access focus.
 /// - Target: at least [minSize] square, with a smaller child centred.
-/// - Semantics: one button node, with [selected] or [toggled] when given.
+/// - Semantics: one node, a button unless [button] is false (switches and
+///   checkboxes report [toggled] or [checked] instead), with [selected],
+///   [toggled] or [checked] when given.
 ///
 /// Disabled when both [onTap] and [onLongPress] are null.
 class AtomicPressable extends StatefulWidget {
@@ -26,6 +28,8 @@ class AtomicPressable extends StatefulWidget {
     this.excludeSemantics = false,
     this.selected,
     this.toggled,
+    this.checked,
+    this.button = true,
     this.haptic = AtomicHaptic.none,
     this.pressScale = AtomicMotion.pressScale,
     this.borderRadius = AtomicRadius.pill,
@@ -47,6 +51,8 @@ class AtomicPressable extends StatefulWidget {
   final bool excludeSemantics;
   final bool? selected;
   final bool? toggled;
+  final bool? checked;
+  final bool button;
 
   /// Played on tap, not on long-press.
   final AtomicHaptic haptic;
@@ -108,10 +114,11 @@ class _AtomicPressableState extends State<AtomicPressable> {
     );
     return Semantics(
       container: true,
-      button: true,
+      button: widget.button,
       enabled: enabled,
       selected: widget.selected,
       toggled: widget.toggled,
+      checked: widget.checked,
       label: widget.semanticsLabel,
       excludeSemantics: widget.excludeSemantics,
       onTap: widget.onTap == null ? null : _tap,
