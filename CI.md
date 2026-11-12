@@ -35,9 +35,16 @@ notice. Set the variable to `enabled` only when an APK is actually wanted.
 `tool/check_workflow_packaging.py` (run by Flutter verification, with its
 tests in `tool/test_check_workflow_packaging.py`) fails if any workflow step
 that builds or uploads an APK, app bundle or APK set is not guarded by the
-variable, so a new packaging step cannot slip in unguarded. The verification
-proof also fails in deferred mode if any Android package is found in the
-generated output directories.
+variable, so a new packaging step cannot slip in unguarded. A guard is a
+strict allow-list: a conjunction of simple comparisons that includes
+`vars.ATOMIC_ANDROID_PACKAGING == 'enabled'` (or, on a step, the job-derived
+`env.` form with no step override or `$GITHUB_ENV` write of it). Conditions
+with `||`, `!`, functions or comments do not count. Workflow shapes it cannot
+read for certain (other step indentation, flow style, tabs, anchors,
+reusable jobs, local actions) fail the check instead of being skipped. It
+reads the workflow files only; what a script does at run time is outside
+what it proves. The verification proof also fails in deferred mode if any
+Android package is found in the generated output directories.
 
 ## Signed Android release
 

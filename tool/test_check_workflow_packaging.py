@@ -147,5 +147,106 @@ class PackagingPolicyTest(unittest.TestCase):
         self.assertEqual(violations(ROOT / '.github/workflows'), [])
 
 
+def job(condition=None, env=None, step_lines=('- run: flutter build apk --release',),
+        step_indent=6):
+    """A one-job workflow; [condition] goes on the job, [env] on the job."""
+    lines = ['name: x', 'on: [pull_request]', 'jobs:', '  build:']
+    if condition is not None:
+        lines.append(f'    if: {condition}')
+    lines.append('    runs-on: ubuntu-latest')
+    if env is not None:
+        lines += ['    env:', f'      ATOMIC_ANDROID_PACKAGING: {env}']
+    lines.append('    steps:')
+    lines += [' ' * step_indent + line for line in step_lines]
+    return '\n'.join(lines) + '\n'
+
+
+DERIVED = ("${{ vars.ATOMIC_ANDROID_PACKAGING == 'enabled' && 'enabled' "
+           "|| 'deferred' }}")
+
+
+class ReviewR08Test(unittest.TestCase):
+    """Codex review R08: a guard must require the opt-in; unread shapes fail."""
+
+    def accepted(self, workflow):
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, 'w.yml').write_text(workflow, encoding='utf-8')
+            try:
+                return not violations(directory)
+            except WorkflowShapeError:
+                return False
+
+    def test_reviewer_fixtures(self):
+        cases = {
+            'unguarded': (job(), False),
+            'job-or-true': (job("vars.ATOMIC_ANDROID_PACKAGING == 'enabled' || true"), False),
+            'unsupported-step-indent': (job(step_indent=4), False),
+            'step-env-override': (job(env=DERIVED, step_lines=(
+                "- if: env.ATOMIC_ANDROID_PACKAGING == 'enabled'",
+                '  env:',
+                '    ATOMIC_ANDROID_PACKAGING: enabled',
+                '  run: flutter build apk --release')), False),
+            'guard-comment': (job("always() # vars.ATOMIC_ANDROID_PACKAGING == 'enabled'"), False),
+            'legitimate-guard': (job("vars.ATOMIC_ANDROID_PACKAGING == 'enabled'"), True),
+        }
+        for name, (workflow, expected) in cases.items():
+            with self.subTest(name):
+                self.assertEqual(self.accepted(workflow), expected)
+
+    def test_conditions_that_do_not_require_the_opt_in(self):
+        for condition in (
+                "!(vars.ATOMIC_ANDROID_PACKAGING == 'enabled')",
+                "always() && vars.ATOMIC_ANDROID_PACKAGING == 'enabled'",
+                "vars.ATOMIC_ANDROID_PACKAGING != 'enabled'",
+                "vars.ATOMIC_ANDROID_PACKAGING == 'enabled ' ",
+                "vars.ATOMIC_ANDROID_PACKAGING == 'Enabled'",
+                "\"vars.ATOMIC_ANDROID_PACKAGING == 'enabled'\"",
+                "${{ vars.ATOMIC_ANDROID_PACKAGING == 'enabled' }} || true",
+                "contains('vars.ATOMIC_ANDROID_PACKAGING == enabled', 'x')",
+                "github.ref == 'refs/heads/main' || vars.ATOMIC_ANDROID_PACKAGING == 'enabled'",
+                "env.ATOMIC_ANDROID_PACKAGING == 'enabled'"):  # env is not a job guard
+            with self.subTest(condition):
+                self.assertFalse(self.accepted(job(condition)))
+
+    def test_conditions_that_do_require_the_opt_in(self):
+        for condition in (
+                "vars.ATOMIC_ANDROID_PACKAGING == 'enabled'",
+                "${{ vars.ATOMIC_ANDROID_PACKAGING == 'enabled' }}",
+                "github.event_name == 'pull_request' && vars.ATOMIC_ANDROID_PACKAGING == 'enabled'"):
+            with self.subTest(condition):
+                self.assertTrue(self.accepted(job(condition)))
+
+    def test_env_guard_needs_the_derived_job_env_and_no_override(self):
+        guarded = ("- if: env.ATOMIC_ANDROID_PACKAGING == 'enabled'",
+                   '  run: flutter build apk --release')
+        self.assertTrue(self.accepted(job(env=DERIVED, step_lines=guarded)))
+        self.assertFalse(self.accepted(job(env="'enabled'", step_lines=guarded)))
+        self.assertFalse(self.accepted(job(step_lines=guarded)))
+        writes = ('- run: echo "ATOMIC_ANDROID_PACKAGING=enabled" >> "$GITHUB_ENV"',
+                  *guarded)
+        self.assertFalse(self.accepted(job(env=DERIVED, step_lines=writes)))
+        other_write = ('- run: echo "ATOMIC_CI_CANARY=x" >> "$GITHUB_ENV"', *guarded)
+        self.assertTrue(self.accepted(job(env=DERIVED, step_lines=other_write)))
+
+    def test_shapes_it_cannot_read_fail_closed(self):
+        reusable = ('name: x\non: [push]\njobs:\n  build:\n'
+                    '    uses: ./.github/workflows/other.yml\n')
+        flow_steps = ('name: x\non: [push]\njobs:\n  build:\n    runs-on: x\n'
+                      '    steps: [{run: flutter build apk}]\n')
+        for name, workflow in {
+                'reusable job': reusable,
+                'flow-style steps': flow_steps,
+                'tab': job().replace('      - run', '\t- run'),
+                'anchor': job(step_lines=('- &build', '  run: flutter build apk --release')),
+                'local action': job(step_lines=('- uses: ./.github/actions/package',)),
+                'seven-space step key': job(step_lines=('- name: Build',
+                                                         ' run: flutter build apk')),
+        }.items():
+            with self.subTest(name), tempfile.TemporaryDirectory() as directory:
+                Path(directory, 'w.yml').write_text(workflow, encoding='utf-8')
+                with self.assertRaises(WorkflowShapeError):
+                    violations(directory)
+
+
 if __name__ == '__main__':
     unittest.main()
