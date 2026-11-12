@@ -70,12 +70,36 @@ class AtomicPressable extends StatefulWidget {
   State<AtomicPressable> createState() => _AtomicPressableState();
 }
 
-class _AtomicPressableState extends State<AtomicPressable> {
+class _AtomicPressableState extends State<AtomicPressable>
+    with SingleTickerProviderStateMixin {
+  // The rendered scale. Unbounded so the release can overshoot past 1.
+  late final AnimationController _scale =
+      AnimationController.unbounded(vsync: this, value: 1);
   bool _pressed = false;
   bool _focused = false;
 
   void _setPressed(bool value) {
-    if (_pressed != value && mounted) setState(() => _pressed = value);
+    if (_pressed == value || !mounted) return;
+    _pressed = value;
+    _animate();
+  }
+
+  /// Moves the rendered scale toward the current press state. Under reduced
+  /// motion nothing scales: any running press or release is cancelled and
+  /// the child rests at 1 at once (ADR-011).
+  void _animate() {
+    final pressed = _pressed && widget.enabled;
+    if (AtomicMotion.reduced(context)) {
+      _scale
+        ..stop()
+        ..value = 1;
+      return;
+    }
+    _scale.animateTo(
+      pressed ? widget.pressScale : 1,
+      duration: pressed ? AtomicMotion.pressIn : AtomicMotion.pressOut,
+      curve: pressed ? AtomicMotion.standardCurve : AtomicMotion.overshootCurve,
+    );
   }
 
   void _tap() {
@@ -91,26 +115,32 @@ class _AtomicPressableState extends State<AtomicPressable> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Reduced motion turned on mid-press or mid-release: settle now.
+    if (AtomicMotion.reduced(context) && _scale.value != 1) _animate();
+  }
+
+  @override
   void didUpdateWidget(AtomicPressable oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!widget.enabled) _pressed = false;
+    if (!widget.enabled && _pressed) _setPressed(false);
+  }
+
+  @override
+  void dispose() {
+    _scale.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final enabled = widget.enabled;
-    final pressed = _pressed && enabled && !AtomicMotion.reduced(context);
     final visual = CustomPaint(
       foregroundPainter: _focused
           ? _FocusRing(context.colors.focus, widget.borderRadius)
           : null,
-      child: AnimatedScale(
-        scale: pressed ? widget.pressScale : 1,
-        duration: pressed ? AtomicMotion.pressIn : AtomicMotion.pressOut,
-        curve:
-            pressed ? AtomicMotion.standardCurve : AtomicMotion.overshootCurve,
-        child: widget.child,
-      ),
+      child: ScaleTransition(scale: _scale, child: widget.child),
     );
     return Semantics(
       container: true,
