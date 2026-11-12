@@ -734,7 +734,8 @@ Future<void> _openEditor(BuildContext context, Note note) async {
   // visible() returns repository objects. Do not let an editor result mutate
   // one before the caller's acceptance and repository persistence checks.
   final draft = note.copy();
-  final saved = await showDialog<bool>(
+  // The editor owns the save: it closes only after this attempt is stored.
+  await showDialog<bool>(
     context: context,
     barrierDismissible: false,
     builder: (_) => NotesCreaterPage(
@@ -742,17 +743,26 @@ Future<void> _openEditor(BuildContext context, Note note) async {
       onDelete: bloc.state.notes.any((n) => n.id == note.id)
           ? () => bloc.add(NoteDeleted(note.id))
           : null,
+      onSave: (snapshot) => _saveFromEditor(context, bloc, snapshot),
     ),
   );
-  if (saved != true || !context.mounted || bloc.isClosed) return;
-  if (draft.isEmpty) {
+}
+
+/// Stores one accepted editor snapshot and reports the outcome of exactly
+/// this attempt. Nothing is saved for a notes screen or bloc that has gone.
+Future<NoteSaveResult> _saveFromEditor(
+    BuildContext context, NotesBloc bloc, Note snapshot) async {
+  if (!context.mounted || bloc.isClosed) return const NoteSaveRejected();
+  if (snapshot.isEmpty) {
     const MySnackBar(
       text: "Empty note discarded",
       sec: 1200,
     ).showMySnackBar(context);
-    return;
+    return const NoteSaveSkipped();
   }
-  bloc.add(NoteSaved(draft));
+  final ack = NoteSaveAck();
+  bloc.add(NoteSaved(snapshot, ack: ack));
+  return ack.result;
 }
 
 void _newNote(BuildContext context, NoteKind kind) {

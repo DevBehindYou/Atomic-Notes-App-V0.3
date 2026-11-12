@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:atomic_notes/database/note.dart';
 import 'package:atomic_notes/database/note_document.dart';
 import 'package:atomic_notes/database/note_projection.dart';
@@ -230,8 +232,20 @@ class NotesBloc extends Bloc<NotesEvent, NotesState> {
     ));
   }
 
-  Future<void> _onNoteSaved(NoteSaved event, Emitter<NotesState> emit) =>
-      _source.save(event.note);
+  /// Saves locally. With an acknowledgement, the outcome goes to that attempt
+  /// only, and an error is reported to observers instead of rethrown; without
+  /// one, an error is rethrown as before.
+  Future<void> _onNoteSaved(NoteSaved event, Emitter<NotesState> emit) async {
+    final ack = event.ack;
+    if (ack == null) return _source.save(event.note);
+    try {
+      await _source.save(event.note);
+      ack._complete(const NoteSaveSucceeded());
+    } catch (error, stackTrace) {
+      ack._complete(NoteSaveFailed(error));
+      onError(error, stackTrace);
+    }
+  }
 
   Future<void> _onNoteDeleted(
       NoteDeleted event, Emitter<NotesState> emit) async {

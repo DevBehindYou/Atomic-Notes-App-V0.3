@@ -59,9 +59,49 @@ final class NotesDeleteSelected extends NotesEvent {
   const NotesDeleteSelected();
 }
 
+/// Saves [note] locally through the repository. With [ack], the caller learns
+/// the outcome of this exact attempt: the local save, not a later cloud sync.
 final class NoteSaved extends NotesEvent {
-  const NoteSaved(this.note);
+  const NoteSaved(this.note, {this.ack});
   final Note note;
+  final NoteSaveAck? ack;
+}
+
+/// The outcome of one local save attempt.
+sealed class NoteSaveResult {
+  const NoteSaveResult();
+}
+
+/// The note is stored on this device. Syncing it is separate.
+final class NoteSaveSucceeded extends NoteSaveResult {
+  const NoteSaveSucceeded();
+}
+
+/// The local save failed; nothing changed and the draft is still needed.
+final class NoteSaveFailed extends NoteSaveResult {
+  const NoteSaveFailed(this.error);
+  final Object error;
+}
+
+/// Nothing was attempted: the notes screen or its bloc is gone.
+final class NoteSaveRejected extends NoteSaveResult {
+  const NoteSaveRejected();
+}
+
+/// Nothing to save: an empty new draft is discarded instead.
+final class NoteSaveSkipped extends NoteSaveResult {
+  const NoteSaveSkipped();
+}
+
+/// The acknowledgement of one save attempt. It completes exactly once.
+final class NoteSaveAck {
+  final _result = Completer<NoteSaveResult>();
+
+  Future<NoteSaveResult> get result => _result.future;
+
+  void _complete(NoteSaveResult value) {
+    if (!_result.isCompleted) _result.complete(value);
+  }
 }
 
 /// Moves one existing note to the Recycle Bin through the repository.

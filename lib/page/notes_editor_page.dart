@@ -9,6 +9,7 @@ import 'package:atomic_notes/editor/rich_text_controller.dart';
 import 'package:atomic_notes/database/note.dart';
 import 'package:atomic_notes/database/note_document.dart';
 import 'package:atomic_notes/database/note_word_limit.dart';
+import 'package:atomic_notes/state/notes/notes_bloc.dart';
 import 'package:atomic_notes/theme/app_tokens.dart';
 import 'package:atomic_notes/theme/editorial.dart';
 import 'package:atomic_notes/utility/component/my_snackbar.dart';
@@ -17,14 +18,22 @@ import 'package:flutter/services.dart';
 
 /// An isolated draft. Only Done copies editable fields back to the caller,
 /// which persists the note through its existing Bloc/repository save path.
+///
+/// With [onSave], the editor owns the save: Done hands a fresh copy of the
+/// draft to [onSave] and stays open, with input locked, until that attempt's
+/// result. It closes once, on success; on failure the draft stays editable
+/// with Retry, Edit and Discard. Without it, Done copies the fields into
+/// [note] and closes with `true` for the caller to save.
 class NotesCreaterPage extends StatefulWidget {
   const NotesCreaterPage(
       {required this.note,
       this.onDelete,
+      this.onSave,
       this.imageInput,
       this.speechInput,
       super.key});
   final VoidCallback? onDelete;
+  final Future<NoteSaveResult> Function(Note note)? onSave;
   final EditorImageInput? imageInput;
   final EditorSpeechInput? speechInput;
   final Note note;
@@ -58,6 +67,11 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
   int _activeLine = -1;
   bool _allowPop = false;
   bool _closing = false;
+
+  /// The save attempt this editor is waiting for; a result for any other
+  /// attempt is ignored.
+  Object? _attempt;
+  bool get _saving => _attempt != null;
   bool _confirmingClose = false;
   bool _confirmingImageRemoval = false;
 
@@ -187,7 +201,7 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
           _draft.important != widget.note.important);
 
   void _finish(bool save) {
-    if (_closing || _picking || _starting) return;
+    if (_closing || _saving || _picking || _starting) return;
     if (save) {
       if (_document.isReadOnly) return;
       final wordError = _wordLimit.errorFor(_wordCount);
@@ -207,14 +221,25 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
         return;
       }
       // Leave sync versions, dirty state and timestamps to the repository.
-      widget.note
+      // An owned save gets its own copy, so no attempt alters the draft.
+      final target = widget.onSave == null ? widget.note : widget.note.copy();
+      target
         ..title = edited.title
         ..body = edited.body
         ..kind = edited.kind
         ..items = edited.items
         ..pinned = edited.pinned;
-      widget.note.important = edited.important;
+      target.important = edited.important;
+      if (widget.onSave != null) {
+        unawaited(_submit(target));
+        return;
+      }
     }
+    _close(save);
+  }
+
+  void _close(bool save) {
+    if (_closing) return;
     _closing = true;
     _cancelSpeech();
     setState(() => _allowPop = true);
@@ -223,8 +248,78 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
     });
   }
 
+  /// Saves one snapshot through [NotesCreaterPage.onSave] and acts on that
+  /// attempt's result only.
+  Future<void> _submit(Note snapshot) async {
+    final attempt = Object();
+    _cancelSpeech();
+    FocusScope.of(context).unfocus();
+    setState(() => _attempt = attempt);
+    NoteSaveResult result;
+    try {
+      result = await widget.onSave!(snapshot);
+    } catch (error, stackTrace) {
+      FlutterError.reportError(FlutterErrorDetails(
+          exception: error,
+          stack: stackTrace,
+          library: 'atomic_notes editor',
+          context: ErrorDescription('while saving a note')));
+      result = NoteSaveFailed(error);
+    }
+    if (!mounted || !identical(_attempt, attempt)) return;
+    setState(() => _attempt = null);
+    switch (result) {
+      case NoteSaveSucceeded():
+        _close(true);
+      case NoteSaveSkipped():
+        _close(false);
+      case NoteSaveFailed(:final error):
+        await _offerRetry(error is StateError
+            ? '${error.message} Your draft is still here.'
+            : 'This note could not be saved. Your draft is still here.');
+      case NoteSaveRejected():
+        await _offerRetry(
+            'The notes list closed before this note was saved. Your draft is still here.');
+    }
+  }
+
+  /// After a failed save: try again, keep editing, or leave without saving.
+  Future<void> _offerRetry(String message) async {
+    if (!mounted || _closing) return;
+    _confirmingClose = true;
+    final action = await showDialog<String>(
+      context: context,
+      builder: (context) => EditorPopup(
+        title: 'Not saved',
+        content: Text(message),
+        actions: [
+          EditorPopupButton(
+            label: 'Discard',
+            tone: EditorPopupActionTone.destructive,
+            onPressed: () => Navigator.pop(context, 'discard'),
+          ),
+          EditorPopupButton(
+            label: 'Edit',
+            onPressed: () => Navigator.pop(context, 'edit'),
+          ),
+          EditorPopupButton(
+            label: 'Retry',
+            tone: EditorPopupActionTone.primary,
+            onPressed: () => Navigator.pop(context, 'retry'),
+          ),
+        ],
+      ),
+    );
+    _confirmingClose = false;
+    if (!mounted) return;
+    if (action == 'retry') _finish(true);
+    if (action == 'discard') _close(false);
+  }
+
   Future<void> _requestClose() async {
-    if (_closing || _confirmingClose || _picking || _starting) return;
+    if (_closing || _saving || _confirmingClose || _picking || _starting) {
+      return;
+    }
     _cancelSpeech();
     if (!_changed) {
       _finish(false);
@@ -398,223 +493,231 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) _requestClose();
       },
-      child: Scaffold(
-        backgroundColor: AppColors.paper,
-        body: SafeArea(
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 760),
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  final compact = constraints.maxHeight < 400;
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: AppSpace.sm,
-                          vertical: AppSpace.sm,
-                        ),
-                        child: Row(
-                          children: [
-                            IconButton.filled(
-                              onPressed: _requestClose,
-                              tooltip: 'Back to notes',
-                              style: IconButton.styleFrom(
-                                backgroundColor: AppColors.ink,
-                                foregroundColor: AppColors.paper,
-                              ),
-                              icon: const Icon(Icons.arrow_back),
-                            ),
-                            const SizedBox(width: AppSpace.sm),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  if (!compact)
-                                    const MonoLabel('NOTES / EDITOR'),
-                                  const EditorialHeading(
-                                    'Edit note',
-                                    style: AppType.headlineSm,
-                                    maxLines: 1,
-                                  ),
-                                ],
-                              ),
-                            ),
-                            IconButton(
-                              onPressed: _document.isReadOnly
-                                  ? null
-                                  : () => setState(
-                                        () => _draft.pinned = !_draft.pinned,
-                                      ),
-                              tooltip:
-                                  _draft.pinned ? 'Unpin note' : 'Pin note',
-                              isSelected: _draft.pinned,
-                              color: AppColors.signal,
-                              icon: const Icon(Icons.push_pin_outlined),
-                              selectedIcon: const Icon(Icons.push_pin),
-                            ),
-                            IconButton(
-                              onPressed: _document.isReadOnly
-                                  ? null
-                                  : () => setState(
-                                        () => _draft.important =
-                                            !_draft.important,
-                                      ),
-                              tooltip: _draft.important
-                                  ? 'Unmark important'
-                                  : 'Mark important',
-                              isSelected: _draft.important,
-                              color: AppColors.signal,
-                              icon: const Icon(Icons.label_important_outline),
-                              selectedIcon: const Icon(Icons.label_important),
-                            ),
-                            IconButton(
-                              onPressed: _copy,
-                              tooltip: 'Copy note',
-                              icon: const Icon(Icons.copy_outlined),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const HairRule(color: AppColors.ink),
-                      Expanded(
-                        child: Scrollbar(
-                          controller: _scroll,
-                          child: ListView(
-                            controller: _scroll,
-                            padding: const EdgeInsets.all(
-                              AppSpace.screenMargin,
-                            ),
+      // While a save is in flight the draft is the submitted snapshot:
+      // input waits for its result.
+      child: AbsorbPointer(
+        absorbing: _saving,
+        child: Scaffold(
+          backgroundColor: AppColors.paper,
+          body: SafeArea(
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 760),
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final compact = constraints.maxHeight < 400;
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: AppSpace.sm,
+                            vertical: AppSpace.sm,
+                          ),
+                          child: Row(
                             children: [
-                              Wrap(
-                                spacing: AppSpace.md,
-                                runSpacing: AppSpace.xs,
-                                children: [
-                                  MonoLabel(
-                                    'EDITED ${_stamp(widget.note.updatedAt)}',
-                                    small: true,
-                                  ),
-                                  ValueListenableBuilder<int>(
-                                    valueListenable: _contentRevision,
-                                    builder: (context, _, __) => MonoLabel(
-                                      _document.isReadOnly
-                                          ? 'Unsupported format · read-only'
-                                          : _changed
-                                              ? 'SAVE WITH DONE'
-                                              : widget.note.isEmpty
-                                                  ? 'UNSAVED DRAFT'
-                                                  : 'ON DEVICE',
-                                      small: true,
-                                      color: AppColors.signal,
-                                    ),
-                                  ),
-                                  if (compact)
-                                    ValueListenableBuilder<int>(
-                                      valueListenable: _contentRevision,
-                                      builder: (context, _, __) => Wrap(
-                                        spacing: AppSpace.md,
-                                        children: [
-                                          _wordCountLabel(_wordCount),
-                                          _wordLimitLabel(),
-                                        ],
-                                      ),
-                                    )
-                                  else
-                                    _wordLimitLabel(),
-                                ],
+                              IconButton.filled(
+                                onPressed: _requestClose,
+                                tooltip: 'Back to notes',
+                                style: IconButton.styleFrom(
+                                  backgroundColor: AppColors.ink,
+                                  foregroundColor: AppColors.paper,
+                                ),
+                                icon: const Icon(Icons.arrow_back),
                               ),
-                              const SizedBox(height: AppSpace.md),
-                              _FieldName(
-                                  name: 'Title',
-                                  controller: _title,
-                                  child: TextField(
-                                    key: const ValueKey('note-title'),
-                                    readOnly: _document.isReadOnly,
-                                    controller: _title,
-                                    focusNode: _titleFocus,
-                                    textCapitalization:
-                                        TextCapitalization.sentences,
-                                    maxLines: null,
-                                    style: AppType.displayLg.copyWith(
-                                      fontSize:
-                                          AppType.displayLg.fontSize! * 2 / 3,
+                              const SizedBox(width: AppSpace.sm),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    if (!compact)
+                                      const MonoLabel('NOTES / EDITOR'),
+                                    const EditorialHeading(
+                                      'Edit note',
+                                      style: AppType.headlineSm,
+                                      maxLines: 1,
                                     ),
-                                    cursorColor: AppColors.signal,
-                                    decoration: _decoration('Title'),
-                                    onChanged: (_) => _contentRevision.value++,
-                                  )),
-                              _tags(),
-                              const SizedBox(height: AppSpace.md),
-                              for (var i = 0; i < _document.lines.length; i++)
-                                _lineRow(i),
+                                  ],
+                                ),
+                              ),
+                              IconButton(
+                                onPressed: _document.isReadOnly
+                                    ? null
+                                    : () => setState(
+                                          () => _draft.pinned = !_draft.pinned,
+                                        ),
+                                tooltip:
+                                    _draft.pinned ? 'Unpin note' : 'Pin note',
+                                isSelected: _draft.pinned,
+                                color: AppColors.signal,
+                                icon: const Icon(Icons.push_pin_outlined),
+                                selectedIcon: const Icon(Icons.push_pin),
+                              ),
+                              IconButton(
+                                onPressed: _document.isReadOnly
+                                    ? null
+                                    : () => setState(
+                                          () => _draft.important =
+                                              !_draft.important,
+                                        ),
+                                tooltip: _draft.important
+                                    ? 'Unmark important'
+                                    : 'Mark important',
+                                isSelected: _draft.important,
+                                color: AppColors.signal,
+                                icon: const Icon(Icons.label_important_outline),
+                                selectedIcon: const Icon(Icons.label_important),
+                              ),
+                              IconButton(
+                                onPressed: _copy,
+                                tooltip: 'Copy note',
+                                icon: const Icon(Icons.copy_outlined),
+                              ),
                             ],
                           ),
                         ),
-                      ),
-                      if (!compact)
+                        const HairRule(color: AppColors.ink),
+                        Expanded(
+                          child: Scrollbar(
+                            controller: _scroll,
+                            child: ListView(
+                              controller: _scroll,
+                              padding: const EdgeInsets.all(
+                                AppSpace.screenMargin,
+                              ),
+                              children: [
+                                Wrap(
+                                  spacing: AppSpace.md,
+                                  runSpacing: AppSpace.xs,
+                                  children: [
+                                    MonoLabel(
+                                      'EDITED ${_stamp(widget.note.updatedAt)}',
+                                      small: true,
+                                    ),
+                                    ValueListenableBuilder<int>(
+                                      valueListenable: _contentRevision,
+                                      builder: (context, _, __) => MonoLabel(
+                                        _document.isReadOnly
+                                            ? 'Unsupported format · read-only'
+                                            : _changed
+                                                ? 'SAVE WITH DONE'
+                                                : widget.note.isEmpty
+                                                    ? 'UNSAVED DRAFT'
+                                                    : 'ON DEVICE',
+                                        small: true,
+                                        color: AppColors.signal,
+                                      ),
+                                    ),
+                                    if (compact)
+                                      ValueListenableBuilder<int>(
+                                        valueListenable: _contentRevision,
+                                        builder: (context, _, __) => Wrap(
+                                          spacing: AppSpace.md,
+                                          children: [
+                                            _wordCountLabel(_wordCount),
+                                            _wordLimitLabel(),
+                                          ],
+                                        ),
+                                      )
+                                    else
+                                      _wordLimitLabel(),
+                                  ],
+                                ),
+                                const SizedBox(height: AppSpace.md),
+                                _FieldName(
+                                    name: 'Title',
+                                    controller: _title,
+                                    child: TextField(
+                                      key: const ValueKey('note-title'),
+                                      readOnly: _document.isReadOnly,
+                                      controller: _title,
+                                      focusNode: _titleFocus,
+                                      textCapitalization:
+                                          TextCapitalization.sentences,
+                                      maxLines: null,
+                                      style: AppType.displayLg.copyWith(
+                                        fontSize:
+                                            AppType.displayLg.fontSize! * 2 / 3,
+                                      ),
+                                      cursorColor: AppColors.signal,
+                                      decoration: _decoration('Title'),
+                                      onChanged: (_) =>
+                                          _contentRevision.value++,
+                                    )),
+                                _tags(),
+                                const SizedBox(height: AppSpace.md),
+                                for (var i = 0; i < _document.lines.length; i++)
+                                  _lineRow(i),
+                              ],
+                            ),
+                          ),
+                        ),
+                        if (!compact)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: AppSpace.screenMargin,
+                              vertical: AppSpace.sm,
+                            ),
+                            child: ValueListenableBuilder<int>(
+                              valueListenable: _contentRevision,
+                              builder: (context, _, __) => _statistics(),
+                            ),
+                          ),
+                        const HairRule(color: AppColors.ink),
                         Padding(
                           padding: const EdgeInsets.symmetric(
-                            horizontal: AppSpace.screenMargin,
+                            horizontal: AppSpace.sm,
                             vertical: AppSpace.sm,
                           ),
-                          child: ValueListenableBuilder<int>(
-                            valueListenable: _contentRevision,
-                            builder: (context, _, __) => _statistics(),
-                          ),
+                          child: Row(children: [
+                            Expanded(
+                                child: SingleChildScrollView(
+                                    scrollDirection: Axis.horizontal,
+                                    child: Row(children: [
+                                      _round('Add text line', Icons.notes,
+                                          () => _insertLine(checklist: false)),
+                                      _round(
+                                          'Add checklist line',
+                                          Icons.checklist,
+                                          () => _insertLine(checklist: true)),
+                                      _round('Add image', Icons.image_outlined,
+                                          _pickImage),
+                                      _round(
+                                          _listening
+                                              ? 'Stop dictation'
+                                              : 'Dictate text',
+                                          _listening
+                                              ? Icons.stop
+                                              : Icons.mic_none,
+                                          _dictate,
+                                          active: _listening),
+                                      _round('Delete note',
+                                          Icons.delete_outline, _delete,
+                                          destructive: true),
+                                    ]))),
+                            const SizedBox(width: 8),
+                            FilledButton(
+                                onPressed: _document.isReadOnly ||
+                                        _picking ||
+                                        _starting ||
+                                        _saving
+                                    ? null
+                                    : () => _finish(true),
+                                style: FilledButton.styleFrom(
+                                    backgroundColor: AppColors.signal,
+                                    foregroundColor: AppColors.paper,
+                                    minimumSize: const Size(76, 48),
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 16),
+                                    shape: const RoundedRectangleBorder(
+                                        borderRadius: AppRadius.std)),
+                                child: Text(_saving ? 'Saving…' : 'Done')),
+                          ]),
                         ),
-                      const HairRule(color: AppColors.ink),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: AppSpace.sm,
-                          vertical: AppSpace.sm,
-                        ),
-                        child: Row(children: [
-                          Expanded(
-                              child: SingleChildScrollView(
-                                  scrollDirection: Axis.horizontal,
-                                  child: Row(children: [
-                                    _round('Add text line', Icons.notes,
-                                        () => _insertLine(checklist: false)),
-                                    _round(
-                                        'Add checklist line',
-                                        Icons.checklist,
-                                        () => _insertLine(checklist: true)),
-                                    _round('Add image', Icons.image_outlined,
-                                        _pickImage),
-                                    _round(
-                                        _listening
-                                            ? 'Stop dictation'
-                                            : 'Dictate text',
-                                        _listening
-                                            ? Icons.stop
-                                            : Icons.mic_none,
-                                        _dictate,
-                                        active: _listening),
-                                    _round('Delete note', Icons.delete_outline,
-                                        _delete,
-                                        destructive: true),
-                                  ]))),
-                          const SizedBox(width: 8),
-                          FilledButton(
-                              onPressed:
-                                  _document.isReadOnly || _picking || _starting
-                                      ? null
-                                      : () => _finish(true),
-                              style: FilledButton.styleFrom(
-                                  backgroundColor: AppColors.signal,
-                                  foregroundColor: AppColors.paper,
-                                  minimumSize: const Size(76, 48),
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 16),
-                                  shape: const RoundedRectangleBorder(
-                                      borderRadius: AppRadius.std)),
-                              child: const Text('Done')),
-                        ]),
-                      ),
-                    ],
-                  );
-                },
+                      ],
+                    );
+                  },
+                ),
               ),
             ),
           ),

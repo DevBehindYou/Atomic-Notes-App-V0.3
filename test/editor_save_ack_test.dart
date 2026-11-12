@@ -1,7 +1,8 @@
-// S1 characterization: how an editor save is acknowledged on main 9c2c23d,
-// before the save-acknowledgement slice. Each case pins today's behaviour.
-// Cases marked "S1 changes this" are the defects the slice fixes; they are
-// expected to be rewritten, not kept, when it lands.
+// S1 save acknowledgement. The editor closes only after its own attempt is
+// stored on this device; a failed or rejected attempt keeps the draft.
+// The "unchanged" group keeps the characterization of main 9c2c23d that S1
+// preserves; the two cases S1 replaced (Done closing before the save, and a
+// failed save losing the draft silently) are in commit 2f22f19.
 
 import 'dart:async';
 
@@ -23,10 +24,12 @@ class _AckSource extends FakeNotesSource {
   Completer<void>? gate;
   Object? failure;
   int attempts = 0;
+  final submitted = <Note>[];
 
   @override
   Future<void> save(Note note) async {
     attempts++;
+    submitted.add(note);
     if (gate != null) await gate!.future;
     if (failure != null) throw failure!;
     return super.save(note);
@@ -36,7 +39,7 @@ class _AckSource extends FakeNotesSource {
 class _Home {
   final source = _AckSource();
 
-  /// Errors the bloc rethrows from its handlers, which today reach no UI.
+  /// Errors the bloc rethrows from its handlers.
   final blocErrors = <Object>[];
   late final NotesBloc bloc;
 
@@ -77,45 +80,131 @@ class _Home {
 }
 
 void main() {
-  group('today (main 9c2c23d)', () {
+  group('S1: the editor waits for its own save', () {
     testWidgets(
-        'Done closes the editor before the local save finishes '
-        '(S1 changes this)', (tester) async {
+        'Done stays open, locked, until the save is stored; then '
+        'closes once', (tester) async {
       final home = _Home();
       await home.open(tester);
       home.source.gate = Completer<void>();
       await home.editTitle(tester, 'Edited');
       await tester.tap(find.text('Done'));
-      await tester.pumpAndSettle();
-      expect(find.byType(NotesCreaterPage), findsNothing,
-          reason: 'the route closes on Done, not on a saved result');
-      expect(home.source.attempts, 1);
-      expect(home.source.byId('n1')!.title, 'Original',
-          reason: 'the save is still waiting');
+      await tester.pump();
+      expect(find.byType(NotesCreaterPage), findsOneWidget);
+      expect(find.text('Saving…'), findsOneWidget);
+      await tester.tap(find.text('Saving…'), warnIfMissed: false);
+      await tester.tap(find.byTooltip('Back to notes'), warnIfMissed: false);
+      await tester.pump();
+      expect(home.source.attempts, 1, reason: 'no duplicate save');
+      expect(find.byType(NotesCreaterPage), findsOneWidget,
+          reason: 'Back waits for the save');
+      expect(home.source.byId('n1')!.title, 'Original');
       home.source.gate!.complete();
       await tester.pumpAndSettle();
+      expect(find.byType(NotesCreaterPage), findsNothing);
       expect(home.source.byId('n1')!.title, 'Edited');
+      expect(home.source.attempts, 1);
       expect(home.blocErrors, isEmpty);
     });
 
     testWidgets(
-        'a failing local save closes the editor, loses the draft and '
-        'tells nobody (S1 changes this)', (tester) async {
+        'a failed save keeps the draft; Edit returns to it and a '
+        'later Done saves it', (tester) async {
       final home = _Home();
       await home.open(tester);
-      home.source.failure = StateError('synthetic local write failure');
+      home.source.failure = Exception('synthetic local write failure');
       await home.editTitle(tester, 'Edited');
       await tester.tap(find.text('Done'));
       await tester.pumpAndSettle();
-      expect(find.byType(NotesCreaterPage), findsNothing);
-      expect(home.source.attempts, 1);
+      expect(find.text('Not saved'), findsOneWidget);
+      expect(
+          find.text('This note could not be saved. Your draft is still here.'),
+          findsOneWidget);
       expect(home.source.byId('n1')!.title, 'Original');
-      expect(find.text('Edited'), findsNothing, reason: 'the draft is gone');
-      expect(find.byType(SnackBar), findsNothing, reason: 'no feedback');
-      expect(home.blocErrors, [isA<StateError>()],
-          reason: 'the error only reaches the bloc zone');
+      await tester.tap(find.text('Edit'));
+      await tester.pumpAndSettle();
+      expect(find.byType(NotesCreaterPage), findsOneWidget);
+      expect(
+          tester
+              .widget<TextField>(find.byKey(const ValueKey('note-title')))
+              .controller!
+              .text,
+          'Edited');
+      home.source.failure = null;
+      await tester.tap(find.text('Done'));
+      await tester.pumpAndSettle();
+      expect(find.byType(NotesCreaterPage), findsNothing);
+      expect(home.source.byId('n1')!.title, 'Edited');
+      expect(home.source.attempts, 2);
+      expect(home.blocErrors, isEmpty, reason: 'reported, not rethrown');
     });
 
+    testWidgets('Retry saves the same draft again', (tester) async {
+      final home = _Home();
+      await home.open(tester);
+      home.source.failure = Exception('synthetic local write failure');
+      await home.editTitle(tester, 'Edited');
+      await tester.tap(find.text('Done'));
+      await tester.pumpAndSettle();
+      home.source.failure = null;
+      await tester.tap(find.text('Retry'));
+      await tester.pumpAndSettle();
+      expect(find.byType(NotesCreaterPage), findsNothing);
+      expect(home.source.byId('n1')!.title, 'Edited');
+      expect(home.source.attempts, 2);
+    });
+
+    testWidgets('Discard after a failure leaves without saving',
+        (tester) async {
+      final home = _Home();
+      await home.open(tester);
+      home.source.failure = Exception('synthetic local write failure');
+      await home.editTitle(tester, 'Edited');
+      await tester.tap(find.text('Done'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Discard'));
+      await tester.pumpAndSettle();
+      expect(find.byType(NotesCreaterPage), findsNothing);
+      expect(home.source.byId('n1')!.title, 'Original');
+      expect(home.source.attempts, 1);
+    });
+
+    testWidgets(
+        'a session change refused by the store says so; the draft '
+        'stays', (tester) async {
+      final home = _Home();
+      await home.open(tester);
+      home.source.failure =
+          StateError('Notes are changing session. Please retry.');
+      await home.editTitle(tester, 'Edited');
+      await tester.tap(find.text('Done'));
+      await tester.pumpAndSettle();
+      expect(
+          find.text('Notes are changing session. Please retry. '
+              'Your draft is still here.'),
+          findsOneWidget);
+      expect(home.source.byId('n1')!.title, 'Original');
+    });
+
+    testWidgets('every attempt saves its own copy of the draft',
+        (tester) async {
+      final home = _Home();
+      await home.open(tester);
+      home.source.failure = Exception('synthetic local write failure');
+      await home.editTitle(tester, 'Edited');
+      await tester.tap(find.text('Done'));
+      await tester.pumpAndSettle();
+      home.source.failure = null;
+      await tester.tap(find.text('Retry'));
+      await tester.pumpAndSettle();
+      expect(home.source.submitted, hasLength(2));
+      expect(identical(home.source.submitted[0], home.source.submitted[1]),
+          isFalse);
+      expect(home.source.byId('n1'), same(home.source.submitted[1]));
+    });
+  });
+
+  group('unchanged from main 9c2c23d', () {
     testWidgets('Done twice saves once', (tester) async {
       final home = _Home();
       await home.open(tester);

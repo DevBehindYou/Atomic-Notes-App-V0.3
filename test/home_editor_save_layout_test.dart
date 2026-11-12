@@ -32,6 +32,10 @@ Note _fixture() {
   return document.toNote(original);
 }
 
+final _rejectedMessage =
+    find.text('The notes list closed before this note was saved. '
+        'Your draft is still here.');
+
 class _Harness {
   _Harness() : source = FakeNotesSource(notes: [_fixture()]);
 
@@ -165,6 +169,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(harness.source.saveCalls, 0);
     expect(harness.source.byId('existing-rich-note')!.toMap(), before);
+    // S1: the draft is kept and the reason is shown.
+    expect(find.byType(NotesCreaterPage), findsOneWidget);
+    expect(_rejectedMessage, findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -179,6 +186,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(harness.source.saveCalls, 0);
     expect(harness.source.byId('existing-rich-note')!.toMap(), before);
+    expect(find.byType(NotesCreaterPage), findsOneWidget);
+    expect(_rejectedMessage, findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

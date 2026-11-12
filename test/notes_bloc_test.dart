@@ -506,4 +506,103 @@ void main() {
     await Future<void>.delayed(Duration.zero);
     expect(bloc.isClosed, isTrue);
   });
+
+  group('save acknowledgement (S1)', () {
+    test('an acknowledged save completes once the note is stored', () async {
+      final source = _HeldSource();
+      final bloc = _bloc(source);
+      addTearDown(bloc.close);
+      final ack = NoteSaveAck();
+      bloc.add(NoteSaved(Note(id: 'new', title: 'Stored'), ack: ack));
+      expect(await ack.result, isA<NoteSaveSucceeded>());
+      expect(source.byId('new')!.title, 'Stored');
+    });
+
+    test('a failed acknowledged save reports, never rethrows', () async {
+      final source = _HeldSource()..failure = Exception('synthetic');
+      final escaped = <Object>[];
+      late NotesBloc bloc;
+      runZonedGuarded(() => bloc = _bloc(source), (e, _) => escaped.add(e));
+      addTearDown(() => bloc.close());
+      final ack = NoteSaveAck();
+      bloc.add(NoteSaved(Note(id: 'new', title: 'Lost?'), ack: ack));
+      final result = await ack.result;
+      expect(result, isA<NoteSaveFailed>());
+      expect((result as NoteSaveFailed).error, same(source.failure));
+      await Future<void>.delayed(Duration.zero);
+      expect(escaped, isEmpty);
+      expect(source.byId('new'), isNull);
+    });
+
+    test('a save without an acknowledgement still rethrows', () async {
+      final source = _HeldSource()..failure = Exception('synthetic');
+      final escaped = <Object>[];
+      late NotesBloc bloc;
+      runZonedGuarded(() => bloc = _bloc(source), (e, _) => escaped.add(e));
+      addTearDown(() => bloc.close());
+      bloc.add(NoteSaved(Note(id: 'new')));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(escaped, [same(source.failure)]);
+    });
+
+    test('closing the bloc mid-save still delivers the real outcome', () async {
+      final source = _HeldSource()..gate = Completer<void>();
+      final bloc = _bloc(source);
+      final ack = NoteSaveAck();
+      bloc.add(NoteSaved(Note(id: 'new', title: 'Stored'), ack: ack));
+      await Future<void>.delayed(Duration.zero);
+      final closing = bloc.close();
+      source.gate!.complete();
+      expect(await ack.result, isA<NoteSaveSucceeded>());
+      await closing;
+      expect(source.byId('new')!.title, 'Stored');
+    });
+
+    test('each acknowledgement answers only its own attempt', () async {
+      final source = _HeldSource()..gate = Completer<void>();
+      final bloc = _bloc(source);
+      addTearDown(bloc.close);
+      final first = NoteSaveAck();
+      final second = NoteSaveAck();
+      bloc.add(NoteSaved(Note(id: 'a1', title: 'One'), ack: first));
+      await Future<void>.delayed(Duration.zero);
+      source
+        ..gate = null
+        ..failure = Exception('second fails');
+      bloc.add(NoteSaved(Note(id: 'a2', title: 'Two'), ack: second));
+      expect(await second.result, isA<NoteSaveFailed>());
+      source.failure = null;
+      // The first attempt's held save is released only now.
+      source.release();
+      expect(await first.result, isA<NoteSaveSucceeded>());
+    });
+  });
+}
+
+/// A store whose save can be held open or made to fail.
+class _HeldSource extends FakeNotesSource {
+  Completer<void>? gate;
+  final _held = <Completer<void>>[];
+  Object? failure;
+
+  /// Lets every held save continue.
+  void release() {
+    for (final held in _held) {
+      held.complete();
+    }
+    _held.clear();
+  }
+
+  @override
+  Future<void> save(Note note) async {
+    final error = failure;
+    final wait = gate;
+    if (wait != null) {
+      final held = Completer<void>();
+      _held.add(held);
+      await Future.any([wait.future, held.future]);
+    }
+    if (error != null) throw error;
+    return super.save(note);
+  }
 }
