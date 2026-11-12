@@ -52,6 +52,19 @@ class NotesBloc extends Bloc<NotesEvent, NotesState> {
 
   NoteProjection projectionFor(Note note) => projectNote(_source, note);
 
+  /// Whether the store can acknowledge an editor's save (S1). Stores that
+  /// cannot keep the earlier unacknowledged flow.
+  bool get supportsOwnedSave => _source is EditorNoteSaveSource;
+
+  /// The write context for an editor opening now, or null when nobody may
+  /// write (or the store cannot acknowledge saves).
+  NoteEditorContext? captureEditorContext() {
+    final source = _source;
+    return source is EditorNoteSaveSource
+        ? (source as EditorNoteSaveSource).captureEditorContext()
+        : null;
+  }
+
   int _noticeCount = 0;
   bool _manualSyncInProgress = false;
 
@@ -232,18 +245,29 @@ class NotesBloc extends Bloc<NotesEvent, NotesState> {
     ));
   }
 
-  /// Saves locally. With an acknowledgement, the outcome goes to that attempt
-  /// only, and an error is reported to observers instead of rethrown; without
-  /// one, an error is rethrown as before.
+  /// Saves locally. With an acknowledgement, the store's receipt for this
+  /// attempt and its editor context decides the outcome: success only when
+  /// the store confirms the write; a failure is reported to observers instead
+  /// of rethrown. Without one, [NotesSource.save] runs as before.
   Future<void> _onNoteSaved(NoteSaved event, Emitter<NotesState> emit) async {
     final ack = event.ack;
     if (ack == null) return _source.save(event.note);
-    try {
-      await _source.save(event.note);
-      ack._complete(const NoteSaveSucceeded());
-    } catch (error, stackTrace) {
-      ack._complete(NoteSaveFailed(error));
-      onError(error, stackTrace);
+    final source = _source;
+    final context = event.context;
+    if (source is! EditorNoteSaveSource || context == null) {
+      ack._complete(const NoteSaveRejected());
+      return;
+    }
+    final receipt = await (source as EditorNoteSaveSource)
+        .saveForEditor(event.note, context);
+    switch (receipt) {
+      case NoteLocalSaveStored():
+        ack._complete(const NoteSaveSucceeded());
+      case NoteLocalSaveRetired(:final reason):
+        ack._complete(NoteSaveRetired(reason));
+      case NoteLocalSaveFailed(:final error):
+        ack._complete(NoteSaveFailed(error));
+        onError(error, StackTrace.current);
     }
   }
 

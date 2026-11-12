@@ -60,11 +60,13 @@ final class NotesDeleteSelected extends NotesEvent {
 }
 
 /// Saves [note] locally through the repository. With [ack], the caller learns
-/// the outcome of this exact attempt: the local save, not a later cloud sync.
+/// the outcome of this exact attempt (the local save, not a later cloud
+/// sync), for the [context] its editor captured when it opened.
 final class NoteSaved extends NotesEvent {
-  const NoteSaved(this.note, {this.ack});
+  const NoteSaved(this.note, {this.ack, this.context});
   final Note note;
   final NoteSaveAck? ack;
+  final NoteEditorContext? context;
 }
 
 /// The outcome of one local save attempt.
@@ -72,18 +74,27 @@ sealed class NoteSaveResult {
   const NoteSaveResult();
 }
 
-/// The note is stored on this device. Syncing it is separate.
+/// The store confirmed this attempt's note was written on this device for
+/// the editor's account. Syncing it is separate.
 final class NoteSaveSucceeded extends NoteSaveResult {
   const NoteSaveSucceeded();
 }
 
-/// The local save failed; nothing changed and the draft is still needed.
+/// The store deliberately did not keep this attempt ([reason]).
+final class NoteSaveRetired extends NoteSaveResult {
+  const NoteSaveRetired(this.reason);
+  final NoteSaveRetirement reason;
+}
+
+/// The local write failed. Memory may already hold the change, but the
+/// device's store does not have it confirmed; the draft is still needed.
 final class NoteSaveFailed extends NoteSaveResult {
   const NoteSaveFailed(this.error);
   final Object error;
 }
 
-/// Nothing was attempted: the notes screen or its bloc is gone.
+/// Nothing was attempted: the notes screen or its bloc is gone, or the store
+/// cannot acknowledge an editor's save.
 final class NoteSaveRejected extends NoteSaveResult {
   const NoteSaveRejected();
 }

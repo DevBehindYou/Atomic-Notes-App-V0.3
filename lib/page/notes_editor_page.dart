@@ -9,6 +9,7 @@ import 'package:atomic_notes/editor/rich_text_controller.dart';
 import 'package:atomic_notes/database/note.dart';
 import 'package:atomic_notes/database/note_document.dart';
 import 'package:atomic_notes/database/note_word_limit.dart';
+import 'package:atomic_notes/database/notes_source.dart';
 import 'package:atomic_notes/state/notes/notes_bloc.dart';
 import 'package:atomic_notes/theme/app_tokens.dart';
 import 'package:atomic_notes/theme/editorial.dart';
@@ -72,6 +73,10 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
   /// attempt is ignored.
   Object? _attempt;
   bool get _saving => _attempt != null;
+
+  /// No edit may land while a save is pending or the editor is closing: the
+  /// pending attempt is a snapshot, and success closes the editor.
+  bool get _locked => _saving || _closing;
   bool _confirmingClose = false;
   bool _confirmingImageRemoval = false;
 
@@ -118,6 +123,8 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
       // A style toggle notifies without changing TextEditingValue, so it must
       // continue through this path even when the text is unchanged.
       if (valueChanged && !textChanged) return;
+      // Fields cannot take focus while locked; this guards programmatic edits.
+      if (_locked) return;
       _document.replaceText(index, controller.text);
       _document.replaceStyles(index, controller.styles);
       _contentRevision.value++;
@@ -238,14 +245,44 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
     _close(save);
   }
 
+  /// The route this editor runs in, and a result waiting for that route to
+  /// be on top of its navigator again (review R11).
+  ModalRoute<Object?>? _route;
+  bool? _pendingResult;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _route = ModalRoute.of(context);
+    // Covering routes come and go; finish once this route is current again.
+    if (_pendingResult != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _completeIfCurrent());
+    }
+  }
+
   void _close(bool save) {
     if (_closing) return;
     _closing = true;
     _cancelSpeech();
+    _pendingResult = save;
     setState(() => _allowPop = true);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) Navigator.of(context).pop(save);
-    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _completeIfCurrent());
+  }
+
+  /// Pops this editor's own route with its result, only while that route is
+  /// the top of its own navigator. A covered editor waits; a removed or
+  /// replaced one has nothing left to complete. Never pops another route.
+  void _completeIfCurrent() {
+    final result = _pendingResult;
+    final route = _route;
+    if (result == null || !mounted || route == null) return;
+    if (!route.isActive) {
+      _pendingResult = null;
+      return;
+    }
+    if (!route.isCurrent) return;
+    _pendingResult = null;
+    route.navigator?.pop(result);
   }
 
   /// Saves one snapshot through [NotesCreaterPage.onSave] and acts on that
@@ -253,6 +290,8 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
   Future<void> _submit(Note snapshot) async {
     final attempt = Object();
     _cancelSpeech();
+    // Where to return the caret if the draft goes back to editing.
+    final focusBefore = FocusManager.instance.primaryFocus;
     FocusScope.of(context).unfocus();
     setState(() => _attempt = attempt);
     NoteSaveResult result;
@@ -273,18 +312,54 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
         _close(true);
       case NoteSaveSkipped():
         _close(false);
+      case NoteSaveRetired(reason: NoteSaveRetirement.contextChanged):
+        // The account or session changed: this draft must not stay on screen
+        // for whoever is signed in now, nor be saved into their notes.
+        _close(false);
+      case NoteSaveRetired(reason: NoteSaveRetirement.deleted):
+        await _tellAndClose(
+            'This note was deleted before your changes were stored, so they were not saved.');
+      case NoteSaveRetired(reason: NoteSaveRetirement.replaced):
+        await _offerRetry(
+            'This note changed elsewhere before your edit was stored. Your draft is still here.',
+            focusBefore);
       case NoteSaveFailed(:final error):
-        await _offerRetry(error is StateError
-            ? '${error.message} Your draft is still here.'
-            : 'This note could not be saved. Your draft is still here.');
+        await _offerRetry(
+            error is StateError
+                ? '${error.message} Your draft is still here.'
+                : 'This note could not be stored on this device. Your draft is still here.',
+            focusBefore);
       case NoteSaveRejected():
         await _offerRetry(
-            'The notes list closed before this note was saved. Your draft is still here.');
+            'The notes list closed before this note was saved. Your draft is still here.',
+            focusBefore);
     }
   }
 
+  Future<void> _tellAndClose(String message) async {
+    if (!mounted || _closing) return;
+    _confirmingClose = true;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => EditorPopup(
+        title: 'Not saved',
+        content: Text(message),
+        actions: [
+          EditorPopupButton(
+            label: 'Close',
+            tone: EditorPopupActionTone.primary,
+            onPressed: () => Navigator.pop(context),
+          ),
+        ],
+      ),
+    );
+    _confirmingClose = false;
+    if (mounted) _close(false);
+  }
+
   /// After a failed save: try again, keep editing, or leave without saving.
-  Future<void> _offerRetry(String message) async {
+  /// Editing returns the caret to where it was before Done.
+  Future<void> _offerRetry(String message, [FocusNode? focusBefore]) async {
     if (!mounted || _closing) return;
     _confirmingClose = true;
     final action = await showDialog<String>(
@@ -312,8 +387,13 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
     );
     _confirmingClose = false;
     if (!mounted) return;
-    if (action == 'retry') _finish(true);
-    if (action == 'discard') _close(false);
+    if (action == 'retry') {
+      _finish(true);
+    } else if (action == 'discard') {
+      _close(false);
+    } else if (focusBefore != null && focusBefore.context != null) {
+      focusBefore.requestFocus();
+    }
   }
 
   Future<void> _requestClose() async {
@@ -356,7 +436,7 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
   }
 
   void _insertLine({required bool checklist, int? after}) {
-    if (_document.isReadOnly) return;
+    if (_document.isReadOnly || _locked) return;
     _cancelSpeech();
     final active = after ?? _activeLine;
     final index = active.clamp(-1, _document.lines.length - 1);
@@ -387,7 +467,7 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
   }
 
   void _removeLine(int index) {
-    if (_document.isReadOnly) return;
+    if (_document.isReadOnly || _locked) return;
     _cancelSpeech();
     final removedImage = _document.lines[index].imageBase64;
     setState(() {
@@ -408,7 +488,7 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
 
   Future<void> _confirmRemoveImage(int index) async {
     if (_document.isReadOnly ||
-        _closing ||
+        _locked ||
         _confirmingImageRemoval ||
         index < 0 ||
         index >= _lines.length ||
@@ -495,8 +575,8 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
       },
       // While a save is in flight the draft is the submitted snapshot:
       // input waits for its result.
-      child: AbsorbPointer(
-        absorbing: _saving,
+      child: _PendingSaveLock(
+        locked: _saving,
         child: Scaffold(
           backgroundColor: AppColors.paper,
           body: SafeArea(
@@ -541,7 +621,7 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
                                 ),
                               ),
                               IconButton(
-                                onPressed: _document.isReadOnly
+                                onPressed: _document.isReadOnly || _locked
                                     ? null
                                     : () => setState(
                                           () => _draft.pinned = !_draft.pinned,
@@ -554,7 +634,7 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
                                 selectedIcon: const Icon(Icons.push_pin),
                               ),
                               IconButton(
-                                onPressed: _document.isReadOnly
+                                onPressed: _document.isReadOnly || _locked
                                     ? null
                                     : () => setState(
                                           () => _draft.important =
@@ -629,7 +709,7 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
                                     controller: _title,
                                     child: TextField(
                                       key: const ValueKey('note-title'),
-                                      readOnly: _document.isReadOnly,
+                                      readOnly: _document.isReadOnly || _locked,
                                       controller: _title,
                                       focusNode: _titleFocus,
                                       textCapitalization:
@@ -773,7 +853,7 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
           child: NoteFieldLocator(
             name: index == 0 ? 'note-body' : 'note-text-$index',
             child: TextField(
-              readOnly: _document.isReadOnly,
+              readOnly: _document.isReadOnly || _locked,
               contextMenuBuilder: (context, state) =>
                   _selectionMenu(state, index),
               controller: _lines[index],
@@ -796,8 +876,9 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
           value: line.done,
           activeColor: AppColors.signal,
           semanticLabel: 'Complete item ${index + 1}',
-          onChanged: (value) =>
-              setState(() => _document.setDone(index, value!)),
+          onChanged: _locked
+              ? null
+              : (value) => setState(() => _document.setDone(index, value!)),
         ),
         Expanded(
           child: _FieldName(
@@ -806,7 +887,7 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
               child: NoteFieldLocator(
                 name: 'note-item-$index',
                 child: TextField(
-                  readOnly: _document.isReadOnly,
+                  readOnly: _document.isReadOnly || _locked,
                   contextMenuBuilder: (context, state) =>
                       _selectionMenu(state, index),
                   controller: _lines[index],
@@ -927,6 +1008,7 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
         );
 
   Future<void> _addTag() async {
+    if (_locked) return;
     final controller = TextEditingController();
     final tag = await showDialog<String>(
         context: context,
@@ -967,7 +1049,7 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
     // Let the outgoing dialog release its field before disposing its controller.
     await Future<void>.delayed(const Duration(milliseconds: 250));
     controller.dispose();
-    if (!mounted || tag == null) return;
+    if (!mounted || tag == null || _locked) return;
     try {
       setState(() => _document.setTags(
           [..._document.tags, tag.trim().replaceFirst(RegExp(r'^#+'), '')]));
@@ -977,7 +1059,7 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
   }
 
   Future<void> _pickImage() async {
-    if (_picking || _document.isReadOnly) return;
+    if (_picking || _document.isReadOnly || _locked) return;
     if (_document.imageCount >= NoteDocument.maxImagesPerNote) {
       _message(NoteDocument.imageLimitMessage);
       return;
@@ -1011,6 +1093,7 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
         _message('$error. Shorten the note before adding this image.');
         return;
       }
+      if (_locked) return;
       setState(() {
         final inserted = _document.insertImageAfter(index, image);
         _lines.insert(inserted, _controller(_document.lines[inserted]));
@@ -1041,7 +1124,7 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
   }
 
   Future<void> _dictate() async {
-    if (_document.isReadOnly || _starting) return;
+    if (_document.isReadOnly || _starting || _locked) return;
     if (_listening) {
       await _speechInput.stop();
       return;
@@ -1090,7 +1173,7 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
       final ready = await _speechInput.start(
         onResult: (words, finalResult) {
           if (!mounted ||
-              _closing ||
+              _locked ||
               session != _speechSession ||
               _speechTarget != controller ||
               !_lines.contains(controller)) {
@@ -1153,6 +1236,7 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
   }
 
   Future<void> _delete() async {
+    if (_locked) return;
     _cancelSpeech();
     final saved = widget.onDelete != null;
     final accepted = await showDialog<bool>(
@@ -1271,4 +1355,19 @@ class NoteFieldLocator extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => child;
+}
+
+/// While a save is pending: no pointer input and no focus, so neither taps
+/// nor keyboard traversal or text input can reach a field (review R10).
+class _PendingSaveLock extends StatelessWidget {
+  const _PendingSaveLock({required this.locked, required this.child});
+
+  final bool locked;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => AbsorbPointer(
+        absorbing: locked,
+        child: ExcludeFocus(excluding: locked, child: child),
+      );
 }

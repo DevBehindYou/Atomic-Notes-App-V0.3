@@ -82,7 +82,7 @@ class LocalOnlyCacheError extends StateError {
 /// (see the server's README). Automatic sync runs at launch, when the app comes
 /// back to the foreground, when the network returns, a few seconds after a local
 /// change (or as soon as the Server's hourly window opens), and hourly.
-class NotesRepository extends ChangeNotifier with WidgetsBindingObserver implements NotesSource, SyncReportSource, NoteProjectionSource {
+class NotesRepository extends ChangeNotifier with WidgetsBindingObserver implements NotesSource, SyncReportSource, NoteProjectionSource, EditorNoteSaveSource {
   NotesRepository._({ApiClient? api, Vault? vault,
     Future<List<ConnectivityResult>> Function()? checkConnectivity,
     Future<void> Function()? refreshEnergy, bool automaticSync = true})
@@ -599,6 +599,67 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     if (note.dirty) _scheduleAutoSync();
   });
 
+  // ---- acknowledged editor saves (S1) ------------------------------------
+
+  @override
+  NoteEditorContext? captureEditorContext() {
+    final uid = _userId;
+    if (uid == null || _disposed || _stopped || _lockingVault || _loggingOut ||
+        !_cacheReady || !_ownsCache(uid) || (_cacheReady && _logoutCompleting)) {
+      return null;
+    }
+    return _EditorContext(this, uid, _api.sessionRevision, _lifecycleRevision);
+  }
+
+  bool _isCurrent(_EditorContext context) =>
+      identical(context.store, this) && !_disposed && !_stopped &&
+      !_lockingVault && !_loggingOut && !_logoutCompleting &&
+      _userId == context.uid && _ownsCache(context.uid) &&
+      _api.sessionRevision == context.session &&
+      _lifecycleRevision == context.lifecycle;
+
+  /// Saves an editor's [note] like [save], for [context] only, and reports
+  /// what reached the device: the same write ordering and owner checks, plus
+  /// a receipt for this exact note instance. The context is checked before
+  /// anything changes, and the write itself is dropped if the account
+  /// changes while it waits or seals.
+  @override
+  Future<NoteLocalSaveReceipt> saveForEditor(
+      Note note, NoteEditorContext context) async {
+    if (context is! _EditorContext || !_isCurrent(context)) {
+      return const NoteLocalSaveRetired(NoteSaveRetirement.contextChanged);
+    }
+    try {
+      return await _trackNoteMutation(() async {
+        if (!_isCurrent(context)) {
+          return const NoteLocalSaveRetired(NoteSaveRetirement.contextChanged);
+        }
+        _assertWritable(note.id);
+        if (NoteDocument.hasRichContent(note)) NoteContentBudget.validate(note);
+        note.touch();
+        note.settleDirty();
+        _notes[note.id] = note;
+        final written = await _write(note.id);
+        notifyListeners();
+        if (note.dirty) _scheduleAutoSync();
+        if (written == null) {
+          return const NoteLocalSaveRetired(NoteSaveRetirement.contextChanged);
+        }
+        if (!identical(written, note)) {
+          return const NoteLocalSaveRetired(NoteSaveRetirement.replaced);
+        }
+        if (written.deleted) {
+          return const NoteLocalSaveRetired(NoteSaveRetirement.deleted);
+        }
+        // Written for the editor's account (the write checks the owner
+        // when it runs); a later account change cannot undo that.
+        return const NoteLocalSaveStored();
+      });
+    } catch (error) {
+      return NoteLocalSaveFailed(error);
+    }
+  }
+
   /// Soft delete, so the removal can reach other devices.
   @override
   Future<void> deleteNotes(Iterable<String> ids) => _trackNoteMutation(() async {
@@ -657,17 +718,22 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   /// followed by a call here, so the last write on disk reflects the last
   /// change. A write for another account, or for a note no longer in memory,
   /// is dropped rather than put into the wrong cache.
-  Future<void> _persist(String id) {
+  Future<void> _persist(String id) => _write(id);
+
+  /// [_persist], also reporting which note instance reached the box, or null
+  /// when the write was dropped.
+  Future<Note?> _write(String id) {
     final uid = _userId;
     final write = _writeChain.then((_) async {
       final note = _notes[id];
-      if (note == null || _userId != uid || !_ownsCache(uid)) return;
+      if (note == null || _userId != uid || !_ownsCache(uid)) return null;
       final sealed = await _sealLocal(note);
       // Encryption can yield while session teardown or account switching runs.
-      if (_userId != uid || !_ownsCache(uid) || !_notes.containsKey(id)) return;
+      if (_userId != uid || !_ownsCache(uid) || !_notes.containsKey(id)) return null;
       await _box.put(id, sealed);
+      return note;
     });
-    _writeChain = write.catchError((_) {});
+    _writeChain = write.then((_) {}, onError: (_) {});
     return write;
   }
 
@@ -1578,4 +1644,14 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     notifyListeners();
     return marked;
   });
+}
+
+/// An editor's write permission: this store, the account, its session and
+/// the store's lifecycle when the editor opened.
+final class _EditorContext implements NoteEditorContext {
+  _EditorContext(this.store, this.uid, this.session, this.lifecycle);
+  final NotesRepository store;
+  final String uid;
+  final int session;
+  final int lifecycle;
 }

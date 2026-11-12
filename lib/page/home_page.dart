@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:atomic_notes/database/note.dart';
+import 'package:atomic_notes/database/notes_source.dart';
 import 'package:atomic_notes/page/notes_editor_page.dart';
 import 'package:atomic_notes/state/notes/notes_bloc.dart';
 import 'package:atomic_notes/theme/app_tokens.dart';
@@ -734,8 +735,13 @@ Future<void> _openEditor(BuildContext context, Note note) async {
   // visible() returns repository objects. Do not let an editor result mutate
   // one before the caller's acceptance and repository persistence checks.
   final draft = note.copy();
-  // The editor owns the save: it closes only after this attempt is stored.
-  await showDialog<bool>(
+  final owned = bloc.supportsOwnedSave;
+  // Who may store this draft: the account and session of the editor opening
+  // now, not whoever is signed in when Done is pressed.
+  final editorContext = owned ? bloc.captureEditorContext() : null;
+  // With an acknowledging store the editor owns the save and closes only
+  // after this attempt is stored.
+  final saved = await showDialog<bool>(
     context: context,
     barrierDismissible: false,
     builder: (_) => NotesCreaterPage(
@@ -743,16 +749,34 @@ Future<void> _openEditor(BuildContext context, Note note) async {
       onDelete: bloc.state.notes.any((n) => n.id == note.id)
           ? () => bloc.add(NoteDeleted(note.id))
           : null,
-      onSave: (snapshot) => _saveFromEditor(context, bloc, snapshot),
+      onSave: owned
+          ? (snapshot) =>
+              _saveFromEditor(context, bloc, editorContext, snapshot)
+          : null,
     ),
   );
+  if (owned) return;
+  // A store that cannot acknowledge saves keeps the earlier flow.
+  if (saved != true || !context.mounted || bloc.isClosed) return;
+  if (draft.isEmpty) {
+    const MySnackBar(
+      text: "Empty note discarded",
+      sec: 1200,
+    ).showMySnackBar(context);
+    return;
+  }
+  bloc.add(NoteSaved(draft));
 }
 
-/// Stores one accepted editor snapshot and reports the outcome of exactly
-/// this attempt. Nothing is saved for a notes screen or bloc that has gone.
-Future<NoteSaveResult> _saveFromEditor(
-    BuildContext context, NotesBloc bloc, Note snapshot) async {
+/// Stores one accepted editor snapshot for [editorContext] and reports the
+/// outcome of exactly this attempt. Nothing is saved for a notes screen or
+/// bloc that has gone, or for an editor opened when nobody could write.
+Future<NoteSaveResult> _saveFromEditor(BuildContext context, NotesBloc bloc,
+    NoteEditorContext? editorContext, Note snapshot) async {
   if (!context.mounted || bloc.isClosed) return const NoteSaveRejected();
+  if (editorContext == null) {
+    return const NoteSaveRetired(NoteSaveRetirement.contextChanged);
+  }
   if (snapshot.isEmpty) {
     const MySnackBar(
       text: "Empty note discarded",
@@ -761,7 +785,7 @@ Future<NoteSaveResult> _saveFromEditor(
     return const NoteSaveSkipped();
   }
   final ack = NoteSaveAck();
-  bloc.add(NoteSaved(snapshot, ack: ack));
+  bloc.add(NoteSaved(snapshot, ack: ack, context: editorContext));
   return ack.result;
 }
 

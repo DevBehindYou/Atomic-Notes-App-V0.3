@@ -7,6 +7,7 @@
 import 'dart:async';
 
 import 'package:atomic_notes/database/note.dart';
+import 'package:atomic_notes/database/notes_source.dart';
 import 'package:atomic_notes/page/home_page.dart';
 import 'package:atomic_notes/page/notes_editor_page.dart';
 import 'package:atomic_notes/state/notes/notes_bloc.dart';
@@ -16,15 +17,26 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'support/fake_notes_source.dart';
 
-/// A store whose local save can be held open or made to fail.
-class _AckSource extends FakeNotesSource {
+class _Context implements NoteEditorContext {}
+
+/// A store that acknowledges editor saves and whose local save can be held
+/// open, made to fail or retired.
+class _AckSource extends FakeNotesSource implements EditorNoteSaveSource {
   _AckSource()
       : super(notes: [Note(id: 'n1', title: 'Original', body: 'Body')]);
 
   Completer<void>? gate;
   Object? failure;
+  NoteSaveRetirement? retire;
   int attempts = 0;
   final submitted = <Note>[];
+  final _context = _Context();
+
+  bool contextAvailable = true;
+
+  @override
+  NoteEditorContext? captureEditorContext() =>
+      contextAvailable ? _context : null;
 
   @override
   Future<void> save(Note note) async {
@@ -33,6 +45,23 @@ class _AckSource extends FakeNotesSource {
     if (gate != null) await gate!.future;
     if (failure != null) throw failure!;
     return super.save(note);
+  }
+
+  @override
+  Future<NoteLocalSaveReceipt> saveForEditor(
+      Note note, NoteEditorContext context) async {
+    if (!identical(context, _context)) {
+      return const NoteLocalSaveRetired(NoteSaveRetirement.contextChanged);
+    }
+    try {
+      await save(note);
+    } catch (error) {
+      return NoteLocalSaveFailed(error);
+    }
+    final reason = retire;
+    return reason == null
+        ? const NoteLocalSaveStored()
+        : NoteLocalSaveRetired(reason);
   }
 }
 
@@ -118,7 +147,8 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Not saved'), findsOneWidget);
       expect(
-          find.text('This note could not be saved. Your draft is still here.'),
+          find.text('This note could not be stored on this device. '
+              'Your draft is still here.'),
           findsOneWidget);
       expect(home.source.byId('n1')!.title, 'Original');
       await tester.tap(find.text('Edit'));
@@ -201,6 +231,69 @@ void main() {
       expect(identical(home.source.submitted[0], home.source.submitted[1]),
           isFalse);
       expect(home.source.byId('n1'), same(home.source.submitted[1]));
+    });
+  });
+
+  group('review R09: retired attempts', () {
+    testWidgets('an account or session change closes without saving',
+        (tester) async {
+      final home = _Home();
+      await home.open(tester);
+      home.source.retire = NoteSaveRetirement.contextChanged;
+      await home.editTitle(tester, 'Edited');
+      await tester.tap(find.text('Done'));
+      await tester.pumpAndSettle();
+      expect(find.byType(NotesCreaterPage), findsNothing,
+          reason: 'the draft is not left on screen for another account');
+      expect(find.text('Not saved'), findsNothing);
+    });
+
+    testWidgets('a deleted note says so and closes', (tester) async {
+      final home = _Home();
+      await home.open(tester);
+      home.source.retire = NoteSaveRetirement.deleted;
+      await home.editTitle(tester, 'Edited');
+      await tester.tap(find.text('Done'));
+      await tester.pumpAndSettle();
+      expect(
+          find.text('This note was deleted before your changes were stored, '
+              'so they were not saved.'),
+          findsOneWidget);
+      expect(find.text('Retry'), findsNothing, reason: 'never re-save it');
+      await tester.tap(find.text('Close'));
+      await tester.pumpAndSettle();
+      expect(find.byType(NotesCreaterPage), findsNothing);
+    });
+
+    testWidgets('a replaced note keeps the draft and offers Retry',
+        (tester) async {
+      final home = _Home();
+      await home.open(tester);
+      home.source.retire = NoteSaveRetirement.replaced;
+      await home.editTitle(tester, 'Edited');
+      await tester.tap(find.text('Done'));
+      await tester.pumpAndSettle();
+      expect(
+          find.text('This note changed elsewhere before your edit was '
+              'stored. Your draft is still here.'),
+          findsOneWidget);
+      home.source.retire = null;
+      await tester.tap(find.text('Retry'));
+      await tester.pumpAndSettle();
+      expect(find.byType(NotesCreaterPage), findsNothing);
+      expect(home.source.attempts, 2);
+    });
+
+    testWidgets('an editor opened when nobody could write saves nothing',
+        (tester) async {
+      final home = _Home()..source.contextAvailable = false;
+      await home.open(tester);
+      await home.editTitle(tester, 'Edited');
+      await tester.tap(find.text('Done'));
+      await tester.pumpAndSettle();
+      expect(find.byType(NotesCreaterPage), findsNothing);
+      expect(home.source.attempts, 0);
+      expect(home.source.byId('n1')!.title, 'Original');
     });
   });
 
