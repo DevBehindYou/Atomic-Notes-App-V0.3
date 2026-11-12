@@ -18,6 +18,7 @@ import 'package:flutter/widgets.dart';
 abstract final class AmbientBudget {
   static final Set<Object> _holders = {};
   static final List<_Waiter> _waiting = [];
+  static bool _handOffScheduled = false;
 
   /// Loops running now.
   static int get active => _holders.length;
@@ -35,11 +36,25 @@ abstract final class AmbientBudget {
 
   static void _release(Object owner) {
     if (!_holders.remove(owner)) return;
-    // The first waiter retries after the current frame work, never inside
-    // another widget's dispose or build.
-    if (_waiting.isNotEmpty) {
-      final next = _waiting.removeAt(0);
-      scheduleMicrotask(next.retry);
+    // Waiters retry after the current frame work, never inside another
+    // widget's dispose or build.
+    if (_waiting.isNotEmpty && !_handOffScheduled) {
+      _handOffScheduled = true;
+      scheduleMicrotask(_handOff);
+    }
+  }
+
+  /// Offers every free slot to the waiters, first come first served. A
+  /// waiter that has gone away or no longer wants to loop by now takes
+  /// nothing, and the slot passes to the next one (review R07).
+  static void _handOff() {
+    _handOffScheduled = false;
+    for (var tries = _waiting.length;
+        tries > 0 &&
+            _waiting.isNotEmpty &&
+            _holders.length < AtomicMotion.maxAmbientLoops;
+        tries--) {
+      _waiting.removeAt(0).retry();
     }
   }
 
@@ -53,6 +68,7 @@ abstract final class AmbientBudget {
   static void reset() {
     _holders.clear();
     _waiting.clear();
+    _handOffScheduled = false;
   }
 }
 
