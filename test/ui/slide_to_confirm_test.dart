@@ -226,6 +226,143 @@ void main() {
     });
   });
 
+  group('review R06: a held key is one activation', () {
+    testWidgets('reviewer fixture: Enter held after arming never confirms',
+        (tester) async {
+      final calls = await _pump(tester);
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      expect(find.text(SlideToConfirm.armedText), findsOneWidget);
+      await tester.sendKeyRepeatEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.enter);
+      await tester.pump(SlideToConfirm.armedFor);
+      expect(calls, isEmpty);
+      expect(find.text(_idle), findsOneWidget);
+    });
+
+    for (final key in [
+      LogicalKeyboardKey.enter,
+      LogicalKeyboardKey.numpadEnter,
+      LogicalKeyboardKey.space,
+      LogicalKeyboardKey.select,
+      LogicalKeyboardKey.gameButtonA,
+    ]) {
+      testWidgets(
+          '${key.debugName}: repeats are ignored; a fresh press confirms once',
+          (tester) async {
+        final calls = await _pump(tester);
+        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+        await tester.pump();
+        await tester.sendKeyDownEvent(key);
+        await tester.pump();
+        for (var i = 0; i < 5; i++) {
+          await tester.sendKeyRepeatEvent(key);
+          await tester.pump();
+        }
+        expect(calls, isEmpty);
+        expect(find.text(SlideToConfirm.armedText), findsOneWidget);
+        await tester.sendKeyUpEvent(key);
+        await tester.sendKeyDownEvent(key);
+        await tester.pump();
+        for (var i = 0; i < 3; i++) {
+          await tester.sendKeyRepeatEvent(key);
+          await tester.pump();
+        }
+        await tester.sendKeyUpEvent(key);
+        await tester.pumpAndSettle();
+        expect(calls, ['confirmed']);
+        expect(find.text(_idle), findsOneWidget, reason: 'not re-armed');
+      });
+    }
+
+    testWidgets('a key held before the control took focus does nothing',
+        (tester) async {
+      final calls = <String>[];
+      final other = FocusNode(debugLabel: 'previous control');
+      final node = FocusNode(debugLabel: 'slide');
+      addTearDown(other.dispose);
+      addTearDown(node.dispose);
+      await pumpNarrow(
+        tester,
+        Column(mainAxisSize: MainAxisSize.min, children: [
+          Focus(focusNode: other, child: const SizedBox(height: 8)),
+          SlideToConfirm(
+            label: _label,
+            focusNode: node,
+            onConfirmed: () async => calls.add('confirmed'),
+          ),
+        ]),
+        theme: AtomicTheme.light,
+      );
+      other.requestFocus();
+      await tester.pump();
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.enter);
+      node.requestFocus();
+      await tester.pump();
+      for (var i = 0; i < 5; i++) {
+        await tester.sendKeyRepeatEvent(LogicalKeyboardKey.enter);
+        await tester.pump();
+      }
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      expect(calls, isEmpty);
+      expect(find.text(_idle), findsOneWidget, reason: 'not even armed');
+    });
+
+    testWidgets('fresh presses while working are ignored', (tester) async {
+      final gate = Completer<void>();
+      final calls = await _pump(tester, onConfirmed: () => gate.future);
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      expect(find.text(SlideToConfirm.workingText), findsOneWidget);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.sendKeyEvent(LogicalKeyboardKey.space);
+      await tester.pump();
+      expect(calls, ['confirmed']);
+      gate.complete();
+      await tester.pumpAndSettle();
+      expect(find.text(_idle), findsOneWidget);
+    });
+
+    testWidgets('web Enter (ButtonActivateIntent) arms and confirms, once',
+        (tester) async {
+      // The web default shortcuts map Enter to ButtonActivateIntent.
+      final calls = <String>[];
+      await pumpNarrow(
+        tester,
+        Shortcuts(
+          shortcuts: const <ShortcutActivator, Intent>{
+            SingleActivator(LogicalKeyboardKey.enter): ButtonActivateIntent(),
+          },
+          child: SlideToConfirm(
+            label: _label,
+            onConfirmed: () async => calls.add('confirmed'),
+          ),
+        ),
+        theme: AtomicTheme.light,
+      );
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      expect(find.text(SlideToConfirm.armedText), findsOneWidget);
+      await tester.sendKeyRepeatEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      expect(calls, isEmpty);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.enter);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(calls, ['confirmed']);
+    });
+  });
+
   group('busy and errors', () {
     testWidgets('while working: announced, and every input is ignored',
         (tester) async {

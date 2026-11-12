@@ -7,6 +7,7 @@ import 'package:atomic_notes/theme/atomic_tokens.dart';
 import 'package:atomic_notes/theme/atomic_type.dart';
 import 'package:atomic_notes/ui/motion/atomic_haptics.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 /// A destructive confirmation that cannot happen by accident (components
 /// spec, Slide to confirm; replaces `utility/component/slide_to_confirm.dart`
@@ -21,7 +22,8 @@ import 'package:flutter/material.dart';
 ///   ("Tap again to confirm", announced), and a second activation within
 ///   [armedFor] confirms. Escape, the timeout, the app going to the
 ///   background, the route losing focus or a change of [label] or [target]
-///   disarms it.
+///   disarms it. Each key activation must be a fresh press: the auto-repeat
+///   of a held key never arms or confirms.
 ///
 /// While [onConfirmed] runs the thumb shows a spinner, the control reads
 /// "Working" and ignores every input. An error from [onConfirmed] resets the
@@ -74,6 +76,10 @@ class _SlideToConfirmState extends State<SlideToConfirm>
   /// recognizer also reports a drag end when the pointer is cancelled or the
   /// widget goes away mid-drag; those must never confirm (review F02).
   bool _lifted = false;
+
+  /// True while the key event being dispatched is an auto-repeat. A held
+  /// Enter or Space is one activation, never the second (review R06).
+  bool _keyRepeat = false;
   Timer? _disarm;
 
   @override
@@ -189,6 +195,22 @@ class _SlideToConfirmState extends State<SlideToConfirm>
     _disarm = Timer(SlideToConfirm.armedFor, _disarmNow);
   }
 
+  /// Records whether the focused control's key event is an auto-repeat. It
+  /// runs before the app's shortcuts turn the event into an activation.
+  KeyEventResult _noteKey(FocusNode node, KeyEvent event) {
+    _keyRepeat = event is KeyRepeatEvent;
+    return KeyEventResult.ignored;
+  }
+
+  /// An activation key (Enter, Space, Select, a game button, or Enter on the
+  /// web): only a fresh press counts.
+  Object? _keyActivate() {
+    final repeat = _keyRepeat;
+    _keyRepeat = false;
+    if (!repeat) _activate();
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
@@ -216,114 +238,120 @@ class _SlideToConfirmState extends State<SlideToConfirm>
                 : null,
         onTap: _running ? null : _activate,
         child: ExcludeSemantics(
-          child: FocusableActionDetector(
-            focusNode: widget.focusNode,
-            enabled: !_running,
-            mouseCursor: SystemMouseCursors.click,
-            onShowFocusHighlight: (value) {
-              if (_focused != value) setState(() => _focused = value);
-            },
-            actions: {
-              ActivateIntent: CallbackAction<ActivateIntent>(onInvoke: (_) {
-                _activate();
-                return null;
-              }),
-              DismissIntent: CallbackAction<DismissIntent>(onInvoke: (_) {
-                _disarmNow();
-                return null;
-              }),
-            },
-            child: CustomPaint(
-              foregroundPainter: _focused ? _TrackFocusRing(c.focus) : null,
-              child: Container(
-                height: _track,
-                decoration: BoxDecoration(
-                    color: c.surfaceInset, borderRadius: AtomicRadius.pill),
-                child: ClipRRect(
-                  borderRadius: AtomicRadius.pill,
-                  child: Stack(
-                    alignment: Alignment.centerLeft,
-                    children: [
-                      AnimatedContainer(
-                        duration: follow,
-                        curve: AtomicMotion.standardCurve,
-                        width: _offset + _thumb + _inset * 2,
-                        decoration: BoxDecoration(
-                            color: c.danger, borderRadius: AtomicRadius.pill),
-                      ),
-                      Positioned.fill(
-                        child: Padding(
-                          padding: const EdgeInsets.only(
-                              left: _thumb + _inset * 2, right: AtomicSpace.x4),
-                          child: Center(
-                            child: Opacity(
-                              opacity: _running || _armed ? 1 : 1 - progress,
-                              child: Text(
-                                instruction,
-                                maxLines: 2,
-                                textAlign: TextAlign.center,
-                                overflow: TextOverflow.ellipsis,
-                                style: AtomicType.labelLarge.copyWith(
-                                  color: _running
-                                      ? c.onDanger
-                                      : _armed
-                                          ? c.dangerText
-                                          : c.textSecondary,
+          child: Focus(
+            canRequestFocus: false,
+            skipTraversal: true,
+            onKeyEvent: _noteKey,
+            child: FocusableActionDetector(
+              focusNode: widget.focusNode,
+              enabled: !_running,
+              mouseCursor: SystemMouseCursors.click,
+              onShowFocusHighlight: (value) {
+                if (_focused != value) setState(() => _focused = value);
+              },
+              actions: {
+                ActivateIntent: CallbackAction<ActivateIntent>(
+                    onInvoke: (_) => _keyActivate()),
+                ButtonActivateIntent: CallbackAction<ButtonActivateIntent>(
+                    onInvoke: (_) => _keyActivate()),
+                DismissIntent: CallbackAction<DismissIntent>(onInvoke: (_) {
+                  _disarmNow();
+                  return null;
+                }),
+              },
+              child: CustomPaint(
+                foregroundPainter: _focused ? _TrackFocusRing(c.focus) : null,
+                child: Container(
+                  height: _track,
+                  decoration: BoxDecoration(
+                      color: c.surfaceInset, borderRadius: AtomicRadius.pill),
+                  child: ClipRRect(
+                    borderRadius: AtomicRadius.pill,
+                    child: Stack(
+                      alignment: Alignment.centerLeft,
+                      children: [
+                        AnimatedContainer(
+                          duration: follow,
+                          curve: AtomicMotion.standardCurve,
+                          width: _offset + _thumb + _inset * 2,
+                          decoration: BoxDecoration(
+                              color: c.danger, borderRadius: AtomicRadius.pill),
+                        ),
+                        Positioned.fill(
+                          child: Padding(
+                            padding: const EdgeInsets.only(
+                                left: _thumb + _inset * 2,
+                                right: AtomicSpace.x4),
+                            child: Center(
+                              child: Opacity(
+                                opacity: _running || _armed ? 1 : 1 - progress,
+                                child: Text(
+                                  instruction,
+                                  maxLines: 2,
+                                  textAlign: TextAlign.center,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: AtomicType.labelLarge.copyWith(
+                                    color: _running
+                                        ? c.onDanger
+                                        : _armed
+                                            ? c.dangerText
+                                            : c.textSecondary,
+                                  ),
                                 ),
                               ),
                             ),
                           ),
                         ),
-                      ),
-                      AnimatedPositioned(
-                        duration: follow,
-                        curve: AtomicMotion.standardCurve,
-                        left: _offset + _inset,
-                        child: Listener(
-                          // Runs before the drag recognizer sees the event.
-                          onPointerDown: (_) => _lifted = false,
-                          onPointerUp: (_) => _lifted = true,
-                          onPointerCancel: (_) => _lifted = false,
-                          child: GestureDetector(
-                            key: SlideToConfirm.thumbKey,
-                            behavior: HitTestBehavior.opaque,
-                            onTap: _running ? null : _activate,
-                            onHorizontalDragStart: _running
-                                ? null
-                                : (_) => setState(() => _dragging = true),
-                            onHorizontalDragUpdate: _running
-                                ? null
-                                : (details) => setState(() {
-                                      _offset = math.min(
-                                          _travel,
-                                          math.max(
-                                              0.0, _offset + details.delta.dx));
-                                    }),
-                            onHorizontalDragEnd:
-                                _running ? null : (_) => _release(),
-                            onHorizontalDragCancel:
-                                _running ? null : _cancelDrag,
-                            child: Container(
-                              width: _thumb,
-                              height: _thumb,
-                              decoration: BoxDecoration(
-                                  color: c.danger, shape: BoxShape.circle),
-                              child: Center(
-                                child: _running
-                                    ? SizedBox.square(
-                                        dimension: 22,
-                                        child: CircularProgressIndicator(
-                                            strokeWidth: 2.5,
-                                            color: c.onDanger),
-                                      )
-                                    : Icon(AtomicIcons.arrowRight,
-                                        size: 24, color: c.onDanger),
+                        AnimatedPositioned(
+                          duration: follow,
+                          curve: AtomicMotion.standardCurve,
+                          left: _offset + _inset,
+                          child: Listener(
+                            // Runs before the drag recognizer sees the event.
+                            onPointerDown: (_) => _lifted = false,
+                            onPointerUp: (_) => _lifted = true,
+                            onPointerCancel: (_) => _lifted = false,
+                            child: GestureDetector(
+                              key: SlideToConfirm.thumbKey,
+                              behavior: HitTestBehavior.opaque,
+                              onTap: _running ? null : _activate,
+                              onHorizontalDragStart: _running
+                                  ? null
+                                  : (_) => setState(() => _dragging = true),
+                              onHorizontalDragUpdate: _running
+                                  ? null
+                                  : (details) => setState(() {
+                                        _offset = math.min(
+                                            _travel,
+                                            math.max(0.0,
+                                                _offset + details.delta.dx));
+                                      }),
+                              onHorizontalDragEnd:
+                                  _running ? null : (_) => _release(),
+                              onHorizontalDragCancel:
+                                  _running ? null : _cancelDrag,
+                              child: Container(
+                                width: _thumb,
+                                height: _thumb,
+                                decoration: BoxDecoration(
+                                    color: c.danger, shape: BoxShape.circle),
+                                child: Center(
+                                  child: _running
+                                      ? SizedBox.square(
+                                          dimension: 22,
+                                          child: CircularProgressIndicator(
+                                              strokeWidth: 2.5,
+                                              color: c.onDanger),
+                                        )
+                                      : Icon(AtomicIcons.arrowRight,
+                                          size: 24, color: c.onDanger),
+                                ),
                               ),
                             ),
                           ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
