@@ -12,7 +12,7 @@
 #   tool/check_pr_scope.sh <label> <base-ref> [--worktree] [--allow-file FILE]
 #
 #   label         foundation | component | state | page | legacy | rename |
-#                 verify | gate | save-ack
+#                 verify | gate | save-ack | owned-save
 #   base-ref      the last ACCEPTED checkpoint (commit or tag). It must be an
 #                 ancestor of HEAD. Check it against the handoff record:
 #                 ancestry alone cannot prove the right checkpoint was chosen.
@@ -182,6 +182,31 @@ case $label in
       'test/notes_editor_page_test.dart'
       'test/home_editor_save_layout_test.dart'
       'test/notes_bloc_test.dart'
+    )
+    review=("${allowed[@]}")
+    manifest_ok=false
+    ;;
+  owned-save)
+    # S1 corrected save acknowledgement (Codex review of packet 3, bounded
+    # owned-save exception): the eight save-ack paths plus the editor
+    # context and local-save receipt in notes_source.dart and
+    # notes_repository.dart, and two named tests. Exact paths only, every
+    # hunk reviewed, no manifest. Sync, journal, encryption, formats and
+    # logout in notes_repository.dart are not granted; the hunk review is
+    # what holds that boundary inside the file.
+    allowed=(
+      'lib/state/notes/notes_event.dart'
+      'lib/state/notes/notes_bloc.dart'
+      'lib/page/home_page.dart'
+      'lib/page/notes_editor_page.dart'
+      'test/editor_save_ack_test.dart'
+      'test/notes_editor_page_test.dart'
+      'test/home_editor_save_layout_test.dart'
+      'test/notes_bloc_test.dart'
+      'lib/database/notes_source.dart'
+      'lib/database/notes_repository.dart'
+      'test/editor_owned_save_test.dart'
+      'test/notes_repository_editor_save_test.dart'
     )
     review=("${allowed[@]}")
     manifest_ok=false

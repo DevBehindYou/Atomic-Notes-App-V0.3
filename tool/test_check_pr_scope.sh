@@ -101,6 +101,7 @@ case_staged 'legacy removal' legacy 0 lib/theme/editorial.dart pubspec.yaml pubs
 case_staged 'verify docs' verify 0 docs/ux/measurement.md
 case_staged 'gate files' gate 0 tool/check_pr_scope.sh tool/test_check_pr_scope.sh
 case_staged 'save-ack exact paths' save-ack 0 lib/state/notes/notes_event.dart lib/state/notes/notes_bloc.dart lib/page/home_page.dart lib/page/notes_editor_page.dart test/editor_save_ack_test.dart test/notes_editor_page_test.dart test/home_editor_save_layout_test.dart test/notes_bloc_test.dart
+case_staged 'owned-save exact paths' owned-save 0 lib/state/notes/notes_event.dart lib/state/notes/notes_bloc.dart lib/page/home_page.dart lib/page/notes_editor_page.dart test/editor_save_ack_test.dart test/notes_editor_page_test.dart test/home_editor_save_layout_test.dart test/notes_bloc_test.dart lib/database/notes_source.dart lib/database/notes_repository.dart test/editor_owned_save_test.dart test/notes_repository_editor_save_test.dart
 case_staged 'path with spaces' page 0 'lib/page/endpage/a b_page.dart'
 case_staged 'leading dash basename' page 0 'lib/page/-odd_page.dart'
 case_manifest 'page test via manifest' page 0 'test/home_page_test.dart' lib/page/home_page.dart test/home_page_test.dart
@@ -122,6 +123,14 @@ case_staged 'save-ack touches another page' save-ack 1 lib/page/home_page.dart l
 case_staged 'save-ack touches guest workspace' save-ack 1 lib/profile/guest_workspace_page.dart
 case_staged 'save-ack touches a shared test helper' save-ack 1 test/notes_bloc_test.dart test/support/fake_notes_source.dart
 case_staged 'save-ack mascot is banned' save-ack 1 lib/mascot/mascot_view.dart
+case_staged 'save-ack still refuses the repository' save-ack 1 lib/database/notes_repository.dart
+case_staged 'owned-save touches notes state' owned-save 1 lib/database/notes_repository.dart lib/state/notes/notes_state.dart
+case_staged 'owned-save touches another database file' owned-save 1 lib/database/notes_source.dart lib/database/note.dart
+case_staged 'owned-save touches the sync preservation test' owned-save 1 lib/database/notes_repository.dart test/sync_conflict_preservation_test.dart
+case_staged 'owned-save touches a shared test helper' owned-save 1 test/notes_repository_editor_save_test.dart test/support/fake_notes_source.dart
+case_staged 'owned-save touches another page' owned-save 1 lib/page/home_page.dart lib/page/settings_page.dart
+case_staged 'owned-save touches guest workspace' owned-save 1 lib/profile/guest_workspace_page.dart
+case_staged 'owned-save mascot is banned' owned-save 1 lib/mascot/mascot_view.dart
 case_staged 'component touches page' component 1 lib/ui/x.dart lib/page/settings_page.dart
 case_staged 'component other test helper' component 1 lib/ui/x.dart test/support/fake_other.dart
 case_staged 'state unrelated test' state 1 lib/state/notes/notes_bloc.dart test/energy_test.dart
@@ -154,6 +163,7 @@ case_manifest 'manifest outside test' page 2 'lib/state/notes/notes_bloc.dart' l
 case_manifest 'manifest CI tool for verify' verify 2 'tool/scan_ci_artifacts.py' docs/m.md
 case_manifest 'gate refuses manifest' gate 2 'test/a_test.dart' tool/check_pr_scope.sh
 case_manifest 'save-ack refuses manifest' save-ack 2 'test/a_test.dart' lib/page/home_page.dart
+case_manifest 'owned-save refuses manifest' owned-save 2 'test/a_test.dart' lib/database/notes_source.dart
 dir=$(new_repo)
 expect 'manifest missing file' 2 "$dir" page base --allow-file "$work/no-such-manifest"
 
