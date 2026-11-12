@@ -485,6 +485,19 @@ put_repo "$dir" 'class NotesRepository {
 '
 expect 'R03: one-line method with a member after it' 1 "$dir" state base
 
+# A field (no braces) before the declaration. A valid member there always
+# ends in ';' or '}', so the end scan and the trailing-code rule reject it
+# even without the declaration-line rule (defence in depth).
+dir=$(region_src_repo "$r03_base")
+put_repo "$dir" 'class NotesRepository {
+  int leak = 0; List<int> visible() {
+    /* { */
+    return [];
+  }
+}
+'
+expect 'R03: field before the declaration on its line' 1 "$dir" state base
+
 arrow_src='class NotesRepository {
   List<Note> visible() => _all.where((n) {
         return !n.deleted;
