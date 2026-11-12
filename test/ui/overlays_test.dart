@@ -157,6 +157,129 @@ void main() {
       });
     });
 
+    group('AtomicDialog above the keyboard (F05, $name)', () {
+      /// Sets the logical screen and keyboard height (device pixel ratio 1).
+      void view(WidgetTester tester, Size size, {double keyboard = 0}) {
+        tester.view.physicalSize = size;
+        tester.view.devicePixelRatio = 1;
+        tester.view.viewInsets = FakeViewPadding(bottom: keyboard);
+        addTearDown(tester.view.reset);
+      }
+
+      void setKeyboard(WidgetTester tester, double keyboard) =>
+          tester.view.viewInsets = FakeViewPadding(bottom: keyboard);
+
+      Future<List<String?>> openNameDialog(WidgetTester tester,
+          {double textScale = 1, int actions = 2}) async {
+        final results = <String?>[];
+        await _host(tester, theme, (context) async {
+          results.add(await showAtomicDialog<String>(
+            context: context,
+            title: 'Rename note',
+            body: 'Choose a short, clear name.',
+            content: const TextField(autofocus: true),
+            actions: [
+              const AtomicDialogAction(label: 'Cancel', result: 'cancel'),
+              if (actions >= 3)
+                const AtomicDialogAction(
+                    label: 'Discard',
+                    result: 'discard',
+                    variant: AtomicButtonVariant.danger),
+              const AtomicDialogAction(
+                  label: 'Save',
+                  result: 'save',
+                  variant: AtomicButtonVariant.primary),
+            ],
+          ));
+        }, textScale: textScale);
+        await tester.tap(find.text('open'));
+        await tester.pumpAndSettle();
+        return results;
+      }
+
+      Future<void> expectReachable(
+          WidgetTester tester, String label, double keyboardTop) async {
+        await tester.ensureVisible(find.text(label));
+        await tester.pumpAndSettle();
+        expect(tester.getRect(find.text(label)).bottom,
+            lessThanOrEqualTo(keyboardTop),
+            reason: '$label is above the keyboard');
+      }
+
+      testWidgets('reviewer fixture: 800 x 600 with a 300 dp keyboard',
+          (tester) async {
+        view(tester, const Size(800, 600), keyboard: 300);
+        final results = await openNameDialog(tester);
+        expect(tester.takeException(), isNull);
+        await expectReachable(tester, 'Save', 300);
+        await tester.tap(find.text('Save'));
+        await tester.pumpAndSettle();
+        expect(results, ['save']);
+      });
+
+      testWidgets('the keyboard opening and closing under an open dialog',
+          (tester) async {
+        view(tester, const Size(800, 600));
+        await openNameDialog(tester);
+        expect(tester.getRect(find.text('Save')).bottom, lessThan(600));
+        setKeyboard(tester, 300);
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        await expectReachable(tester, 'Save', 300);
+        setKeyboard(tester, 0);
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        expect(tester.getRect(find.text('Save')).bottom, lessThan(600));
+      });
+
+      testWidgets('landscape phone at 200 % text with the keyboard',
+          (tester) async {
+        view(tester, const Size(640, 360), keyboard: 160);
+        final results = await openNameDialog(tester, textScale: 2);
+        expect(tester.takeException(), isNull);
+        await expectReachable(tester, 'Save', 200);
+        await tester.tap(find.text('Save'));
+        await tester.pumpAndSettle();
+        expect(results, ['save']);
+      });
+
+      testWidgets('320 dp phone, 200 % text, three actions, keyboard open',
+          (tester) async {
+        view(tester, const Size(320, 640), keyboard: 280);
+        final results = await openNameDialog(tester, textScale: 2, actions: 3);
+        expect(tester.takeException(), isNull);
+        for (final label in ['Cancel', 'Discard', 'Save']) {
+          await expectReachable(tester, label, 360);
+        }
+        await tester.tap(find.text('Discard'));
+        await tester.pumpAndSettle();
+        expect(results, ['discard']);
+      });
+
+      testWidgets('with room, long content scrolls and the actions stay pinned',
+          (tester) async {
+        view(tester, const Size(800, 600));
+        await _host(
+            tester,
+            theme,
+            (context) => showAtomicDialog<bool>(
+                  context: context,
+                  title: 'What syncing does',
+                  body: List.filled(40, 'A line of explanation.').join(' '),
+                  actions: const [
+                    AtomicDialogAction(label: 'Close', result: true),
+                  ],
+                ));
+        await tester.tap(find.text('open'));
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        expect(tester.getRect(find.text('Close')).bottom,
+            lessThanOrEqualTo(600 - 24),
+            reason: 'visible without scrolling');
+        expect(find.byType(SingleChildScrollView), findsOneWidget);
+      });
+    });
+
     group('AtomicSheet ($name)', () {
       testWidgets('handle, surface, top radius, action rows', (tester) async {
         final picked = <String>[];

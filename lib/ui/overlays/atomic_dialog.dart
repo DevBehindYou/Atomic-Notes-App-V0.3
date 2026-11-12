@@ -46,6 +46,10 @@ class AtomicDialog<T> extends StatelessWidget {
 
   static const double maxWidth = 400;
 
+  /// Below this height above the keyboard the actions scroll with the
+  /// content instead of staying pinned under it.
+  static const double pinActionsFrom = 360;
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
@@ -59,69 +63,115 @@ class AtomicDialog<T> extends StatelessWidget {
           expand: expand,
           onPressed: () => Navigator.of(context).pop(a.result),
         );
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(AtomicSpace.x6),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: maxWidth),
-          child: Material(
-            color: c.surface,
-            shape: const RoundedRectangleBorder(
-                borderRadius: AtomicRadius.xLargeAll),
-            clipBehavior: Clip.antiAlias,
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(AtomicSpace.x6),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  if (icon != null) ...[
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Container(
-                        width: 56,
-                        height: 56,
-                        decoration: BoxDecoration(
-                          color: destructive ? c.danger : c.surfaceInset,
-                          shape: BoxShape.circle,
-                        ),
-                        child: Icon(icon,
-                            size: 28,
-                            color: destructive ? c.onDanger : c.textPrimary),
+    final header = Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (icon != null) ...[
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Container(
+              width: 56,
+              height: 56,
+              decoration: BoxDecoration(
+                color: destructive ? c.danger : c.surfaceInset,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(icon,
+                  size: 28, color: destructive ? c.onDanger : c.textPrimary),
+            ),
+          ),
+          const SizedBox(height: AtomicSpace.x4),
+        ],
+        Semantics(
+          header: true,
+          child: Text(title,
+              style: AtomicType.titleLarge.copyWith(color: c.textPrimary)),
+        ),
+        if (body != null) ...[
+          const SizedBox(height: AtomicSpace.x2),
+          Text(body,
+              style: AtomicType.bodyMedium.copyWith(color: c.textSecondary)),
+        ],
+        if (content != null) ...[
+          const SizedBox(height: AtomicSpace.x4),
+          content,
+        ],
+      ],
+    );
+    final actionsArea = actions.length >= 3
+        ? Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (final (i, a) in actions.indexed) ...[
+                if (i > 0) const SizedBox(height: AtomicSpace.x2),
+                action(a, expand: true),
+              ],
+            ],
+          )
+        : Wrap(
+            alignment: WrapAlignment.end,
+            spacing: AtomicSpace.x2,
+            runSpacing: AtomicSpace.x2,
+            children: [for (final a in actions) action(a)],
+          );
+    const pad = AtomicSpace.x6;
+    // Keep the dialog above the keyboard and inside the safe area, as
+    // Material's Dialog does; then lay out in what is left.
+    return AnimatedPadding(
+      padding: MediaQuery.viewInsetsOf(context) + const EdgeInsets.all(pad),
+      duration: AtomicMotion.move(context, AtomicMotion.instant),
+      curve: Curves.decelerate,
+      child: MediaQuery.removeViewInsets(
+        context: context,
+        removeLeft: true,
+        removeTop: true,
+        removeRight: true,
+        removeBottom: true,
+        child: SafeArea(
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: maxWidth),
+              child: Material(
+                color: c.surface,
+                shape: const RoundedRectangleBorder(
+                    borderRadius: AtomicRadius.xLargeAll),
+                clipBehavior: Clip.antiAlias,
+                child: LayoutBuilder(builder: (context, box) {
+                  if (box.maxHeight < pinActionsFrom) {
+                    // Short space (keyboard open, landscape, large text):
+                    // everything scrolls, so every action stays reachable.
+                    return SingleChildScrollView(
+                      padding: const EdgeInsets.all(pad),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          header,
+                          const SizedBox(height: pad),
+                          actionsArea,
+                        ],
                       ),
-                    ),
-                    const SizedBox(height: AtomicSpace.x4),
-                  ],
-                  Semantics(
-                    header: true,
-                    child: Text(title,
-                        style: AtomicType.titleLarge
-                            .copyWith(color: c.textPrimary)),
-                  ),
-                  if (body != null) ...[
-                    const SizedBox(height: AtomicSpace.x2),
-                    Text(body,
-                        style: AtomicType.bodyMedium
-                            .copyWith(color: c.textSecondary)),
-                  ],
-                  if (content != null) ...[
-                    const SizedBox(height: AtomicSpace.x4),
-                    content,
-                  ],
-                  const SizedBox(height: AtomicSpace.x6),
-                  if (actions.length >= 3)
-                    for (final (i, a) in actions.indexed) ...[
-                      if (i > 0) const SizedBox(height: AtomicSpace.x2),
-                      action(a, expand: true),
-                    ]
-                  else
-                    Wrap(
-                      alignment: WrapAlignment.end,
-                      spacing: AtomicSpace.x2,
-                      runSpacing: AtomicSpace.x2,
-                      children: [for (final a in actions) action(a)],
-                    ),
-                ],
+                    );
+                  }
+                  return Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Flexible(
+                        child: SingleChildScrollView(
+                          padding: const EdgeInsets.fromLTRB(pad, pad, pad, 0),
+                          child: header,
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.all(pad),
+                        child: actionsArea,
+                      ),
+                    ],
+                  );
+                }),
               ),
             ),
           ),
