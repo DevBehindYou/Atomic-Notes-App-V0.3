@@ -291,6 +291,146 @@ dir=$(region_repo)
 git_t -C "$dir" rm -q lib/database/notes_repository.dart
 expect 'repository deleted' 1 "$dir" state base
 
+# ---- region lexer: comments, strings and declarations that must not move it (F01)
+
+# region_src_repo <source>: a region fixture whose repository file is <source>.
+region_src_repo() {
+  local repo_src=$1
+  region_repo
+}
+# put_repo <dir> <source>: replace the fixture repository file in the work tree.
+put_repo() { put "$1" lib/database/notes_repository.dart "$2"; }
+
+# Codex's F01 reproduction: a method immediately after visible()'s closing
+# brace, so git reports it as an insertion on the old region's boundary.
+outside=$'    return list;\n  }\n  void outsideReservedMethod() {}\n'
+dir=$(region_repo)
+edit_repo "$dir" $'    final list = <Note>[];\n' $'    final list = <Note>[];\n    /* { */\n'
+expect 'F01 repro: brace in block comment, body only' 0 "$dir" state base
+dir=$(region_repo)
+src=${repo_src/$'    final list = <Note>[];\n'/$'    final list = <Note>[];\n    /* { */\n'}
+put_repo "$dir" "${src/$'    return list;\n  }\n'/$outside}"
+expect 'F01 repro: brace in block comment plus outside method' 1 "$dir" state base
+
+dir=$(region_repo)
+src=${repo_src/$'    final list = <Note>[];\n'/$'    final list = <Note>[];\n    /* outer /* inner } */ { still comment */\n'}
+put_repo "$dir" "${src/$'    return list;\n  }\n'/$outside}"
+expect 'nested block comment braces plus outside method' 1 "$dir" state base
+
+dir=$(region_repo)
+edit_repo "$dir" $'    final list = <Note>[];\n' $'    final list = <Note>[];\n    final s = \'\'\'\n{ {\n\'\'\';\n'
+expect 'braces in a multiline string, body only' 0 "$dir" state base
+dir=$(region_repo)
+src=${repo_src/$'    final list = <Note>[];\n'/$'    final list = <Note>[];\n    final s = \'\'\'\n{ {\n\'\'\';\n'}
+put_repo "$dir" "${src/$'    return list;\n  }\n'/$outside}"
+expect 'braces in a multiline string plus outside method' 1 "$dir" state base
+
+dir=$(region_repo)
+src=${repo_src/$'    final list = <Note>[];\n'/$'    final list = <Note>[];\n    final r = r\'\{\' + r"}";\n'}
+put_repo "$dir" "${src/$'    return list;\n  }\n'/$outside}"
+expect 'braces in raw strings plus outside method' 1 "$dir" state base
+
+dir=$(region_repo)
+edit_repo "$dir" $'    final list = <Note>[];\n' $'    final list = <Note>[];\n    final t = \'n ${list.map((n) { return \'}\'; })} done\';\n'
+expect 'interpolation with braces and quotes, body only' 0 "$dir" state base
+dir=$(region_repo)
+src=${repo_src/$'    final list = <Note>[];\n'/$'    final list = <Note>[];\n    final t = \'n ${list.map((n) { return \'{\'; })} done\';\n'}
+put_repo "$dir" "${src/$'    return list;\n  }\n'/$outside}"
+expect 'interpolation with braces plus outside method' 1 "$dir" state base
+
+dir=$(region_repo)
+edit_repo "$dir" $'    final list = <Note>[];\n' $'    final list = <Note>[];\n    /* never closed\n'
+expect 'unterminated block comment fails closed' 1 "$dir" state base
+
+dir=$(region_repo)
+edit_repo "$dir" $'    final list = <Note>[];\n' $'    final list = <Note>[];\n    final u = \'never closed;\n'
+expect 'unterminated string fails closed' 1 "$dir" state base
+
+dir=$(region_repo)
+edit_repo "$dir" '  int get pendingCount => 0;' $'  List<Note> visible2() => [];\n  List<Note> visible(int x) => [];\n  int get pendingCount => 0;'
+expect 'second visible declaration fails closed' 1 "$dir" state base
+
+dir=$(region_repo)
+edit_repo "$dir" '  @override' $'  @visibleForTesting\n  @override'
+expect 'annotation added above visible()' 0 "$dir" state base
+
+dir=$(region_repo)
+printf 'class NotesRepository {\n  List<Note> visible() {\n    return [\0];\n  }\n}\n' >"$dir/lib/database/notes_repository.dart"
+git_t -C "$dir" add lib/database/notes_repository.dart
+expect 'binary (NUL) content fails closed' 1 "$dir" state base
+
+decoy_src='class NotesRepository {
+  /*
+  List<Note> visible() {
+  */
+  final label = "a visible(";
+  // List<Note> visible() {
+
+  List<Note> visible() {
+    final list = <Note>[];
+    return list;
+  }
+
+  int get pendingCount => 0;
+}
+'
+dir=$(region_src_repo "$decoy_src")
+put_repo "$dir" "${decoy_src/'    final list = <Note>[];'/'    final list = <Note>[]; // edited'}"
+expect 'decoys in comments and strings: real body edit' 0 "$dir" state base
+dir=$(region_src_repo "$decoy_src")
+put_repo "$dir" "${decoy_src/'"a visible("'/'"b visible("'}"
+expect 'decoys in comments and strings: decoy edit' 1 "$dir" state base
+
+two_src='class A {
+  List<Note> visible() {
+    return [];
+  }
+}
+
+class B {
+  List<Note> visible() {
+    return [];
+  }
+}
+'
+dir=$(region_src_repo "$two_src")
+put_repo "$dir" "${two_src/'return [];'/'return const [];'}"
+expect 'visible() in two classes fails closed' 1 "$dir" state base
+
+# Isolates the "exactly one declaration" rule: an edit inside the second
+# class's visible() would sit inside a region if either match were accepted.
+two_b_src=${two_src/'class B {
+  List<Note> visible() {
+    return [];'/'class B {
+  List<Note> visible() {
+    return const <Note>[];'}
+dir=$(region_src_repo "$two_b_src")
+put_repo "$dir" "${two_b_src/'return const <Note>[];'/'return const <Note>[]; // b'}"
+expect 'edit inside the second of two visible() fails closed' 1 "$dir" state base
+
+# Isolates the end-of-file lexer check: the base is unparseable after the
+# class, so even an in-body edit must fail closed.
+broken_src="${repo_src}final tail = '''never closed;
+"
+dir=$(region_src_repo "$broken_src")
+put_repo "$dir" "${broken_src/'final list = <Note>[];'/'final list = <Note>[]; // edited'}"
+expect 'unparseable file fails closed for an in-body edit' 1 "$dir" state base
+
+arrow_src='class NotesRepository {
+  List<Note> visible() => _all.where((n) {
+        return !n.deleted;
+      }).toList();
+
+  int get pendingCount => 0;
+}
+'
+dir=$(region_src_repo "$arrow_src")
+put_repo "$dir" "${arrow_src/'return !n.deleted;'/'return !n.deleted && n.ok;'}"
+expect 'arrow body edit' 0 "$dir" state base
+dir=$(region_src_repo "$arrow_src")
+put_repo "$dir" "${arrow_src/'int get pendingCount => 0;'/'int get pendingCount => 1;'}"
+expect 'member after an arrow body' 1 "$dir" state base
+
 dir=$(region_repo)
 printf '\n    - family: Figtree\n      fonts:\n        - asset: assets/fonts/Figtree-Regular.ttf\n' >>"$dir/pubspec.yaml"
 git_t -C "$dir" add pubspec.yaml
