@@ -12,7 +12,7 @@
 #   tool/check_pr_scope.sh <label> <base-ref> [--worktree] [--allow-file FILE]
 #
 #   label         foundation | component | state | page | legacy | rename |
-#                 verify | gate
+#                 verify | gate | save-ack
 #   base-ref      the last ACCEPTED checkpoint (commit or tag). It must be an
 #                 ancestor of HEAD. Check it against the handoff record:
 #                 ancestry alone cannot prove the right checkpoint was chosen.
@@ -167,6 +167,24 @@ case $label in
   page)
     allowed=("${presentation[@]}" 'lib/main.dart')
     review=('lib/main.dart')
+    ;;
+  save-ack)
+    # S1 save acknowledgement (Codex UX review of 12 November, S1): the event
+    # and bloc completion, the Home editor call site and the editor's
+    # Done/save/error/navigation flow, with their named tests. Exact paths
+    # only, every hunk reviewed, no manifest.
+    allowed=(
+      'lib/state/notes/notes_event.dart'
+      'lib/state/notes/notes_bloc.dart'
+      'lib/page/home_page.dart'
+      'lib/page/notes_editor_page.dart'
+      'test/editor_save_ack_test.dart'
+      'test/notes_editor_page_test.dart'
+      'test/home_editor_save_layout_test.dart'
+      'test/notes_bloc_test.dart'
+    )
+    review=("${allowed[@]}")
+    manifest_ok=false
     ;;
   legacy)
     allowed=(
