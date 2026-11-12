@@ -416,6 +416,75 @@ dir=$(region_src_repo "$broken_src")
 put_repo "$dir" "${broken_src/'final list = <Note>[];'/'final list = <Note>[]; // edited'}"
 expect 'unparseable file fails closed for an in-body edit' 1 "$dir" state base
 
+# Review R03: valid Dart can share a boundary line with visible(). Reviewer
+# fixtures review-evidence/2026-11-12-packets-1-2/outside-on-*-line.dart.
+r03_base='class NotesRepository {
+  List<int> visible() {
+    /* { */
+    return [];
+  }
+}
+'
+dir=$(region_src_repo "$r03_base")
+put_repo "$dir" 'class NotesRepository {
+  List<int> visible() {
+    /* { */
+    return [];
+  } void outsideReservedMethod() {}
+}
+'
+expect 'R03: member after the closing brace on its line' 1 "$dir" state base
+
+dir=$(region_src_repo "$r03_base")
+put_repo "$dir" 'class NotesRepository {
+  void outsideReservedMethod() {} List<int> visible() {
+    /* { */
+    return [];
+  }
+}
+'
+expect 'R03: member before the declaration on its line' 1 "$dir" state base
+
+dir=$(region_src_repo "$r03_base")
+put_repo "$dir" 'class NotesRepository {
+  @override void outsideReservedMethod() {}
+  List<int> visible() {
+    /* { */
+    return [];
+  }
+}
+'
+expect 'R03: member on an annotation line above' 1 "$dir" state base
+
+dir=$(region_src_repo "$r03_base")
+put_repo "$dir" 'class NotesRepository {
+  List<int> visible() {
+    /* { */
+    return [];
+  } // a trailing comment is fine
+}
+'
+expect 'R03: comment after the closing brace' 0 "$dir" state base
+
+dir=$(region_src_repo "$r03_base")
+put_repo "$dir" 'class NotesRepository {
+  @override
+  @visibleForTesting
+  List<int> visible() {
+    /* { */
+    return [];
+  }
+}
+'
+expect 'R03: annotation-only lines above still allowed' 0 "$dir" state base
+
+dir=$(region_src_repo "$r03_base")
+put_repo "$dir" 'class NotesRepository {
+  List<int> visible() { /* { */ return []; } int leak() => 0;
+}
+'
+expect 'R03: one-line method with a member after it' 1 "$dir" state base
+
 arrow_src='class NotesRepository {
   List<Note> visible() => _all.where((n) {
         return !n.deleted;

@@ -305,7 +305,12 @@ while IFS= read -r -d '' p; do paths+=("$p"); done <"$tmp/sorted"
 #                   never move the region. Anything the lexer cannot resolve
 #                   (unterminated comment or string, unbalanced braces, no or
 #                   several matching declarations) yields no region, which
-#                   fails the check.
+#                   fails the check. The member must own its boundary lines:
+#                   code before the declaration or after the closing "}" or
+#                   ";" on the same line, or an annotation line carrying more
+#                   code, also yields no region. This is a conservative
+#                   lexer, not a Dart parser: getters, generic methods and
+#                   annotations spanning lines are refused, not supported.
 # yaml-block:KEY    a two-space-indented YAML key and its nested lines
 region_bounds() {
   local rule=$1 file=$2
@@ -375,7 +380,9 @@ region_bounds() {
         if (!lex()) exit 3
         found = 0
         for (i = 1; i <= NR; i++)
-          if (startcode[i] && startdepth[i] == 1 && code[i] ~ ("^  [^ /].*[ ]" name "[ ]*[(]")) { s = i; found++ }
+          # Nothing on the line before the declaration may hold a brace or a
+          # ";", so no other member can share its first line (review R03).
+          if (startcode[i] && startdepth[i] == 1 && code[i] ~ ("^  [^ /{};][^{};]*[ ]" name "[ ]*[(]")) { s = i; found++ }
         if (found != 1) exit 3
         # The body: a block from the first top-level "{", or an arrow body to
         # its ";", or a bodiless declaration ending at ";".
@@ -387,13 +394,19 @@ region_bounds() {
             if (c == "(") p++
             else if (c == ")") p--
             else if (c == "{") { if (kind == "" && p == 0 && d == startdepth[s]) kind = "block"; d++ }
-            else if (c == "}") { d--; if (kind == "block" && d == startdepth[s]) { e = i; break } }
+            else if (c == "}") { d--; if (kind == "block" && d == startdepth[s]) { e = i; ej = j; break } }
             else if (c == "=" && substr(t, j + 1, 1) == ">" && kind == "" && p == 0 && d == startdepth[s]) { kind = "arrow"; j++ }
-            else if (c == ";" && p == 0 && d == startdepth[s] && kind != "block") { e = i; break }
+            else if (c == ";" && p == 0 && d == startdepth[s] && kind != "block") { e = i; ej = j; break }
           }
         }
         if (!e) exit 3
-        while (s > 1 && startcode[s - 1] && lines[s - 1] ~ /^  (\/\/\/|@)/) s--
+        # Nothing but comments may follow the body on its last line (R03).
+        if (substr(code[e], ej + 1) ~ /[^ \t]/) exit 3
+        # Doc comments, and lines holding only an annotation, belong to the
+        # member; a line with an annotation and more code does not (R03).
+        while (s > 1 && startcode[s - 1] &&
+               (lines[s - 1] ~ /^  \/\/\// ||
+                code[s - 1] ~ /^  @[A-Za-z_][A-Za-z0-9_.]*([(][^{};]*[)])?[ \t]*$/)) s--
       } else if (mode == "yaml-block") {
         for (i = 1; i <= NR; i++) if (lines[i] ~ ("^  " name ":[ \t]*$")) { s = i; break }
         if (!s) exit 3
