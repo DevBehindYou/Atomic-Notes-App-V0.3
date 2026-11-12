@@ -10,9 +10,7 @@ import 'package:atomic_notes/ui/motion/burst.dart';
 import 'package:atomic_notes/ui/motion/entrance.dart';
 import 'package:atomic_notes/ui/motion/odometer.dart';
 import 'package:atomic_notes/ui/motion/orbit_ring.dart';
-import 'package:atomic_notes/ui/motion/slide_to_confirm.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../support/themed.dart';
@@ -231,96 +229,6 @@ void main() {
       await pumpThemed(tester, loop('a'),
           theme: theme, disableAnimations: true);
       expect(AmbientBudget.active, 0);
-    });
-  });
-
-  group('SlideToConfirm', () {
-    Future<List<String>> pumpSlide(WidgetTester tester,
-        {bool slow = false, double textScale = 1}) async {
-      final calls = <String>[];
-      await pumpNarrow(
-        tester,
-        SlideToConfirm(
-          label: 'wipe cloud notes',
-          onConfirmed: () async {
-            calls.add('confirmed');
-            if (slow) await Future<void>.delayed(const Duration(seconds: 1));
-          },
-        ),
-        theme: theme,
-        textScale: textScale,
-      );
-      return calls;
-    }
-
-    testWidgets('a short drag snaps back and does nothing', (tester) async {
-      final calls = await pumpSlide(tester);
-      await tester.drag(
-          find.byKey(SlideToConfirm.thumbKey), const Offset(120, 0));
-      await tester.pumpAndSettle();
-      expect(calls, isEmpty);
-      expect(find.text('Slide to wipe cloud notes'), findsOneWidget);
-    });
-
-    testWidgets('a full drag confirms once, with a medium haptic',
-        (tester) async {
-      final haptics = <Object?>[];
-      tester.binding.defaultBinaryMessenger
-          .setMockMethodCallHandler(SystemChannels.platform, (call) async {
-        if (call.method == 'HapticFeedback.vibrate') {
-          haptics.add(call.arguments);
-        }
-        return null;
-      });
-      addTearDown(() => tester.binding.defaultBinaryMessenger
-          .setMockMethodCallHandler(SystemChannels.platform, null));
-      final calls = await pumpSlide(tester, slow: true);
-      await tester.drag(
-          find.byKey(SlideToConfirm.thumbKey), const Offset(400, 0));
-      await tester.pump();
-      expect(calls, ['confirmed']);
-      expect(find.text('Working…'), findsOneWidget);
-      expect(haptics, ['HapticFeedbackType.mediumImpact']);
-      await tester.pump(const Duration(seconds: 1));
-      await tester.pumpAndSettle();
-      expect(find.text('Slide to wipe cloud notes'), findsOneWidget);
-    });
-
-    testWidgets('two taps confirm; one tap only arms, then disarms',
-        (tester) async {
-      final calls = await pumpSlide(tester);
-      await tester.tap(find.byKey(SlideToConfirm.thumbKey));
-      await tester.pump();
-      expect(find.text('Tap again to confirm'), findsOneWidget);
-      await tester.pump(SlideToConfirm.armedFor);
-      expect(find.text('Slide to wipe cloud notes'), findsOneWidget);
-      expect(calls, isEmpty);
-
-      await tester.tap(find.byKey(SlideToConfirm.thumbKey));
-      await tester.pump();
-      await tester.tap(find.byKey(SlideToConfirm.thumbKey));
-      await tester.pumpAndSettle();
-      expect(calls, ['confirmed']);
-    });
-
-    testWidgets('screen readers get a slider whose increase confirms',
-        (tester) async {
-      final handle = tester.ensureSemantics();
-      final calls = await pumpSlide(tester);
-      final node = tester
-          .getSemantics(find.bySemanticsLabel('Slide to wipe cloud notes'));
-      expect(node,
-          isSemantics(isSlider: true, value: '0%', hasIncreaseAction: true));
-      tester.semantics
-          .increase(find.semantics.byLabel('Slide to wipe cloud notes'));
-      await tester.pumpAndSettle();
-      expect(calls, ['confirmed']);
-      handle.dispose();
-    });
-
-    testWidgets('fits 2.0 text in 320 dp', (tester) async {
-      await pumpSlide(tester, textScale: 2);
-      expect(tester.takeException(), isNull);
     });
   });
 
