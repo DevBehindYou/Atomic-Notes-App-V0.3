@@ -178,6 +178,57 @@ void main() {
         handle.dispose();
       });
 
+      testWidgets('F10: a counted row announces its count once',
+          (tester) async {
+        final handle = tester.ensureSemantics();
+        await pumpThemed(
+          tester,
+          SettingsGroup(children: [
+            SettingsRow(
+                icon: AtomicIcons.trash,
+                title: 'Recycle Bin',
+                count: 3,
+                countLabel: '3 notes',
+                onTap: () {}),
+            SettingsRow(
+                icon: AtomicIcons.bell,
+                title: 'Notifications',
+                caption: 'Unread',
+                count: 7,
+                onTap: () {}),
+          ]),
+          theme: theme,
+        );
+        expect(
+            tester.getSemantics(find.bySemanticsLabel('Recycle Bin. 3 notes')),
+            isSemantics(isButton: true, hasTapAction: true));
+        expect(
+            find.bySemanticsLabel('Notifications. Unread. 7'), findsOneWidget,
+            reason: 'defaults to the number');
+        expect(find.bySemanticsLabel(RegExp(r'\b3\b.*\b3\b')), findsNothing,
+            reason: 'not announced twice');
+        handle.dispose();
+      });
+
+      testWidgets('F10: a large count shows 99+ and is read in full',
+          (tester) async {
+        final handle = tester.ensureSemantics();
+        await pumpNarrow(
+          tester,
+          SettingsRow(
+              icon: AtomicIcons.bell,
+              title: 'Notifications waiting for you',
+              count: 1234,
+              onTap: () {}),
+          theme: theme,
+        );
+        expect(tester.takeException(), isNull);
+        expect(find.text('99+'), findsOneWidget);
+        expect(find.bySemanticsLabel('Notifications waiting for you. 1234'),
+            findsOneWidget);
+        handle.dispose();
+      });
+
       testWidgets('danger rows use the danger tile', (tester) async {
         await pumpThemed(
             tester,
