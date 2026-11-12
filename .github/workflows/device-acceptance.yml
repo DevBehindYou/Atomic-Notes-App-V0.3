@@ -10,8 +10,44 @@ on:
 permissions:
   contents: read
 jobs:
+  # Android packaging is explicit opt-in: the acceptance APKs are built and
+  # uploaded only when the repository variable ATOMIC_ANDROID_PACKAGING is
+  # 'enabled'. The bootstrap and guard tests always run, without packaging.
+  packaging-deferred:
+    name: Android packaging deferred (no APK built)
+    if: vars.ATOMIC_ANDROID_PACKAGING != 'enabled'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Report deferred Android packaging
+        run: |
+          echo '::notice::Android packaging is deferred (repository variable ATOMIC_ANDROID_PACKAGING is not enabled). The acceptance APKs were not built or uploaded; their checks are deferred, not passed.'
+          echo '### Android packaging deferred' >> "$GITHUB_STEP_SUMMARY"
+          echo 'No acceptance APK was built or uploaded. The guarded bootstrap tests still ran in their own job.' >> "$GITHUB_STEP_SUMMARY"
+
+  guard-tests:
+    name: Acceptance bootstrap and guard tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.8'
+          channel: stable
+          cache: true
+      - name: Resolve locked dependencies and public configuration
+        run: |
+          cp lib/authentication/auth_services/cred.example.dart lib/authentication/auth_services/cred.dart
+          flutter pub get --enforce-lockfile
+      - name: Verify guarded acceptance bootstrap
+        run: flutter test --no-pub test/mascot/device_acceptance_guard_test.dart test/mascot/device_acceptance_bootstrap_test.dart
+
   build:
     name: Acceptance ${{ matrix.mode }} APK
+    if: vars.ATOMIC_ANDROID_PACKAGING == 'enabled'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:

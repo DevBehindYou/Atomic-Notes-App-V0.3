@@ -3,8 +3,18 @@
 Android packaging is explicit opt-in (repository variable
 ATOMIC_ANDROID_PACKAGING). When it is deferred, the proof covers locked
 analysis and tests only: the APK steps must not have run, are recorded as
-"deferred", and no APK may exist. A deferred APK check is never reported as
+"deferred", and no Android package (APK, split APK, AAB or APK set) may exist
+in any generated output location. A deferred APK check is never reported as
 passed.
+
+Proof schema: version 1 (before packaging was opt-in) had version, scope,
+sourceHead, outcome, steps, apk and lockSha256. Version 2 adds "packaging"
+("enabled", "deferred" or "unavailable"), allows the step value "deferred",
+and in deferred mode adds "androidArtifacts" (the generated packages found,
+at most 20 paths; null when a root could not be read) and, on such a failure,
+"inspectionError". Enabled-mode pass/fail, hash and size rules are those of
+version 1. No reader of this proof exists in the repository; it is uploaded
+for human review only.
 """
 import hashlib
 import json
@@ -17,6 +27,20 @@ APK_STEPS = ('build', 'apkUpload')
 STEP_NAMES = ('analyze', 'tests') + APK_STEPS
 OUTCOMES = {'success', 'failure', 'skipped', 'cancelled'}
 
+# Where Gradle, Flutter and this repository's workflows put Android packages:
+# Flutter's build directory (flutter-apk, apk/<variant>, bundle/<variant>),
+# Gradle's own app outputs, and the staging workflow's copy directory. The
+# scan never leaves these roots, so source, assets and private data are not
+# read.
+ARTIFACT_ROOTS = ('build/app/outputs', 'android/app/build/outputs', 'staging-artifact')
+ARTIFACT_SUFFIXES = ('.apk', '.aab', '.apks')
+MAX_ENTRIES = 50_000
+MAX_LISTED = 20
+
+
+class InspectionError(Exception):
+    """A generated-output root could not be fully inspected."""
+
 
 def hash_file(path):
     digest = hashlib.sha256()
@@ -26,7 +50,38 @@ def hash_file(path):
     return digest.hexdigest()
 
 
-def build_report(root, env):
+def find_android_packages(root, walk=os.walk):
+    """Relative paths of Android packages under the generated-output roots.
+
+    Raises InspectionError when a root exists but cannot be read completely,
+    or holds more than MAX_ENTRIES entries, so a deferred proof fails closed
+    instead of passing on a partial scan.
+    """
+    found, seen = [], 0
+    for name in ARTIFACT_ROOTS:
+        base = root / name
+        if os.path.lexists(base) and not os.path.isdir(base):
+            # A root replaced by a file or a dangling link is not a clean tree.
+            raise InspectionError(f'{name}: not a directory')
+        if not os.path.isdir(base):
+            continue
+
+        def fail(error, name=name):
+            raise InspectionError(f'{name}: {error.__class__.__name__}')
+
+        for directory, subdirs, files in walk(base, onerror=fail, followlinks=False):
+            seen += len(subdirs) + len(files)
+            if seen > MAX_ENTRIES:
+                raise InspectionError(f'more than {MAX_ENTRIES} generated entries')
+            # Symlinked directories are listed but not followed; anything
+            # named like a package counts.
+            for entry in subdirs + files:
+                if entry.lower().endswith(ARTIFACT_SUFFIXES):
+                    found.append(Path(directory, entry).relative_to(root).as_posix())
+    return sorted(found)
+
+
+def build_report(root, env, walk=os.walk):
     head = env.get('ATOMIC_VERIFY_SOURCE_HEAD', '')
     packaging = env.get('ATOMIC_VERIFY_PACKAGING', 'enabled')
     deferred = packaging == 'deferred'
@@ -46,12 +101,20 @@ def build_report(root, env):
                and report['steps']['analyze'] == 'success'
                and report['steps']['tests'] == 'success')
     if deferred:
-        # The APK steps must have been skipped and no APK may have been made.
+        # The APK steps must have been skipped and no Android package of any
+        # kind may exist in the generated outputs.
         apk_steps_skipped = all(report['steps'][name] == 'skipped' for name in APK_STEPS)
         if apk_steps_skipped:
             for name in APK_STEPS:
                 report['steps'][name] = 'deferred'
-        if base_ok and apk_steps_skipped and not apk.exists():
+        try:
+            packages = find_android_packages(root, walk)
+            report['androidArtifacts'] = packages[:MAX_LISTED]
+        except InspectionError as error:
+            packages = None
+            report['androidArtifacts'] = None
+            report['inspectionError'] = str(error)
+        if base_ok and apk_steps_skipped and packages == []:
             report['lockSha256'] = hash_file(lock)
             report['outcome'] = 'pass'
         return report
@@ -69,7 +132,8 @@ def main():
     report = build_report(root, os.environ)
     (root / 'ci-flutter-verification-proof.json').write_text(json.dumps(report) + '\n', encoding='utf-8')
     print(json.dumps({'outcome': report['outcome'], 'packaging': report['packaging'],
-                      'steps': report['steps']}))
+                      'steps': report['steps'],
+                      'androidArtifacts': report.get('androidArtifacts')}))
     return 0 if report['outcome'] == 'pass' else 1
 
 

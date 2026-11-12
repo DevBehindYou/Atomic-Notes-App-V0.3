@@ -12,8 +12,18 @@ These were verified, not changed:
 - `tool/record_flutter_verification.py`, which records the source head, the
   `pubspec.lock` SHA-256 and the debug APK SHA-256 and size. When Android
   packaging is not enabled (`ATOMIC_ANDROID_PACKAGING`, see `CI.md`), it
-  records the APK steps as `deferred`, requires that no APK was built, and
-  covers analysis and tests only (tests: `tool/test_record_flutter_verification.py`).
+  records the APK steps as `deferred`, requires that no Android package
+  (APK, split APK, AAB or APK set) exists under `build/app/outputs`,
+  `android/app/build/outputs` or `staging-artifact`, fails closed when one of
+  those can't be read, and covers analysis and tests only (tests:
+  `tool/test_record_flutter_verification.py`).
+
+  Proof schema: version 2 (from the opt-in change) adds `packaging`
+  (`enabled`, `deferred` or `unavailable`), allows the step value
+  `deferred`, and in deferred mode adds `androidArtifacts` (packages found,
+  at most 20; `null` when a root couldn't be read) and `inspectionError`.
+  Enabled-mode pass/fail, hash and size rules are those of version 1. No
+  program in this repository reads the proof; it is uploaded for review.
 - Placeholder, non-production configuration from `cred.example.dart`.
 - Sanitized, bounded proof files from each fixture.
 

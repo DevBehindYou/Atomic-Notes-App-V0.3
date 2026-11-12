@@ -207,8 +207,11 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Test the verification recorder
-        run: python3 tool/test_record_flutter_verification.py
+      - name: Test the verification recorder and the packaging policy
+        run: |
+          python3 tool/test_record_flutter_verification.py
+          python3 tool/test_check_workflow_packaging.py
+          python3 tool/check_workflow_packaging.py
 
       - name: Create a per-run secret canary for the artifact scan
         run: echo "ATOMIC_CI_CANARY=$(openssl rand -hex 24)" >> "$GITHUB_ENV"

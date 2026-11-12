@@ -25,10 +25,19 @@ Actions → Variables**). It is unset during the current redesign phase, so:
   upload, and records those steps as `deferred` in its proof (never as passed);
 - Staging Android runs only the provenance parser tests on pull requests; its
   package isolation and signed staging APK jobs are skipped;
-- Signed Android release skips the release build.
+- Signed Android release skips the release build;
+- Device acceptance builds still run the guarded bootstrap tests, in their
+  own job, and skip the acceptance APK build and upload.
 
 Each skipped workflow shows an "Android packaging deferred (no APK built)"
 notice. Set the variable to `enabled` only when an APK is actually wanted.
+
+`tool/check_workflow_packaging.py` (run by Flutter verification, with its
+tests in `tool/test_check_workflow_packaging.py`) fails if any workflow step
+that builds or uploads an APK, app bundle or APK set is not guarded by the
+variable, so a new packaging step cannot slip in unguarded. The verification
+proof also fails in deferred mode if any Android package is found in the
+generated output directories.
 
 ## Signed Android release
 
