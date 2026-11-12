@@ -24,9 +24,36 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Android packaging is explicit opt-in: the APK-building jobs below run only
+  # when the repository variable ATOMIC_ANDROID_PACKAGING is 'enabled'.
+  # Otherwise no APK is built and this job says so; it is not a passed build.
+  packaging-deferred:
+    name: Android packaging deferred (no APK built)
+    if: vars.ATOMIC_ANDROID_PACKAGING != 'enabled'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Report deferred Android packaging
+        run: |
+          echo '::notice::Android packaging is deferred (repository variable ATOMIC_ANDROID_PACKAGING is not enabled). Package isolation and signed staging APK jobs did not run; their checks are deferred, not passed.'
+          echo '### Android packaging deferred' >> "$GITHUB_STEP_SUMMARY"
+          echo 'No APK was built or uploaded. Package isolation and signed staging checks are deferred, not passed.' >> "$GITHUB_STEP_SUMMARY"
+
+  provenance-parser:
+    name: Staging provenance parser tests
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Check split APK provenance regressions
+        run: python3 tools/test_staging_android_version.py
+
   compile:
     name: Package isolation (${{ matrix.mode }})
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && vars.ATOMIC_ANDROID_PACKAGING == 'enabled'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
@@ -83,7 +110,8 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' &&
       github.ref == 'refs/heads/main' &&
-      github.event.repository.fork == false
+      github.event.repository.fork == false &&
+      vars.ATOMIC_ANDROID_PACKAGING == 'enabled'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     defaults:

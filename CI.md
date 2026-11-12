@@ -7,11 +7,28 @@ Push `.github/workflows/flutter-ci.yml` in this repository, then open
 requests also run it). No local Flutter SDK or Pages configuration is needed.
 
 The hosted workflow resolves packages, treats all analyzer findings as fatal,
-runs the existing tests, and builds a debug APK. The APK uses placeholder
-API/OAuth configuration and is not a production release. APK upload remains
-required; diagnostic upload failure is reported without masking build errors.
+and runs the existing tests. It builds a debug APK only when Android packaging
+is enabled (see below). That APK uses placeholder API/OAuth configuration and
+is not a production release; when packaging is enabled its upload remains
+required. Diagnostic upload failure is reported without masking build errors.
 Artifacts expire after one day. If quota is full, clear obsolete artifacts
 in GitHub before rerunning. No workflow deletes existing artifacts.
+
+## Android packaging is opt-in
+
+No workflow builds an APK unless the repository variable
+`ATOMIC_ANDROID_PACKAGING` is `enabled` (**Settings → Secrets and variables →
+Actions → Variables**). It is unset during the current redesign phase, so:
+
+- Flutter verification runs analysis, tests, source artwork checks and the
+  artifact scans, skips the debug APK build, its APK artwork check and its
+  upload, and records those steps as `deferred` in its proof (never as passed);
+- Staging Android runs only the provenance parser tests on pull requests; its
+  package isolation and signed staging APK jobs are skipped;
+- Signed Android release skips the release build.
+
+Each skipped workflow shows an "Android packaging deferred (no APK built)"
+notice. Set the variable to `enabled` only when an APK is actually wanted.
 
 ## Signed Android release
 

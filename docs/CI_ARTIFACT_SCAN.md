@@ -10,7 +10,10 @@ These were verified, not changed:
 
 - `flutter pub get --enforce-lockfile` and a pinned Flutter 3.44.8.
 - `tool/record_flutter_verification.py`, which records the source head, the
-  `pubspec.lock` SHA-256 and the debug APK SHA-256 and size.
+  `pubspec.lock` SHA-256 and the debug APK SHA-256 and size. When Android
+  packaging is not enabled (`ATOMIC_ANDROID_PACKAGING`, see `CI.md`), it
+  records the APK steps as `deferred`, requires that no APK was built, and
+  covers analysis and tests only (tests: `tool/test_record_flutter_verification.py`).
 - Placeholder, non-production configuration from `cred.example.dart`.
 - Sanitized, bounded proof files from each fixture.
 
