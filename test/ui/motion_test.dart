@@ -161,6 +161,8 @@ void main() {
   });
 
   group('OrbitRing', () {
+    setUp(AmbientBudget.reset);
+
     testWidgets('circles while busy and stops when done', (tester) async {
       Widget ring(bool busy) => Center(
           child: OrbitRing(
@@ -231,6 +233,100 @@ void main() {
       await pumpThemed(tester, loop('a'),
           theme: theme, disableAnimations: true);
       expect(AmbientBudget.active, 0);
+    });
+
+    group('one budget for every decorative loop (F06)', () {
+      Widget orbit({bool busy = true}) => OrbitRing(
+          key: const ValueKey('orbit'),
+          busy: busy,
+          child: const SizedBox.square(dimension: 44));
+      Widget keyed(String label) =>
+          KeyedSubtree(key: ValueKey(label), child: loop(label));
+      State orbitState(WidgetTester tester) =>
+          tester.state(find.byType(OrbitRing));
+      bool orbitShown(WidgetTester tester) =>
+          tester
+              .widget<CustomPaint>(find.descendant(
+                  of: find.byType(OrbitRing),
+                  matching: find.byType(CustomPaint)))
+              .foregroundPainter !=
+          null;
+
+      testWidgets('the sync orbit counts; without a slot it still shows busy',
+          (tester) async {
+        await pumpThemed(
+            tester, Column(children: [keyed('a'), keyed('b'), orbit()]),
+            theme: theme);
+        expect(AmbientBudget.active, 2);
+        expect(AmbientBudget.holds(orbitState(tester)), isFalse);
+        expect(orbitShown(tester), isTrue, reason: 'still ring, busy shown');
+
+        await pumpThemed(tester, Column(children: [keyed('b'), orbit()]),
+            theme: theme);
+        await tester.pump();
+        expect(AmbientBudget.holds(orbitState(tester)), isTrue,
+            reason: 'took the freed slot');
+        expect(AmbientBudget.active, 2);
+      });
+
+      testWidgets('a waiting loop starts when a slot frees', (tester) async {
+        await pumpThemed(
+            tester, Column(children: [keyed('a'), keyed('b'), keyed('c')]),
+            theme: theme);
+        final c = tester.state(find.descendant(
+            of: find.byKey(const ValueKey('c')),
+            matching: find.byType(Ambient)));
+        expect(AmbientBudget.holds(c), isFalse);
+        await pumpThemed(tester, Column(children: [keyed('b'), keyed('c')]),
+            theme: theme);
+        await tester.pump();
+        expect(AmbientBudget.holds(c), isTrue);
+        expect(AmbientBudget.active, 2);
+      });
+
+      testWidgets('an orbit that stops being busy frees its slot',
+          (tester) async {
+        await pumpThemed(
+            tester, Column(children: [orbit(), keyed('a'), keyed('b')]),
+            theme: theme);
+        expect(AmbientBudget.holds(orbitState(tester)), isTrue);
+        await pumpThemed(tester,
+            Column(children: [orbit(busy: false), keyed('a'), keyed('b')]),
+            theme: theme);
+        await tester.pump();
+        expect(AmbientBudget.holds(orbitState(tester)), isFalse);
+        expect(AmbientBudget.active, 2, reason: 'b took the slot');
+        expect(orbitShown(tester), isFalse);
+      });
+
+      testWidgets('background and reduced motion release every loop',
+          (tester) async {
+        await pumpThemed(tester, Column(children: [keyed('a'), orbit()]),
+            theme: theme);
+        expect(AmbientBudget.active, 2);
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+        await tester.pump();
+        expect(AmbientBudget.active, 0);
+        expect(orbitShown(tester), isTrue, reason: 'busy still shown');
+        tester.binding
+            .handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+        await tester.pump();
+        expect(AmbientBudget.active, 2);
+
+        await pumpThemed(tester, Column(children: [keyed('a'), orbit()]),
+            theme: theme, disableAnimations: true);
+        expect(AmbientBudget.active, 0);
+        expect(orbitShown(tester), isTrue);
+      });
+
+      testWidgets('a covered route releases its loops', (tester) async {
+        await pumpThemed(
+            tester,
+            TickerMode(
+                enabled: false, child: Column(children: [keyed('a'), orbit()])),
+            theme: theme);
+        expect(AmbientBudget.active, 0);
+      });
     });
   });
 
