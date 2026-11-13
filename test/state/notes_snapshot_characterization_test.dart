@@ -181,6 +181,9 @@ void main() {
     if (Platform.environment['F09_UPDATE_GOLDEN'] == '1') {
       file.writeAsStringSync('$encoded\n');
     }
-    expect(encoded, file.readAsStringSync().trimRight());
+    // A checkout with core.autocrlf writes the golden with CRLF line
+    // endings; the content, not the line endings, is the oracle.
+    expect(encoded,
+        file.readAsStringSync().replaceAll('\r\n', '\n').trimRight());
   }, timeout: const Timeout(Duration(minutes: 5)));
 }
