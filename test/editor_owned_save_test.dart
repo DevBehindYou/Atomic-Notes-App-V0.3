@@ -1,18 +1,26 @@
 // S1 / review R10–R11: while its own save is pending the editor accepts no
 // edits from any input, and the save's completion closes only the editor's
 // own route. Review R14: a draft whose context was retired leaves the screen
-// at once, even while its close waits under another route. The first case in each group is the reviewer fixture
+// at once, even while its close waits under another route. Review R16: the
+// same holds when that context's seal fails, through the real repository.
+// The first case in each group is the reviewer fixture
 // (review-evidence/2026-11-12-packet-3/reviewer_s1_edges_test.dart).
 
 import 'dart:async';
 
 import 'package:atomic_notes/database/note.dart';
+import 'package:atomic_notes/database/notes_repository.dart';
 import 'package:atomic_notes/database/notes_source.dart';
+import 'package:atomic_notes/database/sync_status.dart';
 import 'package:atomic_notes/page/notes_editor_page.dart';
 import 'package:atomic_notes/state/notes/notes_bloc.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hive_ce/hive_ce.dart';
+
+import 'notes_repository_lifecycle_test.dart' show TestApi, TestVault;
 
 final _title = find.byKey(const ValueKey('note-title'));
 
@@ -51,6 +59,19 @@ Future<List<bool?>> _open(
 }
 
 TextField _field(WidgetTester tester) => tester.widget<TextField>(_title);
+
+/// A test vault whose held seal can be made to fail once it has run.
+class _SealFailingVault extends TestVault {
+  Object? failureAfterSeal;
+
+  @override
+  Future<String> encryptContent(Map<String, dynamic> content) async {
+    final sealed = await super.encryptContent(content);
+    final error = failureAfterSeal;
+    if (error != null) throw error;
+    return sealed;
+  }
+}
 
 void main() {
   group('review R10: no edits while the save is pending', () {
@@ -419,6 +440,146 @@ void main() {
           reason: 'the completion never pops another route');
       expect(find.byType(NotesCreaterPage), findsNothing);
       expect(results, isNot(contains(false)));
+    });
+  });
+
+  group('review R16: a failed seal for a changed context, end to end', () {
+    // The real repository and NotesBloc on in-memory Hive boxes, so the
+    // editor sees the outcome the repository actually returns. In-memory
+    // boxes keep every future in the widget test's fake-async zone.
+    late TestApi api;
+    late _SealFailingVault vault;
+    late NotesRepository repository;
+    late NotesBloc bloc;
+
+    /// Waits for [future] by pumping frames (bounded), as fake async needs.
+    Future<void> drive(WidgetTester tester, Future<void> future) async {
+      var done = false;
+      unawaited(future.whenComplete(() => done = true));
+      for (var i = 0; i < 100 && !done; i++) {
+        await tester.pump(const Duration(milliseconds: 10));
+      }
+      expect(done, isTrue);
+    }
+
+    Future<void> openStore(WidgetTester tester) async {
+      final box = await Hive.openBox('r16-editor-notes', bytes: Uint8List(0));
+      SyncStatusHelper.syncBox =
+          await Hive.openBox<bool>('r16-editor-sync', bytes: Uint8List(0));
+      api = TestApi();
+      vault = _SealFailingVault()..unlocked = true;
+      repository = NotesRepository.forTest(
+          box: box,
+          api: api,
+          vault: vault,
+          checkConnectivity: () async => [ConnectivityResult.wifi]);
+      await repository.start();
+      bloc = NotesBloc(
+          source: repository,
+          isSyncEnabled: () => false,
+          isOnline: () async => true);
+    }
+
+    Future<void> closeStore(WidgetTester tester) async {
+      final gate = vault.sealGate;
+      if (gate != null && !gate.isCompleted) gate.complete();
+      await tester.runAsync(bloc.close); // completes only on the real event loop
+      await drive(tester, repository.stop(waitForSync: true));
+      repository.dispose();
+      await drive(tester, Hive.close());
+    }
+
+    /// The editor's save goes through the bloc with a context captured now.
+    Future<NoteSaveResult> Function(Note) ownedSave() {
+      final context = bloc.captureEditorContext()!;
+      return (note) {
+        final ack = NoteSaveAck();
+        bloc.add(NoteSaved(note, ack: ack, context: context));
+        return ack.result;
+      };
+    }
+
+    Future<void> waitForSeal(WidgetTester tester) async {
+      for (var i = 0; i < 20 && !vault.sealEntered!.isCompleted; i++) {
+        await tester.pump();
+      }
+      expect(vault.sealEntered!.isCompleted, isTrue);
+    }
+
+    Note privateNote() => Note(
+        id: 'old', title: 'Former account draft title', body: 'Former account draft body');
+
+    testWidgets(
+        'a session change and a failed seal hide the draft under a cover; '
+        'the editor closes once after it', (tester) async {
+      final handle = tester.ensureSemantics();
+      await openStore(tester);
+      try {
+        vault
+          ..sealGate = Completer<void>()
+          ..sealEntered = Completer<void>();
+        final nav = GlobalKey<NavigatorState>();
+        final results =
+            await _open(tester, ownedSave(), nav: nav, note: privateNote());
+        await tester.tap(find.text('Done'));
+        await waitForSeal(tester);
+        unawaited(showDialog<void>(
+            context: nav.currentContext!,
+            builder: (_) => const AlertDialog(title: Text('New account overlay'))));
+        await tester.pumpAndSettle();
+        api.user = 'user-b';
+        api.sessionRevision++;
+        vault.failureAfterSeal = StateError('synthetic seal failure');
+        vault.sealGate!.complete();
+        for (var i = 0; i < 6; i++) {
+          await tester.pump();
+        }
+        expect(find.textContaining('Former account'), findsNothing);
+        expect(
+            find.semantics.byPredicate((node) {
+              final data = node.getSemanticsData();
+              return '${data.label} ${data.value} ${data.hint} ${data.tooltip}'
+                  .contains('Former account');
+            }),
+            findsNothing);
+        expect(find.text('Retry'), findsNothing);
+        expect(find.text('New account overlay'), findsOneWidget);
+        expect(find.byType(NotesCreaterPage), findsOneWidget);
+        expect(results, isEmpty);
+        nav.currentState!.pop();
+        await tester.pumpAndSettle();
+        expect(find.byType(NotesCreaterPage), findsNothing);
+        expect(results, [false], reason: 'its own result, exactly once');
+      } finally {
+        await closeStore(tester);
+        handle.dispose();
+      }
+    });
+
+    testWidgets('the same context and a failed seal keep the draft and offer Retry',
+        (tester) async {
+      await openStore(tester);
+      try {
+        vault
+          ..sealGate = Completer<void>()
+          ..sealEntered = Completer<void>();
+        final results = await _open(tester, ownedSave(), note: privateNote());
+        await tester.tap(find.text('Done'));
+        await waitForSeal(tester);
+        vault.failureAfterSeal = StateError('synthetic seal failure');
+        vault.sealGate!.complete();
+        for (var i = 0; i < 6; i++) {
+          await tester.pump();
+        }
+        await tester.pumpAndSettle();
+        expect(find.text('Retry'), findsOneWidget);
+        expect(find.text('Former account draft title'), findsOneWidget,
+            reason: 'a genuine failure keeps the draft');
+        expect(find.byType(NotesCreaterPage), findsOneWidget);
+        expect(results, isEmpty);
+      } finally {
+        await closeStore(tester);
+      }
     });
   });
 }

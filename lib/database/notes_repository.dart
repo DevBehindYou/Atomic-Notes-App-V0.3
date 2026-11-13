@@ -631,12 +631,17 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   /// anything changes, and the queued write is dropped if the account,
   /// session or store lifecycle changes before it reaches the box: it is
   /// checked again when the write starts and after sealing (review R13).
+  /// An attempt that fails before its write is committed is a failure only
+  /// while the context is still the editor's; once the context has changed
+  /// it is retired instead, so the draft is hidden, not offered for retry
+  /// (review R16). A committed write is never retired afterwards.
   @override
   Future<NoteLocalSaveReceipt> saveForEditor(
       Note note, NoteEditorContext context) async {
     if (context is! _EditorContext || !_isCurrent(context)) {
       return const NoteLocalSaveRetired(NoteSaveRetirement.contextChanged);
     }
+    var committed = false;
     try {
       return await _trackNoteMutation(() async {
         if (!_isCurrent(context)) {
@@ -648,6 +653,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
         note.settleDirty();
         _notes[note.id] = note;
         final written = await _write(note.id, fence: context);
+        committed = written != null;
         notifyListeners();
         if (note.dirty) _scheduleAutoSync();
         if (written == null) {
@@ -664,7 +670,20 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
         return const NoteLocalSaveStored();
       });
     } catch (error) {
+      if (!committed && !_identityHolds(context)) {
+        return const NoteLocalSaveRetired(NoteSaveRetirement.contextChanged);
+      }
       return NoteLocalSaveFailed(error);
+    }
+  }
+
+  /// [_sameIdentity] for a failed attempt. A check that cannot run (for
+  /// example on a closed box) counts as changed, so the draft is hidden.
+  bool _identityHolds(_EditorContext context) {
+    try {
+      return _sameIdentity(context);
+    } catch (_) {
+      return false;
     }
   }
 

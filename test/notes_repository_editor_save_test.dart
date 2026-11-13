@@ -17,8 +17,10 @@ import 'package:hive_ce/hive_ce.dart';
 import 'notes_repository_lifecycle_test.dart' show TestApi, TestVault;
 
 /// A vault whose sealing can be made to fail, counting every seal started.
+/// [failure] fails at once; [failureAfterSeal] fails once a (held) seal ran.
 class _FailingVault extends TestVault {
   Object? failure;
+  Object? failureAfterSeal;
   int seals = 0;
 
   @override
@@ -26,7 +28,10 @@ class _FailingVault extends TestVault {
     seals++;
     final error = failure;
     if (error != null) throw error;
-    return super.encryptContent(content);
+    final sealed = await super.encryptContent(content);
+    final late = failureAfterSeal;
+    if (late != null) throw late;
+    return sealed;
   }
 }
 
@@ -368,6 +373,88 @@ void main() {
       await bloc.close();
       expect(result, isA<NoteSaveRejected>());
       expect(vault.seals, 0);
+      expect(box.containsKey('n1'), isFalse);
+    });
+  });
+
+  group('review R16: a failed attempt for a changed context retires', () {
+    /// Holds the seal, applies [change] while it is held, then makes the
+    /// held seal throw on release. Returns the receipt.
+    Future<NoteLocalSaveReceipt> failAfter(void Function() change) async {
+      final context = repository.captureEditorContext()!;
+      holdSeals();
+      final receipt = repository.saveForEditor(draft('n1'), context);
+      await vault.sealEntered!.future;
+      change();
+      vault.failureAfterSeal = StateError('synthetic seal failure');
+      release();
+      return receipt;
+    }
+
+    test('reviewer fixture: another account and a sealing failure retire', () async {
+      final result = await failAfter(switchAccount);
+      expect((result as NoteLocalSaveRetired).reason,
+          NoteSaveRetirement.contextChanged);
+      expect(box.containsKey('n1'), isFalse);
+    });
+
+    test('a same-account session change and a sealing failure retire', () async {
+      final result = await failAfter(() => api.sessionRevision++);
+      expect((result as NoteLocalSaveRetired).reason,
+          NoteSaveRetirement.contextChanged);
+      expect(box.containsKey('n1'), isFalse);
+    });
+
+    test('a lifecycle change and a sealing failure retire', () async {
+      late Future<void> stopping;
+      final result = await failAfter(() => stopping = repository.stop());
+      await stopping;
+      expect((result as NoteLocalSaveRetired).reason,
+          NoteSaveRetirement.contextChanged);
+      expect(box.containsKey('n1'), isFalse);
+    });
+
+    test('the same context and a sealing failure stay a failure', () async {
+      final result = await failAfter(() {});
+      expect(result, isA<NoteLocalSaveFailed>());
+      expect((result as NoteLocalSaveFailed).error, same(vault.failureAfterSeal));
+      expect(box.containsKey('n1'), isFalse);
+      expect(repository.captureEditorContext(), isNotNull,
+          reason: 'the editor may retry for its own account');
+    });
+
+    test('a lock while sealing, then a failure, stays a failure', () async {
+      final context = repository.captureEditorContext()!;
+      holdSeals();
+      final receipt = repository.saveForEditor(draft('n1'), context);
+      await vault.sealEntered!.future;
+      final locking = repository.lockVault();
+      vault.failureAfterSeal = StateError('synthetic seal failure');
+      release();
+      expect(await receipt, isA<NoteLocalSaveFailed>(),
+          reason: 'the lock drains admitted writes; it does not change the identity');
+      await locking;
+      expect(box.containsKey('n1'), isFalse);
+    });
+
+    test('through the bloc: retired, not a failure the editor offers to retry',
+        () async {
+      final bloc = NotesBloc(
+          source: repository,
+          isSyncEnabled: () => false,
+          isOnline: () async => true);
+      final context = bloc.captureEditorContext()!;
+      holdSeals();
+      final ack = NoteSaveAck();
+      bloc.add(NoteSaved(draft('n1'), ack: ack, context: context));
+      await vault.sealEntered!.future;
+      api.sessionRevision++;
+      vault.failureAfterSeal = StateError('synthetic seal failure');
+      release();
+      final result = await ack.result;
+      await bloc.close();
+      expect(result, isA<NoteSaveRetired>());
+      expect((result as NoteSaveRetired).reason, NoteSaveRetirement.contextChanged);
       expect(box.containsKey('n1'), isFalse);
     });
   });
