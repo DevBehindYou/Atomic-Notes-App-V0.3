@@ -36,15 +36,28 @@ notice. Set the variable to `enabled` only when an APK is actually wanted.
 tests in `tool/test_check_workflow_packaging.py`) fails if any workflow step
 that builds or uploads an APK, app bundle or APK set is not guarded by the
 variable, so a new packaging step cannot slip in unguarded. A guard is a
-strict allow-list: a conjunction of simple comparisons that includes
-`vars.ATOMIC_ANDROID_PACKAGING == 'enabled'` (or, on a step, the job-derived
-`env.` form with no step override or `$GITHUB_ENV` write of it). Conditions
-with `||`, `!`, functions or comments do not count. Workflow shapes it cannot
-read for certain (other step indentation, flow style, tabs, anchors,
-reusable jobs, local actions) fail the check instead of being skipped. It
-reads the workflow files only; what a script does at run time is outside
-what it proves. The verification proof also fails in deferred mode if any
-Android package is found in the generated output directories.
+strict allow-list: the job's or the step's `if:` is a conjunction of simple
+comparisons that includes `vars.ATOMIC_ANDROID_PACKAGING == 'enabled'`.
+Conditions with `||`, `!`, functions or comments do not count, and neither
+does an `env.` comparison, because any earlier step or action can change
+`env` through `$GITHUB_ENV`. The Flutter verification job still sets
+`ATOMIC_ANDROID_PACKAGING` in its `env` from the variable, but only to tell
+the deferred notice and the proof recorder which mode ran; the recorder
+fails if that mode and the APK step outcomes disagree.
+
+The checker reads every workflow against an explicit list of the keys and
+indentation this repository uses (top-level, job and step keys, and block
+`env:`, `with:`, `defaults:`, `strategy:` and `environment:` mappings).
+Anything else fails the check (exit 2) instead of being skipped or read as
+a job without steps: an unknown, duplicated or quoted key, other
+indentation, inline mappings or flow collections (except a strategy matrix
+list), a value continued where one line is expected, tabs or other line
+breaks, a byte order mark, anchors, reusable jobs and local actions. A new
+key or shape needs a reviewed change to the checker. It reads the workflow
+files only: a packaging command assembled at run time, inside a script or
+helper, or inside a third-party action is outside what it can detect or
+prove. The verification proof also fails in deferred mode if any Android
+package is found in the generated output directories.
 
 ## Signed Android release
 

@@ -1,31 +1,46 @@
 """Every Android packaging step in .github/workflows must be opt-in.
 
 A step packages when it builds an APK, app bundle or APK set (flutter build
-apk/appbundle, Gradle assemble/bundle tasks, bundletool build-apks) or
-uploads a file whose path names an .apk, .aab or .apks. Each such step must
-run only when the repository variable is enabled:
-
-- its job's `if:` is a guard, or
-- its own `if:` is a guard, where a step may also test
-  `env.ATOMIC_ANDROID_PACKAGING == 'enabled'` when its job sets that
-  variable from the repository variable (defaulting to 'deferred'), no step
-  overrides it in its own `env:`, and no step in the job writes it to
-  $GITHUB_ENV.
+for any target other than web, desktop or iOS; Gradle assemble, bundle,
+install or package tasks; bundletool build-apks) or uploads a file whose path
+names an .apk, .aab or .apks. Each such step must run only when the
+repository variable ATOMIC_ANDROID_PACKAGING is 'enabled': its job's `if:`
+or its own `if:` must be a guard.
 
 A guard is a strict allow-list, not a substring match: optionally wrapped in
 one `${{ }}`, a condition is a conjunction (`&&`) of simple comparisons
 (`name.path == 'literal'` or `!=`), one of which is exactly
-`vars.ATOMIC_ANDROID_PACKAGING == 'enabled'` (or the env form above). A
-condition with `||`, `!`, a function call, parentheses, quoting around the
-whole expression, a comment or a nested expression is not a guard.
+`vars.ATOMIC_ANDROID_PACKAGING == 'enabled'`. A condition with `||`, `!`, a
+function call, parentheses, quoting around the whole expression, a comment
+or a nested expression is not a guard. Only the repository variable counts.
+A run cannot change `vars`, but any step or action can change `env` for the
+steps after it (through $GITHUB_ENV), so an `env.` comparison is never a
+guard.
 
-This reads this repository's workflow style (two-space job keys, `steps:`
-items at six spaces, step keys at eight) rather than parsing all of YAML.
-Anything it cannot read for certain fails the check (exit 2) instead of
-being skipped: other step indentation, flow-style collections, tabs, YAML
-anchors or aliases, reusable workflow jobs (`uses:` on a job) and local
-actions (`uses: ./...`). It checks the workflow files only: what a shell
-script or helper does at run time is outside what it can prove.
+The workflows are read against an explicit allow-list of this repository's
+structure, not as general YAML:
+
+- top-level keys at column 0: name, on, permissions, concurrency, jobs;
+- job ids at two spaces, and job keys at four: name, if, runs-on,
+  timeout-minutes, defaults, env, strategy, environment, steps (steps is
+  required);
+- steps as a block list, `- key: ...` at six spaces with the step's other
+  keys at eight: name, id, if, uses, run, with, env, shell,
+  continue-on-error;
+- job and step `env:`, step `with:`, `defaults:`, `strategy:` and
+  `environment:` as block mappings of plain keys one level deeper.
+
+Anything else fails the check (exit 2) instead of being skipped or read as
+an empty job: an unknown, duplicated or quoted key, any other indentation,
+an inline mapping or flow collection (only a strategy matrix value may be a
+flow list), a value continued where one line is expected, tabs or other
+line breaks, a byte order mark, YAML anchors or aliases, reusable workflow
+jobs and local actions. Adding a new key or shape needs a reviewed change to
+this file.
+
+It checks the workflow files only. A packaging command assembled at run
+time, inside a script or helper, or inside a third-party action is outside
+what it can detect or prove.
 
 Usage: python3 tool/check_workflow_packaging.py [WORKFLOW_DIR]
 """
@@ -33,52 +48,169 @@ from pathlib import Path
 import re
 import sys
 
-PACKAGING_RUN = re.compile(
-    r'flutter\s+build\s+(apk|appbundle)\b'
-    r'|gradlew\S*\s+[^\n]*\b(assemble|bundle)\w*'
+VAR = 'ATOMIC_ANDROID_PACKAGING'
+GUARD_TERM = f"vars.{VAR} == 'enabled'"
+
+FLUTTER_BUILD = re.compile(r'\bflutter(?:\s+-\S+)*\s+build\s+(\S+)', re.I)
+NOT_ANDROID_TARGETS = {'web', 'linux', 'windows', 'macos', 'ios', 'ipa',
+                       'ios-framework', 'macos-framework'}
+OTHER_PACKAGING = re.compile(
+    r'gradlew\S*\s+[^\n]*\b(assemble|bundle|install|package)\w*'
     r'|bundletool\S*\s+build-apks', re.I)
 PACKAGE_PATH = re.compile(r'\.(apk|aab|apks)\b', re.I)
-VAR = 'ATOMIC_ANDROID_PACKAGING'
-VARS_TERM = f"vars.{VAR} == 'enabled'"
-ENV_TERM = f"env.{VAR} == 'enabled'"
-JOB_ENV_VALUE = (f"${{{{ vars.{VAR} == 'enabled' && 'enabled' || "
-                 f"'deferred' }}}}")
 TERM = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*(\.[A-Za-z_][A-Za-z0-9_-]*)*"
                   r" (==|!=) ('[^'#]*'|true|false|null|-?[0-9]+)")
 ANCHOR = re.compile(r'(^|[:-]\s+)[&*][A-Za-z0-9_]|<<:')
-GITHUB_ENV_WRITE = re.compile(r'echo\s+"?([A-Za-z_][A-Za-z0-9_]*)=')
+KEY_LINE = re.compile(r'(?P<key>[A-Za-z0-9_-]+):(?: +(?P<value>.*))?')
+JOB_ID = re.compile(r'[A-Za-z_][A-Za-z0-9_-]*')
+ENV_NAME = re.compile(r'[A-Za-z_][A-Za-z0-9_]*')
+BLOCK_SCALAR = re.compile(r'[|>][1-9]?[+-]?[1-9]?(\s+#.*)?')
+FOLDED = re.compile(r'>-?(\s+#.*)?')
+FORBIDDEN = {'\t': 'tab', '\r': 'carriage return', '\x85': 'next line',
+             '\u2028': 'line separator', '\u2029': 'paragraph separator',
+             '\ufeff': 'byte order mark'}
+
+TOP_KEYS = {'name', 'on', 'permissions', 'concurrency', 'jobs'}
+JOB_KEYS = {'name', 'if', 'runs-on', 'timeout-minutes', 'defaults', 'env',
+            'strategy', 'environment', 'steps'}
+STEP_KEYS = {'name', 'id', 'if', 'uses', 'run', 'with', 'env', 'shell',
+             'continue-on-error'}
 
 
 class WorkflowShapeError(Exception):
     pass
 
 
-def _indent(line):
-    return len(line) - len(line.lstrip(' '))
+class _Line:
+    """One source line. [indent] is None for blank and comment-only lines."""
+
+    def __init__(self, number, raw):
+        self.number = number
+        self.raw = raw
+        stripped = raw.strip(' ')
+        self.blank = not stripped or stripped.startswith('#')
+        self.comment = stripped.startswith('#')
+        self.indent = None if self.blank else len(raw) - len(raw.lstrip(' '))
+        self.text = stripped
 
 
-def _meaningful(line):
-    stripped = line.strip()
-    return stripped and not stripped.startswith('#')
+def _fail(where, line, message):
+    at = f' (line {line.number})' if line is not None else ''
+    raise WorkflowShapeError(f'{where}{at}: {message}')
 
 
-def _condition(lines, i, indent):
-    """The `if:` value at lines[i], joined when folded (`>-` or `>`)."""
-    value = lines[i].strip()[len('if:'):].strip()
-    if value in ('>-', '>'):
-        parts = []
-        for following in lines[i + 1:]:
-            if following.strip() and _indent(following) <= indent:
-                break
-            parts.append(following.strip())
-        return ' '.join(p for p in parts if p)
-    if value.startswith(('|', '>')):
-        return None  # other block scalars are not read
+def _key(line, where):
+    """(key, value) of a plain `key:` or `key: value` line, or a shape error."""
+    text = line.text
+    if text[0] in '"\'':
+        _fail(where, line, f'quoted keys are not read: {text}')
+    if text[0] in '-?[{&*!|>%@`':
+        _fail(where, line, f'expected a plain key: {text}')
+    match = KEY_LINE.fullmatch(text)
+    if not match:
+        _fail(where, line, f'expected a plain `key:` line: {text}')
+    value = (match.group('value') or '').strip()
+    if value.startswith('#'):
+        value = ''
+    return match.group('key'), value
+
+
+def _entries(lines, indent, where, allowed=None, key_pattern=None):
+    """A block mapping at exactly [indent]: [(key, value, line, body)].
+
+    [lines] are everything under the parent key. Every meaningful line is
+    either an entry at [indent] or belongs to the body of the entry above
+    it, so wrong indentation can never be skipped.
+    """
+    entries, seen = [], set()
+    for line in lines:
+        if line.blank:
+            if entries:
+                entries[-1][3].append(line)
+            continue
+        if line.indent == indent:
+            key, value = _key(line, where)
+            if allowed is not None and key not in allowed:
+                _fail(where, line, f'key `{key}` is not on the allow-list')
+            if key_pattern is not None and not key_pattern.fullmatch(key):
+                _fail(where, line, f'unsupported key name `{key}`')
+            if key in seen:
+                _fail(where, line, f'duplicate key `{key}`')
+            seen.add(key)
+            entries.append((key, value, line, []))
+        elif line.indent > indent and entries:
+            entries[-1][3].append(line)
+        else:
+            _fail(where, line, f'expected a key at {indent} spaces: {line.text}')
+    return entries
+
+
+def _meaningful(body):
+    return [line for line in body if not line.blank]
+
+
+def _single(key, value, line, body, where):
+    """A one-line scalar value: no flow collection, block or continuation."""
+    if not value:
+        _fail(where, line, f'`{key}` needs a one-line value')
+    if value[0] in '[{|>&*!':
+        _fail(where, line, f'`{key}`: flow, block or tagged values are not read')
+    if _meaningful(body):
+        _fail(where, _meaningful(body)[0], f'`{key}` value continues onto another line')
     return value
 
 
-def _guard(value, terms):
-    """True only when [value] requires one of [terms] (strict allow-list)."""
+def _block(key, value, line, where):
+    if value:
+        _fail(where, line, f'`{key}` must be a block (inline values are not read)')
+
+
+def _mapping(key, value, line, body, indent, where, allowed=None,
+             key_pattern=None, flow_lists=False):
+    """A block mapping of one-line scalars (or simple flow lists)."""
+    _block(key, value, line, where)
+    entries = _entries(body, indent, f'{where} {key}', allowed, key_pattern)
+    if not entries:
+        _fail(where, line, f'`{key}` is empty')
+    for sub, sub_value, sub_line, sub_body in entries:
+        if (flow_lists and sub_value.startswith('[') and sub_value.endswith(']')
+                and not re.search(r'[\[\]{}]', sub_value[1:-1])
+                and not _meaningful(sub_body)):
+            continue
+        _single(sub, sub_value, sub_line, sub_body, f'{where} {key}')
+    return {sub: sub_value for sub, sub_value, _, _ in entries}
+
+
+def _condition(value, body, indent):
+    """The `if:` expression at [indent], or None when it cannot be read.
+
+    A folded block (`>` or `>-`) and a plain value continued on deeper lines
+    both join their lines with spaces, as YAML does, so a continuation such
+    as `|| true` is part of what the guard check sees. A comment line ends a
+    plain value; inside a folded block, a deeper `#` line is part of the
+    text. A line that would continue the value after it has ended is not
+    read.
+    """
+    folded = bool(FOLDED.fullmatch(value))
+    if not folded and BLOCK_SCALAR.fullmatch(value):
+        return None  # literal and other block scalars are not read
+    parts, ended = ([] if folded else [value]), False
+    for line in body:
+        if line.comment:
+            deeper = len(line.raw) - len(line.raw.lstrip(' ')) > indent
+            if folded and deeper and not ended:
+                parts.append(line.text)
+            else:
+                ended = True
+        elif not line.blank:
+            if ended:
+                return None
+            parts.append(line.text)
+    return ' '.join(parts)
+
+
+def _guard(value):
+    """True only when [value] requires the repository opt-in."""
     if value is None:
         return False
     value = value.strip()
@@ -89,114 +221,146 @@ def _guard(value, terms):
     conjuncts = [c.strip() for c in value.split('&&')]
     if not all(TERM.fullmatch(c) for c in conjuncts):
         return False
-    return any(c in terms for c in conjuncts)
+    return GUARD_TERM in conjuncts
 
 
-def _check_text(text):
-    if '\t' in text:
-        raise WorkflowShapeError('tab characters are not read')
-    for line in text.split('\n'):
-        if _meaningful(line) and ANCHOR.search(line.split(' #')[0]):
-            raise WorkflowShapeError(f'YAML anchors/aliases are not read: {line.strip()}')
+def _packages(text):
+    for match in FLUTTER_BUILD.finditer(text):
+        if match.group(1).lower() not in NOT_ANDROID_TARGETS:
+            return True
+    if OTHER_PACKAGING.search(text):
+        return True
+    return 'actions/upload-artifact' in text and bool(PACKAGE_PATH.search(text))
 
 
-def _jobs(text):
-    lines = text.split('\n')
-    start = next((i for i, l in enumerate(lines) if l.rstrip() == 'jobs:'), None)
-    if start is None:
-        raise WorkflowShapeError('no top-level jobs: key')
-    jobs, current = [], None
-    for line in lines[start + 1:]:
-        if not _meaningful(line):
-            if current is not None:
-                current[1].append(line)
+def _check_text(text, where):
+    for char, name in FORBIDDEN.items():
+        if char in text:
+            raise WorkflowShapeError(f'{where}: {name} characters are not read')
+    control = re.search(r'[\x00-\x08\x0b-\x1f\x7f]', text)
+    if control:
+        raise WorkflowShapeError(f'{where}: control characters are not read')
+    for number, line in enumerate(text.split('\n'), 1):
+        stripped = line.strip()
+        if stripped and not stripped.startswith('#') and ANCHOR.search(line.split(' #')[0]):
+            raise WorkflowShapeError(
+                f'{where} (line {number}): YAML anchors/aliases are not read: {stripped}')
+
+
+def _steps(key, value, line, body, where):
+    """The steps block list: each step's lines, re-based to eight spaces."""
+    _block(key, value, line, where)
+    items = []
+    for item in body:
+        if item.blank:
+            if items:
+                items[-1].append(item)
             continue
-        indent = _indent(line)
-        if indent == 0:
-            break  # the next top-level key
-        if indent == 2:
-            match = re.fullmatch(r'  ([A-Za-z0-9_-]+):\s*(#.*)?', line.rstrip())
-            if not match:
-                raise WorkflowShapeError(f'unreadable job line: {line.strip()}')
-            current = (match.group(1), [])
-            jobs.append(current)
-        elif indent < 4 or current is None:
-            raise WorkflowShapeError(f'unreadable line under jobs: {line.strip()}')
+        if item.indent == 6:
+            if not item.raw.startswith('      - '):
+                _fail(where, item, f'expected a step `- key: ...` at six spaces: {item.text}')
+            rest = item.raw[8:]
+            if not rest or rest[0] == ' ':
+                _fail(where, item, 'a step must start with a key right after `- `')
+            items.append([_Line(item.number, '        ' + rest)])
+        elif item.indent > 6 and items:
+            items[-1].append(item)
         else:
-            current[1].append(line)
-    if not jobs:
-        raise WorkflowShapeError('no jobs found')
-    return jobs
-
-
-def _job(name, lines):
-    """Splits a job into its own `if:`, `env:` entries and steps."""
-    job_if, env, steps, i = None, {}, None, 0
-    while i < len(lines):
-        line = lines[i]
-        if not _meaningful(line) or _indent(line) != 4:
-            i += 1
-            continue
-        key = line.strip()
-        if re.match(r'-|[\[{]', key) or ': [' in key or ': {' in key:
-            raise WorkflowShapeError(f'job {name}: flow or list syntax: {key}')
-        if key.startswith('uses:'):
-            raise WorkflowShapeError(f'job {name}: reusable workflow jobs are not read')
-        if key.startswith('if:'):
-            job_if = _condition(lines, i, 4)
-        elif key.split('#')[0].strip() == 'env:':
-            for entry in lines[i + 1:]:
-                if not _meaningful(entry):
-                    continue
-                if _indent(entry) <= 4:
-                    break
-                match = re.fullmatch(r'      ([A-Za-z0-9_]+):\s*(.*)', entry.rstrip())
-                if not match:
-                    raise WorkflowShapeError(f'job {name}: unreadable env entry')
-                env[match.group(1)] = match.group(2).strip()
-        elif key.startswith('steps:'):
-            if key.split('#')[0].strip() != 'steps:':
-                raise WorkflowShapeError(f'job {name}: steps must be a block list')
-            steps = _steps(name, lines[i + 1:])
-        i += 1
-    return job_if, env, steps or []
-
-
-def _steps(name, lines):
+            _fail(where, item, f'expected a step at six spaces: {item.text}')
+    if not items:
+        _fail(where, line, 'the steps block has no steps')
     steps = []
-    for line in lines:
-        if not _meaningful(line):
-            if steps:
-                steps[-1].append(line)
-            continue
-        indent = _indent(line)
-        if indent <= 4:
-            if indent == 4 and line.strip().startswith('-'):
-                raise WorkflowShapeError(
-                    f'job {name}: steps list items must be indented six spaces')
-            break
-        if indent == 6:
-            if not line.startswith('      - '):
-                raise WorkflowShapeError(f'job {name}: unreadable step line: {line.strip()}')
-            first = line[8:]
-            if first.startswith(('{', '[', '-')):
-                raise WorkflowShapeError(f'job {name}: flow-style step')
-            steps.append(['        ' + first])
-        elif not steps:
-            raise WorkflowShapeError(f'job {name}: unreadable steps block')
-        elif indent == 7:
-            raise WorkflowShapeError(f'job {name}: step keys must be indented eight spaces')
-        else:
-            steps[-1].append(line)
+    for index, lines in enumerate(items, 1):
+        here = f'{where} step {index}'
+        step = {'if': None, 'name': None, 'uses': None,
+                'text': '\n'.join(l.raw for l in lines)}
+        for sub, sub_value, sub_line, sub_body in _entries(lines, 8, here, STEP_KEYS):
+            if sub == 'if':
+                if not sub_value:
+                    _fail(here, sub_line, '`if` needs a value')
+                step['if'] = _condition(sub_value, sub_body, 8)
+            elif sub == 'run':
+                if not sub_value or sub_value[0] in '[{&*!':
+                    _fail(here, sub_line, '`run` must be a scalar or a block scalar')
+            elif sub == 'with':
+                _block(sub, sub_value, sub_line, here)
+                entries = _entries(sub_body, 10, f'{here} with')
+                if not entries:
+                    _fail(here, sub_line, '`with` is empty')
+                for w_key, w_value, w_line, w_body in entries:
+                    if BLOCK_SCALAR.fullmatch(w_value):
+                        continue
+                    _single(w_key, w_value, w_line, w_body, f'{here} with')
+            elif sub == 'env':
+                _mapping(sub, sub_value, sub_line, sub_body, 10, here, None, ENV_NAME)
+            else:
+                step[sub] = _single(sub, sub_value, sub_line, sub_body, here)
+                if sub == 'uses' and sub_value.startswith('./'):
+                    _fail(here, sub_line, 'local actions are not read')
+        steps.append(step)
     return steps
 
 
-def _step_key(step, key):
-    """Line index of a direct step key (eight spaces), or None."""
-    for i, line in enumerate(step):
-        if _indent(line) == 8 and re.match(rf'{key}:(\s|$)', line.strip()):
-            return i
-    return None
+
+def _job(job_id, body, where):
+    where = f'{where}: job {job_id}'
+    job_if, steps = None, None
+    for key, value, line, sub_body in _entries(body, 4, where, None, None):
+        if key == 'uses':
+            _fail(where, line, 'reusable workflow jobs are not read')
+        if key not in JOB_KEYS:
+            _fail(where, line, f'key `{key}` is not on the allow-list')
+        if key == 'if':
+            if not value:
+                _fail(where, line, '`if` needs a value')
+            job_if = _condition(value, sub_body, 4)
+        elif key == 'steps':
+            steps = _steps(key, value, line, sub_body, where)
+        elif key == 'env':
+            _mapping(key, value, line, sub_body, 6, where, None, ENV_NAME)
+        elif key == 'defaults':
+            _block(key, value, line, where)
+            run = _entries(sub_body, 6, f'{where} defaults', {'run'})
+            if not run:
+                _fail(where, line, '`defaults` is empty')
+            _, run_value, run_line, run_body = run[0]
+            _mapping('run', run_value, run_line, run_body, 8, f'{where} defaults',
+                     {'shell', 'working-directory'})
+        elif key == 'strategy':
+            _block(key, value, line, where)
+            entries = _entries(sub_body, 6, f'{where} strategy',
+                               {'fail-fast', 'max-parallel', 'matrix'})
+            if not entries:
+                _fail(where, line, '`strategy` is empty')
+            for sub, sub_value, sub_line, sub_sub in entries:
+                if sub == 'matrix':
+                    _mapping(sub, sub_value, sub_line, sub_sub, 8, f'{where} strategy',
+                             None, JOB_ID, flow_lists=True)
+                else:
+                    _single(sub, sub_value, sub_line, sub_sub, f'{where} strategy')
+        elif key == 'environment' and not value:
+            _mapping(key, value, line, sub_body, 6, where, {'name', 'url'})
+        else:
+            _single(key, value, line, sub_body, where)
+    if steps is None:
+        raise WorkflowShapeError(f'{where}: no steps block')
+    return job_if, steps
+
+
+def _jobs(text, where):
+    lines = [_Line(number, raw) for number, raw in enumerate(text.split('\n'), 1)]
+    jobs = None
+    for key, value, line, body in _entries(lines, 0, where, TOP_KEYS):
+        if key == 'jobs':
+            _block(key, value, line, where)
+            jobs = _entries(body, 2, f'{where}: jobs', None, JOB_ID)
+            for job_id, job_value, job_line, _ in jobs:
+                _block(job_id, job_value, job_line, f'{where}: jobs')
+    if jobs is None:
+        raise WorkflowShapeError(f'{where}: no top-level jobs: key')
+    if not jobs:
+        raise WorkflowShapeError(f'{where}: no jobs found')
+    return [(job_id, body) for job_id, _, _, body in jobs]
 
 
 def violations(workflow_dir):
@@ -205,41 +369,19 @@ def violations(workflow_dir):
     if not files:
         raise WorkflowShapeError(f'no workflows in {workflow_dir}')
     for path in files:
-        text = path.read_text(encoding='utf-8').replace('\r\n', '\n')
-        _check_text(text)
-        for job_name, job_lines in _jobs(text):
-            job_if, env, steps = _job(job_name, job_lines)
-            job_guard = _guard(job_if, {VARS_TERM})
-            writes_var = any(
-                VAR in line and 'GITHUB_ENV' in line
-                for step in steps for line in step) or any(
-                m.group(1) == VAR for step in steps for line in step
-                for m in GITHUB_ENV_WRITE.finditer(line))
-            env_derived = env.get(VAR) == JOB_ENV_VALUE and not writes_var
+        try:
+            text = path.read_bytes().decode('utf-8').replace('\r\n', '\n')
+        except UnicodeDecodeError as error:
+            raise WorkflowShapeError(f'{path.name}: not UTF-8: {error}') from error
+        _check_text(text, path.name)
+        for job_id, body in _jobs(text, path.name):
+            job_if, steps = _job(job_id, body, path.name)
+            if _guard(job_if):
+                continue
             for step in steps:
-                text_of_step = '\n'.join(step)
-                uses = _step_key(step, 'uses')
-                if uses is not None and step[uses].strip()[5:].strip().startswith('./'):
-                    raise WorkflowShapeError(
-                        f'{path.name}: job {job_name}: local actions are not read')
-                uploads = 'actions/upload-artifact' in text_of_step
-                packages = bool(PACKAGING_RUN.search(text_of_step)) or (
-                    uploads and PACKAGE_PATH.search(text_of_step))
-                if not packages or job_guard:
+                if not _packages(step['text']) or _guard(step['if']):
                     continue
-                step_env = _step_key(step, 'env')
-                overrides = step_env is not None and any(
-                    re.match(rf'\s*{VAR}\s*:', line)
-                    for line in step[step_env + 1:]
-                    if _indent(line) > 8)
-                if_line = _step_key(step, 'if')
-                step_if = _condition(step, if_line, 8) if if_line is not None else None
-                terms = {VARS_TERM} | ({ENV_TERM} if env_derived and not overrides else set())
-                if _guard(step_if, terms):
-                    continue
-                name_line = _step_key(step, 'name')
-                name = step[name_line].strip()[5:].strip() if name_line is not None else '(unnamed)'
-                found.append(f'{path.name}: job {job_name}: step {name}')
+                found.append(f"{path.name}: job {job_id}: step {step['name'] or '(unnamed)'}")
     return found
 
 

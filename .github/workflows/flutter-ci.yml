@@ -310,7 +310,7 @@ jobs:
 
       - name: Build verification APK
         id: build
-        if: env.ATOMIC_ANDROID_PACKAGING == 'enabled'
+        if: vars.ATOMIC_ANDROID_PACKAGING == 'enabled'
         # The Gradle distribution and some dependencies are served from GitHub
         # release downloads, which intermittently answer 5xx. Retry only those
         # download failures, at most three attempts; any other failure fails
@@ -330,7 +330,7 @@ jobs:
           done
 
       - name: Verify retained artwork in the built APK
-        if: env.ATOMIC_ANDROID_PACKAGING == 'enabled'
+        if: vars.ATOMIC_ANDROID_PACKAGING == 'enabled'
         run: python3 tool/verify_mascot_assets.py --apk build/app/outputs/flutter-apk/app-debug.apk
       - name: Report deferred Android packaging
         if: env.ATOMIC_ANDROID_PACKAGING != 'enabled'
@@ -480,7 +480,7 @@ jobs:
           retention-days: 1
 
       - name: Upload non-production debug APK
-        if: steps.secret_scan.outcome == 'success' && env.ATOMIC_ANDROID_PACKAGING == 'enabled'
+        if: steps.secret_scan.outcome == 'success' && vars.ATOMIC_ANDROID_PACKAGING == 'enabled'
         id: apk-upload
         uses: actions/upload-artifact@v6
         with:
