@@ -1,8 +1,10 @@
 """Every Android packaging step in .github/workflows must be opt-in.
 
 A step packages when it builds an APK, app bundle or APK set (flutter build
-for any target other than web, desktop or iOS; Gradle assemble, bundle,
-install or package tasks; bundletool build-apks) or uploads a file whose path
+for any target other than web, desktop or iOS; a `gradle` or `gradlew`
+command in its `run` unless every argument is a known non-packaging task or
+option such as `test`, `lint` or `--version`, and Gradle assemble, bundle,
+install or package tasks anywhere in the step; bundletool build-apks) or uploads a file whose path
 names an .apk, .aab or .apks. Each such step must run only when the
 repository variable ATOMIC_ANDROID_PACKAGING is 'enabled': its job's `if:`
 or its own `if:` must be a guard.
@@ -30,12 +32,22 @@ structure, not as general YAML:
 - job and step `env:`, step `with:`, `defaults:`, `strategy:` and
   `environment:` as block mappings of plain keys one level deeper.
 
+Values are read as YAML reads them before they are inspected. A plain value
+ends at ` #`; a single-quoted value turns `''` into `'`; a double-quoted value
+has its backslash escapes decoded (hex, Unicode and one-letter). A quoted value
+must close on its own line with only a comment after it, and an unknown escape
+is refused. Commands, action references and upload paths are checked in
+both their decoded and their source form, and a backslash line continuation
+in a command is joined first. A local action is any `uses:` whose decoded
+reference starts with `.`.
+
 Anything else fails the check (exit 2) instead of being skipped or read as
 an empty job: an unknown, duplicated or quoted key, any other indentation,
 an inline mapping or flow collection (only a strategy matrix value may be a
-flow list), a value continued where one line is expected, tabs or other
-line breaks, a byte order mark, YAML anchors or aliases, reusable workflow
-jobs and local actions. Adding a new key or shape needs a reviewed change to
+flow list), a value continued where one line is expected, an unterminated
+or multi-line quoted value, an unknown escape, text after a closing quote,
+tabs or other line breaks, a byte order mark, YAML anchors or aliases,
+reusable workflow jobs and local actions. Adding a new key or shape needs a reviewed change to
 this file.
 
 It checks the workflow files only. A packaging command assembled at run
@@ -55,8 +67,24 @@ FLUTTER_BUILD = re.compile(r'\bflutter(?:\s+-\S+)*\s+build\s+(\S+)', re.I)
 NOT_ANDROID_TARGETS = {'web', 'linux', 'windows', 'macos', 'ios', 'ipa',
                        'ios-framework', 'macos-framework'}
 OTHER_PACKAGING = re.compile(
-    r'gradlew\S*\s+[^\n]*\b(assemble|bundle|install|package)\w*'
+    r'\bgradlew?\b[^\n]*\b(assemble|bundle|install|package)\w*'
     r'|bundletool\S*\s+build-apks', re.I)
+# A `gradle` or `gradlew` command in a step's `run` counts unless every one
+# of its arguments is on this short non-packaging list: `build`, abbreviated
+# task names, variables and options such as -p or --init-script can all
+# assemble packages, so anything else is treated as packaging.
+GRADLE_COMMAND = re.compile(
+    r'(?:^|[\s;&|(`"\'])(?:[\w.~$/-]*/)?gradlew?(?:\.bat)?(?=[\s;&|)`"\']|$)'
+    r'(?P<args>[^;&|)\n`]*)', re.I | re.M)
+GRADLE_NOT_PACKAGING = {'test', 'lint', 'tasks', 'help', 'dependencies', 'clean',
+                        '--version', '-v', '--help', '-h', '--stacktrace', '-s',
+                        '--info', '-i', '--quiet', '-q', '--no-daemon', '--offline'}
+CONTINUATION = re.compile(r'\\\n[ \t]*')
+DOUBLE_ESCAPES = {'0': chr(0), 'a': chr(7), 'b': chr(8), 't': chr(9), chr(9): chr(9),
+                  'n': chr(10), 'v': chr(11), 'f': chr(12), 'r': chr(13), 'e': chr(27),
+                  ' ': ' ', '"': '"', '/': '/', chr(92): chr(92), 'N': chr(0x85),
+                  '_': chr(0xa0), 'L': chr(0x2028), 'P': chr(0x2029)}
+HEX_ESCAPES = {'x': 2, 'u': 4, 'U': 8}
 PACKAGE_PATH = re.compile(r'\.(apk|aab|apks)\b', re.I)
 TERM = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*(\.[A-Za-z_][A-Za-z0-9_-]*)*"
                   r" (==|!=) ('[^'#]*'|true|false|null|-?[0-9]+)")
@@ -149,15 +177,74 @@ def _meaningful(body):
     return [line for line in body if not line.blank]
 
 
+def _double_quoted(value, where, line):
+    """(decoded text, rest of the line) for a double-quoted [value]."""
+    out, i = [], 1
+    while i < len(value):
+        char = value[i]
+        if char == '"':
+            return ''.join(out), value[i + 1:]
+        if char == chr(92):
+            if i + 1 >= len(value):
+                break  # an escaped line break: the value continues
+            code = value[i + 1]
+            if code in DOUBLE_ESCAPES:
+                out.append(DOUBLE_ESCAPES[code])
+                i += 2
+                continue
+            width = HEX_ESCAPES.get(code)
+            digits = value[i + 2:i + 2 + width] if width else ''
+            if not width or len(digits) != width or not re.fullmatch('[0-9A-Fa-f]+', digits):
+                _fail(where, line, f'unknown escape in a quoted value: {value[i:i + 2]}')
+            point = int(digits, 16)
+            if point > 0x10FFFF:
+                _fail(where, line, f'escape out of range in a quoted value: {value[i:i + 2 + width]}')
+            out.append(chr(point))
+            i += 2 + width
+            continue
+        out.append(char)
+        i += 1
+    _fail(where, line, 'a quoted value must close on its own line')
+
+
+def _single_quoted(value, where, line):
+    """(decoded text, rest of the line) for a single-quoted [value]."""
+    out, i = [], 1
+    while i < len(value):
+        if value[i] == "'":
+            if value[i + 1:i + 2] == "'":
+                out.append("'")
+                i += 2
+                continue
+            return ''.join(out), value[i + 1:]
+        out.append(value[i])
+        i += 1
+    _fail(where, line, 'a quoted value must close on its own line')
+
+
+def _scalar(value, where, line):
+    """[value] as YAML reads a one-line scalar: quotes and escapes decoded,
+    a plain value's trailing comment removed. Anything else is refused."""
+    if value[:1] in ('"', "'"):
+        decode = _double_quoted if value[0] == '"' else _single_quoted
+        text, rest = decode(value, where, line)
+        rest = rest.strip()
+        if rest and not rest.startswith('#'):
+            _fail(where, line, f'text after a quoted value is not read: {rest}')
+        return text
+    cut = value.find(' #')
+    return value if cut < 0 else value[:cut].rstrip()
+
+
 def _single(key, value, line, body, where):
-    """A one-line scalar value: no flow collection, block or continuation."""
+    """A one-line scalar value, decoded: no flow collection, block or continuation."""
     if not value:
         _fail(where, line, f'`{key}` needs a one-line value')
     if value[0] in '[{|>&*!':
         _fail(where, line, f'`{key}`: flow, block or tagged values are not read')
     if _meaningful(body):
         _fail(where, _meaningful(body)[0], f'`{key}` value continues onto another line')
-    return value
+    return _scalar(value, where, line)
 
 
 def _block(key, value, line, where):
@@ -172,13 +259,15 @@ def _mapping(key, value, line, body, indent, where, allowed=None,
     entries = _entries(body, indent, f'{where} {key}', allowed, key_pattern)
     if not entries:
         _fail(where, line, f'`{key}` is empty')
+    values = {}
     for sub, sub_value, sub_line, sub_body in entries:
         if (flow_lists and sub_value.startswith('[') and sub_value.endswith(']')
                 and not re.search(r'[\[\]{}]', sub_value[1:-1])
                 and not _meaningful(sub_body)):
+            values[sub] = sub_value
             continue
-        _single(sub, sub_value, sub_line, sub_body, f'{where} {key}')
-    return {sub: sub_value for sub, sub_value, _, _ in entries}
+        values[sub] = _single(sub, sub_value, sub_line, sub_body, f'{where} {key}')
+    return values
 
 
 def _condition(value, body, indent):
@@ -224,12 +313,20 @@ def _guard(value):
     return GUARD_TERM in conjuncts
 
 
-def _packages(text):
+def _packages(text, command):
+    """Whether a step packages. [text] is the step's source plus every
+    decoded value; [command] is its decoded `run` (empty when none)."""
+    text = CONTINUATION.sub(' ', text)
+    command = CONTINUATION.sub(' ', command)
     for match in FLUTTER_BUILD.finditer(text):
         if match.group(1).lower() not in NOT_ANDROID_TARGETS:
             return True
     if OTHER_PACKAGING.search(text):
         return True
+    for match in GRADLE_COMMAND.finditer(command):
+        args = match.group('args').split()
+        if not args or any(a.lower() not in GRADLE_NOT_PACKAGING for a in args):
+            return True
     return 'actions/upload-artifact' in text and bool(PACKAGE_PATH.search(text))
 
 
@@ -272,7 +369,7 @@ def _steps(key, value, line, body, where):
     steps = []
     for index, lines in enumerate(items, 1):
         here = f'{where} step {index}'
-        step = {'if': None, 'name': None, 'uses': None,
+        step = {'if': None, 'name': None, 'uses': None, 'run': '', 'values': [],
                 'text': '\n'.join(l.raw for l in lines)}
         for sub, sub_value, sub_line, sub_body in _entries(lines, 8, here, STEP_KEYS):
             if sub == 'if':
@@ -282,6 +379,15 @@ def _steps(key, value, line, body, where):
             elif sub == 'run':
                 if not sub_value or sub_value[0] in '[{&*!':
                     _fail(here, sub_line, '`run` must be a scalar or a block scalar')
+                if sub_value[0] in ('"', "'"):
+                    if _meaningful(sub_body):
+                        _fail(here, sub_line, 'a quoted `run` must close on its own line')
+                    step['run'] = _scalar(sub_value, here, sub_line)
+                elif BLOCK_SCALAR.fullmatch(sub_value):
+                    step['run'] = '\n'.join(l.raw for l in sub_body)  # no escapes in a block
+                else:
+                    step['run'] = '\n'.join([_scalar(sub_value, here, sub_line)]
+                                            + [l.text for l in _meaningful(sub_body)])
             elif sub == 'with':
                 _block(sub, sub_value, sub_line, here)
                 entries = _entries(sub_body, 10, f'{here} with')
@@ -289,13 +395,15 @@ def _steps(key, value, line, body, where):
                     _fail(here, sub_line, '`with` is empty')
                 for w_key, w_value, w_line, w_body in entries:
                     if BLOCK_SCALAR.fullmatch(w_value):
+                        step['values'].append('\n'.join(l.raw for l in w_body))
                         continue
-                    _single(w_key, w_value, w_line, w_body, f'{here} with')
+                    step['values'].append(_single(w_key, w_value, w_line, w_body, f'{here} with'))
             elif sub == 'env':
-                _mapping(sub, sub_value, sub_line, sub_body, 10, here, None, ENV_NAME)
+                step['values'] += _mapping(sub, sub_value, sub_line, sub_body, 10, here,
+                                           None, ENV_NAME).values()
             else:
                 step[sub] = _single(sub, sub_value, sub_line, sub_body, here)
-                if sub == 'uses' and sub_value.startswith('./'):
+                if sub == 'uses' and step[sub].strip().startswith('.'):
                     _fail(here, sub_line, 'local actions are not read')
         steps.append(step)
     return steps
@@ -379,7 +487,9 @@ def violations(workflow_dir):
             if _guard(job_if):
                 continue
             for step in steps:
-                if not _packages(step['text']) or _guard(step['if']):
+                decoded = [step['run'], step['uses'] or '', step['name'] or ''] + step['values']
+                text = '\n'.join([step['text']] + decoded)
+                if not _packages(text, step['run']) or _guard(step['if']):
                     continue
                 found.append(f"{path.name}: job {job_id}: step {step['name'] or '(unnamed)'}")
     return found

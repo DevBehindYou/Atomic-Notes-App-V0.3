@@ -475,5 +475,138 @@ class ReviewR12Test(unittest.TestCase):
                 self.assertEqual(main(['check', directory]), code)
 
 
+BS = chr(92)  # a YAML backslash; built here so no escape is decoded by Python
+
+
+def steps(*lines, guard=False):
+    """One job whose steps block is [lines] (already indented six spaces)."""
+    head = HEAD + '  build:\n'
+    if guard:
+        head += f'    if: {GUARD}\n'
+    return head + '    runs-on: x\n    steps:\n' + ''.join(line + '\n' for line in lines)
+
+
+class ReviewR15Test(unittest.TestCase):
+    """Codex review R15: values are read as YAML reads them, or refused."""
+
+    outcome = ReviewR12Test.outcome
+
+    def test_reviewer_packet_5_probes(self):
+        cases = {
+            'escaped-run': (steps(f'      - run: "flutter{BS}x20build{BS}x20apk --release"'),
+                            'violation'),
+            'escaped-upload': (steps('      - uses: actions/upload-artifact@v6',
+                                     '        with:',
+                                     f'          path: "out/app{BS}u002eapk"'), 'violation'),
+            'quoted-local-action': (steps('      - uses: "./.github/actions/package"'), 'refused'),
+            'single-quoted-local-action': (steps("      - uses: './.github/actions/package'"),
+                                           'refused'),
+            'plain-gradle': (steps('      - run: gradle assembleRelease'), 'violation'),
+            'guard-control': (steps(f'      - if: {GUARD}', '        run: flutter build apk'),
+                              'accepted'),
+        }
+        for name, (workflow, expected) in cases.items():
+            with self.subTest(name):
+                self.assertEqual(self.outcome(workflow), expected)
+
+    def test_decoded_values_are_inspected(self):
+        upload = ('      - uses: actions/upload-artifact@v6', '        with:')
+        cases = {
+            'hex escapes': f'      - run: "flutter{BS}x20build{BS}x20apk"',
+            'unicode escapes': f'      - run: "flutter{BS}u0020build{BS}u0020apk"',
+            'long unicode escape': f'      - run: "flutter{BS}U00000020build apk"',
+            'escaped first letter': f'      - run: "{BS}x66lutter build apk"',
+            'tab escape': f'      - run: "flutter{BS}tbuild apk"',
+            'newline escape': f'      - run: "flutter{BS}nbuild apk"',
+            'escaped space': f'      - run: "flutter{BS} build apk"',
+            'single quoted': "      - run: 'flutter build apk'",
+            'single quoted with a quote': "      - run: 'flutter build apk # it''s packaging'",
+            'plain with a comment': '      - run: flutter build apk # release',
+        }
+        for name, line in cases.items():
+            with self.subTest(name):
+                self.assertEqual(self.outcome(steps(line)), 'violation')
+        for name, extra in {
+                'escaped upload path': (f'          path: "out/app{BS}x2eaab"',),
+                'single-quoted upload path': ("          path: 'out/app.apk'",),
+                'escaped action name': None,
+        }.items():
+            with self.subTest(name):
+                if extra is None:
+                    workflow = steps(f'      - uses: "actions{BS}x2fupload-artifact@v6"',
+                                     '        with:', '          path: out/app.apk')
+                else:
+                    workflow = steps(*upload, *extra)
+                self.assertEqual(self.outcome(workflow), 'violation')
+
+    def test_gradle_commands_package_unless_every_argument_is_safe(self):
+        for command in ('gradle assembleRelease', 'gradle build', './gradlew aR',
+                        'gradlew $TASK', 'cd android && gradle -p app bundle', 'gradle',
+                        'gradle.bat assembleDebug', 'android/gradlew --init-script x.gradle test',
+                        'sh -c "gradle build"', './gradlew test assembleDebug'):
+            with self.subTest(command):
+                self.assertEqual(self.outcome(steps(f'      - run: {command}')), 'violation')
+        with self.subTest('quoted and escaped'):
+            self.assertEqual(self.outcome(steps(f'      - run: "gradle{BS}x20build"')), 'violation')
+        with self.subTest('continued line'):
+            self.assertEqual(self.outcome(steps('      - run: |',
+                                                f'          ./gradlew {BS}',
+                                                '            assembleRelease')), 'violation')
+        with self.subTest('flutter split by a continuation'):
+            self.assertEqual(self.outcome(steps('      - run: |',
+                                                f'          flutter {BS}',
+                                                '            build apk')), 'violation')
+        for command in ('./gradlew test', 'gradle --version', './gradlew clean lint',
+                        'cd android && ./gradlew --no-daemon test', 'echo done'):
+            with self.subTest(command):
+                self.assertEqual(self.outcome(steps(f'      - run: {command}')), 'accepted')
+        with self.subTest('the setup-java gradle cache is not a command'):
+            self.assertEqual(self.outcome(steps('      - uses: actions/setup-java@v5',
+                                                '        with:', '          cache: gradle')),
+                             'accepted')
+
+    def test_local_actions_are_refused_in_every_form(self):
+        for reference in ('"./x"', "'./x'", '" ./x"', f'"{BS}x2e/x"', '"../x"', '../x',
+                          f"'.{BS}x'"):
+            with self.subTest(reference):
+                self.assertEqual(self.outcome(steps(f'      - uses: {reference}')), 'refused')
+
+    def test_quoted_values_it_cannot_read_are_refused(self):
+        cases = {
+            'unterminated double': '      - run: "flutter build apk',
+            'unterminated single': "      - run: 'flutter build apk",
+            'unknown escape': f'      - run: "flutter {BS}q"',
+            'short hex escape': f'      - run: "flutter {BS}x2"',
+            'out-of-range escape': f'      - run: "{BS}UFFFFFFFF"',
+            'escaped line break': f'      - run: "flutter {BS}',
+            'text after the quote': '      - run: "flutter test" build apk',
+            'quoted name with trailing text': "      - name: 'a' b",
+            'quoted with value continued': ('      - run: "flutter"\n'
+                                            '          build apk'),
+        }
+        for name, line in cases.items():
+            with self.subTest(name):
+                self.assertEqual(self.outcome(steps(line)), 'refused')
+
+    def test_supported_quoted_values_are_accepted(self):
+        workflow = steps(
+            f'      - name: "Check {BS}x41"',
+            '        uses: "actions/checkout@v5"',
+            '        with:',
+            "          flutter-version: '3.44.8'",
+            f'          ref: "main" # {BS}x20',
+            f'      - run: "flutter{BS}x20test"',
+            "        env:",
+            f'          A: "x{BS}ty"',
+            "          B: 'it''s'",
+            f'      - run: "echo {BS}"ok{BS}""',
+            "      - uses: 'actions/upload-artifact@v6'",
+            '        with:',
+            '          path: "ci-proof.json"')
+        self.assertEqual(self.outcome(workflow), 'accepted')
+        guarded = steps(f'      - run: "flutter{BS}x20build apk"', guard=True)
+        self.assertEqual(self.outcome(guarded), 'accepted')
+
+
 if __name__ == '__main__':
     unittest.main()

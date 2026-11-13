@@ -53,10 +53,18 @@ a job without steps: an unknown, duplicated or quoted key, other
 indentation, inline mappings or flow collections (except a strategy matrix
 list), a value continued where one line is expected, tabs or other line
 breaks, a byte order mark, anchors, reusable jobs and local actions. A new
-key or shape needs a reviewed change to the checker. It reads the workflow
-files only: a packaging command assembled at run time, inside a script or
-helper, or inside a third-party action is outside what it can detect or
-prove. The verification proof also fails in deferred mode if any Android
+key or shape needs a reviewed change to the checker.
+
+Values are read as YAML reads them before they are inspected: quoted values
+are unquoted and their escapes decoded, so `run: "flutter\x20build apk"` is
+a build and `uses: "./action"` is a local action. A quoted value that does not
+close on its line, has an unknown escape or has text after its closing quote
+fails the check. Any `gradle` or `gradlew` command in a step's `run` counts
+as packaging unless every argument is a known non-packaging task or option
+(`test`, `lint`, `clean`, `--version` and a few others). It reads the
+workflow files only: a packaging command assembled at run time or by shell
+quoting, inside a script or helper, or inside a third-party action is
+outside what it can detect or prove. The verification proof also fails in deferred mode if any Android
 package is found in the generated output directories.
 
 ## Signed Android release
