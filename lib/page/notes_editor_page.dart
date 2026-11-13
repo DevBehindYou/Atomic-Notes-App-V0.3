@@ -69,6 +69,11 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
   bool _allowPop = false;
   bool _closing = false;
 
+  /// The draft's account or session changed before it was stored (review
+  /// R14). Nothing of the draft is built from then on, even while another
+  /// route covers this one and the close has to wait.
+  bool _retired = false;
+
   /// The save attempt this editor is waiting for; a result for any other
   /// attempt is ignored.
   Object? _attempt;
@@ -306,7 +311,12 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
       result = NoteSaveFailed(error);
     }
     if (!mounted || !identical(_attempt, attempt)) return;
-    setState(() => _attempt = null);
+    setState(() {
+      _attempt = null;
+      if (result case NoteSaveRetired(reason: NoteSaveRetirement.contextChanged)) {
+        _retired = true;
+      }
+    });
     switch (result) {
       case NoteSaveSucceeded():
         _close(true);
@@ -314,7 +324,8 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
         _close(false);
       case NoteSaveRetired(reason: NoteSaveRetirement.contextChanged):
         // The account or session changed: this draft must not stay on screen
-        // for whoever is signed in now, nor be saved into their notes.
+        // for whoever is signed in now, nor be saved into their notes. It is
+        // already hidden; the close still waits for this route to be on top.
         _close(false);
       case NoteSaveRetired(reason: NoteSaveRetirement.deleted):
         await _tellAndClose(
@@ -574,8 +585,8 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
         if (!didPop) _requestClose();
       },
       // While a save is in flight the draft is the submitted snapshot:
-      // input waits for its result.
-      child: _PendingSaveLock(
+      // input waits for its result. A retired draft is not built at all.
+      child: _retired ? const _RetiredDraft() : _PendingSaveLock(
         locked: _saving,
         child: Scaffold(
           backgroundColor: AppColors.paper,
@@ -1355,6 +1366,18 @@ class NoteFieldLocator extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => child;
+}
+
+/// What a retired editor shows while its close waits (review R14): the page
+/// colour and nothing else, so no title, line, tag or image of the draft is
+/// on screen or in the semantics tree for whoever is signed in now.
+class _RetiredDraft extends StatelessWidget {
+  const _RetiredDraft();
+
+  @override
+  Widget build(BuildContext context) => const ExcludeSemantics(
+        child: ColoredBox(color: AppColors.paper, child: SizedBox.expand()),
+      );
 }
 
 /// While a save is pending: no pointer input and no focus, so neither taps

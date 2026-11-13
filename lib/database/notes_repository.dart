@@ -614,6 +614,13 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   bool _isCurrent(_EditorContext context) =>
       identical(context.store, this) && !_disposed && !_stopped &&
       !_lockingVault && !_loggingOut && !_logoutCompleting &&
+      _sameIdentity(context);
+
+  /// Whether [context]'s store, account, session and lifecycle are still
+  /// this store's. Unlike [_isCurrent] it ignores quiescing (a lock drains
+  /// writes it already admitted), so a queued owned write checks only this.
+  bool _sameIdentity(_EditorContext context) =>
+      identical(context.store, this) &&
       _userId == context.uid && _ownsCache(context.uid) &&
       _api.sessionRevision == context.session &&
       _lifecycleRevision == context.lifecycle;
@@ -621,8 +628,9 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   /// Saves an editor's [note] like [save], for [context] only, and reports
   /// what reached the device: the same write ordering and owner checks, plus
   /// a receipt for this exact note instance. The context is checked before
-  /// anything changes, and the write itself is dropped if the account
-  /// changes while it waits or seals.
+  /// anything changes, and the queued write is dropped if the account,
+  /// session or store lifecycle changes before it reaches the box: it is
+  /// checked again when the write starts and after sealing (review R13).
   @override
   Future<NoteLocalSaveReceipt> saveForEditor(
       Note note, NoteEditorContext context) async {
@@ -639,7 +647,7 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
         note.touch();
         note.settleDirty();
         _notes[note.id] = note;
-        final written = await _write(note.id);
+        final written = await _write(note.id, fence: context);
         notifyListeners();
         if (note.dirty) _scheduleAutoSync();
         if (written == null) {
@@ -721,15 +729,19 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   Future<void> _persist(String id) => _write(id);
 
   /// [_persist], also reporting which note instance reached the box, or null
-  /// when the write was dropped.
-  Future<Note?> _write(String id) {
+  /// when the write was dropped. An owned editor save passes its [fence]:
+  /// that write is also dropped unless the fence's identity still holds when
+  /// the write starts and again right before the box is written.
+  Future<Note?> _write(String id, {_EditorContext? fence}) {
     final uid = _userId;
     final write = _writeChain.then((_) async {
+      if (fence != null && !_sameIdentity(fence)) return null;
       final note = _notes[id];
       if (note == null || _userId != uid || !_ownsCache(uid)) return null;
       final sealed = await _sealLocal(note);
       // Encryption can yield while session teardown or account switching runs.
       if (_userId != uid || !_ownsCache(uid) || !_notes.containsKey(id)) return null;
+      if (fence != null && !_sameIdentity(fence)) return null;
       await _box.put(id, sealed);
       return note;
     });

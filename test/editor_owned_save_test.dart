@@ -1,11 +1,13 @@
 // S1 / review R10–R11: while its own save is pending the editor accepts no
 // edits from any input, and the save's completion closes only the editor's
-// own route. The first case in each group is the reviewer fixture
+// own route. Review R14: a draft whose context was retired leaves the screen
+// at once, even while its close waits under another route. The first case in each group is the reviewer fixture
 // (review-evidence/2026-11-12-packet-3/reviewer_s1_edges_test.dart).
 
 import 'dart:async';
 
 import 'package:atomic_notes/database/note.dart';
+import 'package:atomic_notes/database/notes_source.dart';
 import 'package:atomic_notes/page/notes_editor_page.dart';
 import 'package:atomic_notes/state/notes/notes_bloc.dart';
 import 'package:flutter/material.dart';
@@ -226,6 +228,197 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Another page'), findsOneWidget);
       expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('review R14: a retired draft leaves the screen at once', () {
+    const retired = NoteSaveRetired(NoteSaveRetirement.contextChanged);
+    Note privateNote() => Note(
+        id: 'old', title: 'Former account draft title', body: 'Former account draft body');
+
+    /// Nothing of the draft in the widget tree or the semantics tree.
+    void expectRedacted(WidgetTester tester) {
+      expect(find.text('Former account draft title'), findsNothing);
+      expect(find.textContaining('Former account'), findsNothing);
+      expect(
+          find.descendant(
+              of: find.byType(NotesCreaterPage), matching: find.byType(EditableText)),
+          findsNothing);
+      expect(
+          find.semantics.byPredicate((node) {
+            final data = node.getSemanticsData();
+            return '${data.label} ${data.value} ${data.hint} ${data.tooltip}'
+                .contains('Former account');
+          }),
+          findsNothing);
+    }
+
+    testWidgets(
+        'reviewer fixture: under a covering dialog the draft is hidden at '
+        'once, and the editor closes once after it', (tester) async {
+      final handle = tester.ensureSemantics();
+      final nav = GlobalKey<NavigatorState>();
+      final gate = Completer<NoteSaveResult>();
+      final results =
+          await _open(tester, (_) => gate.future, nav: nav, note: privateNote());
+      await tester.tap(find.text('Done'));
+      await tester.pump();
+      unawaited(showDialog<void>(
+          context: nav.currentContext!,
+          builder: (_) => const AlertDialog(title: Text('New account overlay'))));
+      await tester.pumpAndSettle();
+      gate.complete(retired);
+      await tester.pump(); // the result arrives and schedules a frame
+      await tester.pump(); // the next frame already hides the draft
+      expectRedacted(tester);
+      expect(find.byType(NotesCreaterPage), findsOneWidget);
+      await tester.pumpAndSettle();
+      expectRedacted(tester);
+      expect(find.text('New account overlay'), findsOneWidget,
+          reason: 'the covering route stays');
+      expect(find.byType(NotesCreaterPage), findsOneWidget,
+          reason: 'the close waits under the cover');
+      expect(find.text('Retry'), findsNothing);
+      expect(tester.testTextInput.hasAnyClients, isFalse);
+      expect(results, isEmpty);
+      await nav.currentState!.maybePop(); // Back closes the cover
+      await tester.pumpAndSettle();
+      expect(find.byType(NotesCreaterPage), findsNothing);
+      expect(results, [false], reason: 'its own result, exactly once');
+      await nav.currentState!.maybePop();
+      await tester.pumpAndSettle();
+      expect(results, [false]);
+      expect(find.text('Open'), findsOneWidget);
+      handle.dispose();
+    });
+
+    testWidgets('uncovered, it is hidden in the first frame and closes once',
+        (tester) async {
+      final nav = GlobalKey<NavigatorState>();
+      final gate = Completer<NoteSaveResult>();
+      final results =
+          await _open(tester, (_) => gate.future, nav: nav, note: privateNote());
+      await tester.tap(find.text('Done'));
+      await tester.pump();
+      gate.complete(retired);
+      await tester.pump(); // the result arrives and schedules a frame
+      await tester.pump(); // the next frame already hides the draft
+      expectRedacted(tester);
+      await tester.pumpAndSettle();
+      expect(find.byType(NotesCreaterPage), findsNothing);
+      expect(results, [false]);
+    });
+
+    testWidgets('a nested navigator: hidden at once, only the editor closes',
+        (tester) async {
+      final nested = GlobalKey<NavigatorState>();
+      final root = GlobalKey<NavigatorState>();
+      final gate = Completer<NoteSaveResult>();
+      tester.view.physicalSize = const Size(1290, 2700);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+      final results = <bool?>[];
+      await tester.pumpWidget(MaterialApp(
+        navigatorKey: root,
+        home: Scaffold(
+          body: Navigator(
+            key: nested,
+            onGenerateRoute: (_) => MaterialPageRoute<void>(
+              builder: (context) => TextButton(
+                onPressed: () async => results.add(await showDialog<bool>(
+                    context: context,
+                    useRootNavigator: false,
+                    builder: (_) => NotesCreaterPage(
+                        note: privateNote(), onSave: (_) => gate.future))),
+                child: const Text('Open'),
+              ),
+            ),
+          ),
+        ),
+      ));
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Done'));
+      await tester.pump();
+      unawaited(showDialog<void>(
+          context: nested.currentContext!,
+          useRootNavigator: false,
+          builder: (_) => const AlertDialog(title: Text('Nested cover'))));
+      await tester.pumpAndSettle();
+      gate.complete(retired);
+      await tester.pump(); // the result arrives and schedules a frame
+      await tester.pump(); // the next frame already hides the draft
+      expectRedacted(tester);
+      await tester.pumpAndSettle();
+      expect(find.text('Nested cover'), findsOneWidget);
+      nested.currentState!.pop();
+      await tester.pumpAndSettle();
+      expect(find.byType(NotesCreaterPage), findsNothing);
+      expect(find.text('Open'), findsOneWidget,
+          reason: 'the nested home route stays');
+      expect(results, [false]);
+      expect(root.currentState!.canPop(), isFalse);
+    });
+
+    testWidgets('an editor route removed while retired completes nothing',
+        (tester) async {
+      final nav = GlobalKey<NavigatorState>();
+      final gate = Completer<NoteSaveResult>();
+      final results =
+          await _open(tester, (_) => gate.future, nav: nav, note: privateNote());
+      await tester.tap(find.text('Done'));
+      await tester.pump();
+      final editorRoute =
+          ModalRoute.of(tester.element(find.byType(NotesCreaterPage)))!;
+      unawaited(showDialog<void>(
+          context: nav.currentContext!,
+          builder: (_) => const AlertDialog(title: Text('Another page'))));
+      await tester.pumpAndSettle();
+      gate.complete(retired);
+      await tester.pump(); // the result arrives and schedules a frame
+      await tester.pump(); // the next frame already hides the draft
+      expectRedacted(tester);
+      nav.currentState!.removeRoute(editorRoute);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.text('Another page'), findsOneWidget);
+      nav.currentState!.pop();
+      await tester.pumpAndSettle();
+      expect(find.byType(NotesCreaterPage), findsNothing);
+      expect(results, isNot(contains(false)),
+          reason: 'a removed route has nothing left to complete');
+    });
+
+    testWidgets('an editor route replaced while retired completes nothing',
+        (tester) async {
+      final nav = GlobalKey<NavigatorState>();
+      final gate = Completer<NoteSaveResult>();
+      final results =
+          await _open(tester, (_) => gate.future, nav: nav, note: privateNote());
+      await tester.tap(find.text('Done'));
+      await tester.pump();
+      final editorRoute =
+          ModalRoute.of(tester.element(find.byType(NotesCreaterPage)))!;
+      unawaited(showDialog<void>(
+          context: nav.currentContext!,
+          builder: (_) => const AlertDialog(title: Text('Cover'))));
+      await tester.pumpAndSettle();
+      gate.complete(retired);
+      await tester.pump(); // the result arrives and schedules a frame
+      await tester.pump(); // the next frame already hides the draft
+      expectRedacted(tester);
+      nav.currentState!.replace(
+          oldRoute: editorRoute,
+          newRoute: MaterialPageRoute<bool>(
+              builder: (_) => const Scaffold(body: Text('Replacement'))));
+      await tester.pumpAndSettle();
+      nav.currentState!.pop(); // the cover
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.text('Replacement'), findsOneWidget,
+          reason: 'the completion never pops another route');
+      expect(find.byType(NotesCreaterPage), findsNothing);
+      expect(results, isNot(contains(false)));
     });
   });
 }

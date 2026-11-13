@@ -16,12 +16,14 @@ import 'package:hive_ce/hive_ce.dart';
 
 import 'notes_repository_lifecycle_test.dart' show TestApi, TestVault;
 
-/// A vault whose sealing can be made to fail.
+/// A vault whose sealing can be made to fail, counting every seal started.
 class _FailingVault extends TestVault {
   Object? failure;
+  int seals = 0;
 
   @override
   Future<String> encryptContent(Map<String, dynamic> content) async {
+    seals++;
     final error = failure;
     if (error != null) throw error;
     return super.encryptContent(content);
@@ -203,6 +205,171 @@ void main() {
     expect(await repository.saveForEditor(draft('n2'), context),
         isA<NoteLocalSaveRetired>());
     expect(box.containsKey('n2'), isFalse);
+  });
+
+  group('review R13: the queued write checks its own context', () {
+    test('a same-account session change while sealing retires before the box',
+        () async {
+      final context = repository.captureEditorContext()!;
+      holdSeals();
+      final receipt = repository.saveForEditor(draft('n1'), context);
+      await vault.sealEntered!.future;
+      api.sessionRevision++; // same account, new session
+      release();
+      expect((await receipt as NoteLocalSaveRetired).reason,
+          NoteSaveRetirement.contextChanged);
+      expect(box.containsKey('n1'), isFalse);
+    });
+
+    test('a same-account session change while queued retires before sealing',
+        () async {
+      final context = repository.captureEditorContext()!;
+      holdSeals();
+      final earlier = repository.save(draft('other'));
+      await vault.sealEntered!.future;
+      final receipt = repository.saveForEditor(draft('n1'), context);
+      api.sessionRevision++;
+      release();
+      await earlier;
+      expect((await receipt as NoteLocalSaveRetired).reason,
+          NoteSaveRetirement.contextChanged);
+      expect(vault.seals, 1, reason: 'only the earlier write was sealed');
+      expect(box.containsKey('n1'), isFalse);
+      expect(box.containsKey('other'), isTrue,
+          reason: 'the regular save ahead of it is unchanged');
+    });
+
+    test('a store lifecycle change while sealing retires before the box',
+        () async {
+      final context = repository.captureEditorContext()!;
+      holdSeals();
+      final receipt = repository.saveForEditor(draft('n1'), context);
+      await vault.sealEntered!.future;
+      final stopping = repository.stop();
+      release();
+      await stopping;
+      expect((await receipt as NoteLocalSaveRetired).reason,
+          NoteSaveRetirement.contextChanged);
+      expect(box.containsKey('n1'), isFalse);
+    });
+
+    test('a regular save in the same race still writes (unchanged)', () async {
+      holdSeals();
+      final saving = repository.save(draft('n1'));
+      await vault.sealEntered!.future;
+      api.sessionRevision++;
+      release();
+      await saving;
+      expect(box.containsKey('n1'), isTrue);
+    });
+
+    test('a write committed before a session change stays stored (ADR-018)',
+        () async {
+      final context = repository.captureEditorContext()!;
+      // Runs after the write reached the box, before the receipt is made.
+      void changeSession() {
+        if (box.containsKey('n1')) api.sessionRevision++;
+      }
+      repository.addListener(changeSession);
+      final result = await repository.saveForEditor(draft('n1'), context);
+      repository.removeListener(changeSession);
+      expect(result, isA<NoteLocalSaveStored>());
+      expect(api.sessionRevision, 1);
+      expect(box.containsKey('n1'), isTrue);
+    });
+
+    test('a lock while sealing drains the admitted write and stores it',
+        () async {
+      final context = repository.captureEditorContext()!;
+      holdSeals();
+      final receipt = repository.saveForEditor(draft('n1'), context);
+      await vault.sealEntered!.future;
+      final locking = repository.lockVault();
+      expect(repository.captureEditorContext(), isNull);
+      release();
+      expect(await receipt, isA<NoteLocalSaveStored>());
+      await locking;
+      expect(box.containsKey('n1'), isTrue);
+      expect(repository.byId('n1'), isNull,
+          reason: 'the lock removed the plaintext from memory');
+      expect(await repository.saveForEditor(draft('n2'), context),
+          isA<NoteLocalSaveRetired>(),
+          reason: 'the lock reloaded the store, so the old context is gone');
+      expect(box.containsKey('n2'), isFalse);
+    });
+
+    test('logout while sealing is refused and the write stores', () async {
+      final context = repository.captureEditorContext()!;
+      holdSeals();
+      final receipt = repository.saveForEditor(draft('n1'), context);
+      await vault.sealEntered!.future;
+      var tornDown = false;
+      Object? refused;
+      try {
+        await repository.logoutSafely(finishLocal: (_) async => tornDown = true);
+      } catch (error) {
+        refused = error;
+      }
+      release();
+      expect(await receipt, isA<NoteLocalSaveStored>());
+      expect(refused, isNotNull);
+      expect(tornDown, isFalse);
+      expect(box.containsKey('n1'), isTrue);
+    });
+
+    test('two editors: the replaced one stores only on an explicit retry',
+        () async {
+      final firstContext = repository.captureEditorContext()!;
+      final secondContext = repository.captureEditorContext()!;
+      holdSeals();
+      final earlier = repository.save(draft('other'));
+      await vault.sealEntered!.future;
+      final first = draft('n1', 'First editor');
+      final firstReceipt = repository.saveForEditor(first, firstContext);
+      final secondReceipt =
+          repository.saveForEditor(draft('n1', 'Second editor'), secondContext);
+      release();
+      await earlier;
+      expect((await firstReceipt as NoteLocalSaveRetired).reason,
+          NoteSaveRetirement.replaced);
+      expect(await secondReceipt, isA<NoteLocalSaveStored>());
+      expect(repository.byId('n1')!.title, 'Second editor');
+      expect(await repository.saveForEditor(first, firstContext),
+          isA<NoteLocalSaveStored>());
+      expect(repository.byId('n1')!.title, 'First editor');
+    });
+
+    test('a retired attempt is never retried into another account', () async {
+      final context = repository.captureEditorContext()!;
+      holdSeals();
+      final receipt = repository.saveForEditor(draft('n1'), context);
+      await vault.sealEntered!.future;
+      switchAccount();
+      release();
+      expect((await receipt as NoteLocalSaveRetired).reason,
+          NoteSaveRetirement.contextChanged);
+      // Draining the store's queue writes nothing more: no retry, no copy.
+      await repository.stop(waitForSync: true);
+      expect(vault.seals, 1);
+      expect(box.containsKey('n1'), isFalse);
+    });
+
+    test('a missing context is rejected at once: no seal and no write',
+        () async {
+      final bloc = NotesBloc(
+          source: repository,
+          isSyncEnabled: () => false,
+          isOnline: () async => true);
+      holdSeals();
+      final ack = NoteSaveAck();
+      bloc.add(NoteSaved(draft('n1'), ack: ack));
+      final result = await ack.result.timeout(const Duration(seconds: 2));
+      release();
+      await bloc.close();
+      expect(result, isA<NoteSaveRejected>());
+      expect(vault.seals, 0);
+      expect(box.containsKey('n1'), isFalse);
+    });
   });
 
   test('signed out: no editor context', () async {
