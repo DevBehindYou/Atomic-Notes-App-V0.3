@@ -608,5 +608,93 @@ class ReviewR15Test(unittest.TestCase):
         self.assertEqual(self.outcome(guarded), 'accepted')
 
 
+
+def decoded_run(workflow):
+    """The checker's reading of the first step's `run` in [workflow]."""
+    import check_workflow_packaging as checker
+    jobs = checker._jobs(workflow, 'w.yml')
+    _, job_steps = checker._job(jobs[0][0], jobs[0][1], 'w.yml')
+    return job_steps[0]['run']
+
+
+def block(header, *lines, guard=False):
+    """One step whose `run` is a block scalar with [header] and [lines]."""
+    body = ['          ' + line if line else '' for line in lines]
+    return steps(f'      - run: {header}', *body, guard=guard)
+
+
+class ReviewR17Test(unittest.TestCase):
+    """Codex review R17: block and continued values are read with their YAML
+    meaning before the command is classified."""
+
+    outcome = ReviewR12Test.outcome
+
+    def test_reviewer_packet_6_probes(self):
+        cases = {
+            'folded-gradle-build': (block('>-', 'gradle test', 'build'), 'violation'),
+            'plain-folded-gradle-build': (
+                steps('      - run: gradle test', '          build'), 'refused'),
+            'folded-wrapper-abbreviation': (block('>', './gradlew test', 'aR'), 'violation'),
+            'literal-gradle-test-control': (block('|', 'gradle test', 'echo done'), 'accepted'),
+            'folded-guard-control': (
+                block('>-', 'gradle test', 'build', guard=True), 'accepted'),
+        }
+        for name, (workflow, expected) in cases.items():
+            with self.subTest(name):
+                self.assertEqual(self.outcome(workflow), expected)
+
+    def test_block_scalars_decode_as_yaml_does(self):
+        # Expected values were checked against PyYAML 6.0.3 (packet 7 evidence).
+        cases = {
+            ('>', ('gradle test', 'build')): 'gradle test build',
+            ('>-', ('gradle test', '', 'build')): 'gradle test\nbuild',
+            ('>', ('gradle test', '  --info', 'build')): 'gradle test\n  --info\nbuild',
+            ('>+', ('one', 'two', '', '')): 'one two',
+            ('|', ('gradle test', 'build')): 'gradle test\nbuild',
+            ('|-', ('one', '  two')): 'one\n  two',
+            ('|+', ('one', '')): 'one',
+            ('>', ('# kept as text', 'next')): '# kept as text next',
+        }
+        for (header, lines), expected in cases.items():
+            with self.subTest(header=header, lines=lines):
+                self.assertEqual(decoded_run(block(header, *lines)).rstrip('\n'), expected)
+
+    def test_folded_commands_are_classified_whole(self):
+        for header in ('>', '>-', '>+'):
+            for lines in (('gradle test', 'build'), ('./gradlew', 'assembleRelease'),
+                          ('flutter', 'build apk'), ('gradle --info', 'aR')):
+                with self.subTest(header=header, lines=lines):
+                    self.assertEqual(self.outcome(block(header, *lines)), 'violation')
+        for lines in (('gradle test', '', 'echo build'), ('gradle test', '  --info')):
+            with self.subTest('separate commands after folding', lines=lines):
+                self.assertEqual(self.outcome(block('>', *lines)), 'accepted')
+        with self.subTest('literal lines stay separate commands'):
+            self.assertEqual(self.outcome(block('|', './gradlew test', 'echo aR')), 'accepted')
+
+    def test_folded_upload_paths_are_inspected(self):
+        workflow = steps('      - uses: actions/upload-artifact@v6', '        with:',
+                         '          path: >', '            out/app', '            x.apk')
+        self.assertEqual(self.outcome(workflow), 'violation')
+
+    def test_multi_line_forms_it_cannot_read_are_refused(self):
+        cases = {
+            'plain run continued': steps('      - run: gradle test', '          build'),
+            'plain run continued after a comment line': steps(
+                '      - run: echo ok', '          # note', '          gradle build'),
+            'literal indentation indicator': block('|2', 'gradle test'),
+            'folded indentation indicator': block('>1-', 'gradle test'),
+            'with indentation indicator': steps(
+                '      - uses: actions/upload-artifact@v6', '        with:',
+                '          path: |2', '            out/app.apk'),
+            'block line after a less-indented comment': steps(
+                '      - run: |', '            echo one', '          # ends the block',
+                '            echo two'),
+            'block line less indented than its content': steps(
+                '      - run: |', '            echo one', '           echo two'),
+        }
+        for name, workflow in cases.items():
+            with self.subTest(name):
+                self.assertEqual(self.outcome(workflow), 'refused')
+
 if __name__ == '__main__':
     unittest.main()

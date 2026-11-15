@@ -36,7 +36,12 @@ Values are read as YAML reads them before they are inspected. A plain value
 ends at ` #`; a single-quoted value turns `''` into `'`; a double-quoted value
 has its backslash escapes decoded (hex, Unicode and one-letter). A quoted value
 must close on its own line with only a comment after it, and an unknown escape
-is refused. Commands, action references and upload paths are checked in
+is refused. A block scalar is read as YAML reads it: a literal block (`|`)
+keeps its lines, a folded block (`>`) joins them with spaces except around
+blank and more-indented lines, and `-` or `+` chomping is accepted. A block
+with an indentation indicator (`|2`, `>1-`) is refused, and so is a plain
+`run` value continued onto another line (a plain `if:` is joined with spaces
+as YAML does). Commands, action references and upload paths are checked in
 both their decoded and their source form, and a backslash line continuation
 in a command is joined first. A local action is any `uses:` whose decoded
 reference starts with `.`.
@@ -47,12 +52,14 @@ an inline mapping or flow collection (only a strategy matrix value may be a
 flow list), a value continued where one line is expected, an unterminated
 or multi-line quoted value, an unknown escape, text after a closing quote,
 tabs or other line breaks, a byte order mark, YAML anchors or aliases,
-reusable workflow jobs and local actions. Adding a new key or shape needs a reviewed change to
-this file.
+reusable workflow jobs and local actions. Adding a new key or shape needs a
+reviewed change to this file.
 
 It checks the workflow files only. A packaging command assembled at run
-time, inside a script or helper, or inside a third-party action is outside
-what it can detect or prove.
+time or by shell quoting (for example `flutter "build" apk`), inside a
+script or helper, inside a Gradle build script that attaches work to an
+allowed task, or inside a third-party action is outside what it can detect
+or prove.
 
 Usage: python3 tool/check_workflow_packaging.py [WORKFLOW_DIR]
 """
@@ -93,6 +100,7 @@ KEY_LINE = re.compile(r'(?P<key>[A-Za-z0-9_-]+):(?: +(?P<value>.*))?')
 JOB_ID = re.compile(r'[A-Za-z_][A-Za-z0-9_-]*')
 ENV_NAME = re.compile(r'[A-Za-z_][A-Za-z0-9_]*')
 BLOCK_SCALAR = re.compile(r'[|>][1-9]?[+-]?[1-9]?(\s+#.*)?')
+BLOCK_HEADER = re.compile(r'(?P<style>[|>])[+-]?(\s+#.*)?')  # no indentation indicator
 FOLDED = re.compile(r'>-?(\s+#.*)?')
 FORBIDDEN = {'\t': 'tab', '\r': 'carriage return', '\x85': 'next line',
              '\u2028': 'line separator', '\u2029': 'paragraph separator',
@@ -234,6 +242,56 @@ def _scalar(value, where, line):
         return text
     cut = value.find(' #')
     return value if cut < 0 else value[:cut].rstrip()
+
+
+def _fold(lines):
+    """Folds block-scalar [lines] as YAML does for `>`: a break between two
+    ordinary lines becomes a space, each blank line a newline, and breaks
+    next to a more-indented line are kept."""
+    out, previous, blank = [], None, 0
+    for text in lines:
+        if not text:
+            blank += 1
+            continue
+        kind = 'more' if text[0] == ' ' else 'ordinary'
+        if previous is None:
+            out.append('\n' * blank)
+        elif previous == 'ordinary' and kind == 'ordinary':
+            out.append(' ' if blank == 0 else '\n' * blank)
+        else:
+            out.append('\n' * (blank + 1))
+        out.append(text)
+        previous, blank = kind, 0
+    return ''.join(out)
+
+
+def _block_scalar(value, body, indent, where, line):
+    """The text of a literal (`|`) or folded (`>`) block scalar whose key is
+    at [indent], as YAML reads it. Trailing newlines are dropped (chomping
+    does not change a command). An indentation indicator, or a content line
+    at an indentation YAML would not accept, is refused."""
+    header = BLOCK_HEADER.fullmatch(value)
+    if not header:
+        _fail(where, line, f'block scalar indentation indicators are not read: {value}')
+    lines, content, ended = [], None, False
+    for item in body:
+        if not item.raw.strip(' '):
+            if content is not None and not ended:
+                lines.append('')
+            continue
+        width = len(item.raw) - len(item.raw.lstrip(' '))
+        if content is None and not ended and width > indent:
+            content = width
+        if not ended and content is not None and width >= content:
+            lines.append(item.raw[content:])  # a `#` line here is content
+            continue
+        if item.comment:
+            ended = True  # a less-indented comment ends the block
+            continue
+        _fail(where, item, 'a block scalar line at an unexpected indentation is not read')
+    while lines and not lines[-1]:
+        lines.pop()
+    return '\n'.join(lines) if header.group('style') == '|' else _fold(lines)
 
 
 def _single(key, value, line, body, where):
@@ -384,10 +442,13 @@ def _steps(key, value, line, body, where):
                         _fail(here, sub_line, 'a quoted `run` must close on its own line')
                     step['run'] = _scalar(sub_value, here, sub_line)
                 elif BLOCK_SCALAR.fullmatch(sub_value):
-                    step['run'] = '\n'.join(l.raw for l in sub_body)  # no escapes in a block
+                    step['run'] = _block_scalar(sub_value, sub_body, 8, here, sub_line)
                 else:
-                    step['run'] = '\n'.join([_scalar(sub_value, here, sub_line)]
-                                            + [l.text for l in _meaningful(sub_body)])
+                    if _meaningful(sub_body):
+                        _fail(here, _meaningful(sub_body)[0],
+                              'a plain `run` continued onto another line is not read; '
+                              'use a block scalar')
+                    step['run'] = _scalar(sub_value, here, sub_line)
             elif sub == 'with':
                 _block(sub, sub_value, sub_line, here)
                 entries = _entries(sub_body, 10, f'{here} with')
@@ -395,7 +456,8 @@ def _steps(key, value, line, body, where):
                     _fail(here, sub_line, '`with` is empty')
                 for w_key, w_value, w_line, w_body in entries:
                     if BLOCK_SCALAR.fullmatch(w_value):
-                        step['values'].append('\n'.join(l.raw for l in w_body))
+                        step['values'].append(
+                            _block_scalar(w_value, w_body, 10, f'{here} with', w_line))
                         continue
                     step['values'].append(_single(w_key, w_value, w_line, w_body, f'{here} with'))
             elif sub == 'env':

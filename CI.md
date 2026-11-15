@@ -55,17 +55,29 @@ list), a value continued where one line is expected, tabs or other line
 breaks, a byte order mark, anchors, reusable jobs and local actions. A new
 key or shape needs a reviewed change to the checker.
 
-Values are read as YAML reads them before they are inspected: quoted values
-are unquoted and their escapes decoded, so `run: "flutter\x20build apk"` is
-a build and `uses: "./action"` is a local action. A quoted value that does not
-close on its line, has an unknown escape or has text after its closing quote
-fails the check. Any `gradle` or `gradlew` command in a step's `run` counts
-as packaging unless every argument is a known non-packaging task or option
-(`test`, `lint`, `clean`, `--version` and a few others). It reads the
-workflow files only: a packaging command assembled at run time or by shell
-quoting, inside a script or helper, or inside a third-party action is
-outside what it can detect or prove. The verification proof also fails in deferred mode if any Android
-package is found in the generated output directories.
+Values are decoded as YAML decodes them before they are inspected. Quoted
+values are unquoted and their escapes decoded, so `run: "flutter\x20build apk"`
+is a build and `uses: "./action"` is a local action. Block scalars keep their
+YAML meaning: a literal block (`|`) keeps its lines, and a folded block (`>`)
+joins ordinary lines with spaces, so a folded `gradle test` followed by
+`build` is the single command `gradle test build`. The check fails instead of
+guessing on a quoted value that does not close on its line, an unknown
+escape, text after a closing quote, a block with an indentation indicator
+(`|2`), a block line at an indentation YAML would not accept, and a plain
+`run` value continued onto another line (write it as a block).
+
+Any `gradle` or `gradlew` command in a step's `run` counts as packaging
+unless every argument is a known non-packaging task or option (`test`,
+`lint`, `clean`, `--version` and a few others). That list is a lexical rule:
+it does not prove that a build script attaches no packaging work to a task
+named `test` or `clean`.
+
+It reads the workflow files only. A packaging command assembled at run time
+or by shell quoting (for example `flutter "build" apk`), inside a script or
+helper, inside a Gradle build script, or inside a third-party action is
+outside what it can detect or prove. The verification proof also fails in
+deferred mode if any Android package is found in the generated output
+directories.
 
 ## Signed Android release
 
