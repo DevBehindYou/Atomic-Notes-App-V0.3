@@ -59,9 +59,60 @@ final class NotesDeleteSelected extends NotesEvent {
   const NotesDeleteSelected();
 }
 
+/// Saves [note] locally through the repository. With [ack], the caller learns
+/// the outcome of this exact attempt (the local save, not a later cloud
+/// sync), for the [context] its editor captured when it opened.
 final class NoteSaved extends NotesEvent {
-  const NoteSaved(this.note);
+  const NoteSaved(this.note, {this.ack, this.context});
   final Note note;
+  final NoteSaveAck? ack;
+  final NoteEditorContext? context;
+}
+
+/// The outcome of one local save attempt.
+sealed class NoteSaveResult {
+  const NoteSaveResult();
+}
+
+/// The store confirmed this attempt's note was written on this device for
+/// the editor's account. Syncing it is separate.
+final class NoteSaveSucceeded extends NoteSaveResult {
+  const NoteSaveSucceeded();
+}
+
+/// The store deliberately did not keep this attempt ([reason]).
+final class NoteSaveRetired extends NoteSaveResult {
+  const NoteSaveRetired(this.reason);
+  final NoteSaveRetirement reason;
+}
+
+/// The local write failed. Memory may already hold the change, but the
+/// device's store does not have it confirmed; the draft is still needed.
+final class NoteSaveFailed extends NoteSaveResult {
+  const NoteSaveFailed(this.error);
+  final Object error;
+}
+
+/// Nothing was attempted: the notes screen or its bloc is gone, or the store
+/// cannot acknowledge an editor's save.
+final class NoteSaveRejected extends NoteSaveResult {
+  const NoteSaveRejected();
+}
+
+/// Nothing to save: an empty new draft is discarded instead.
+final class NoteSaveSkipped extends NoteSaveResult {
+  const NoteSaveSkipped();
+}
+
+/// The acknowledgement of one save attempt. It completes exactly once.
+final class NoteSaveAck {
+  final _result = Completer<NoteSaveResult>();
+
+  Future<NoteSaveResult> get result => _result.future;
+
+  void _complete(NoteSaveResult value) {
+    if (!_result.isCompleted) _result.complete(value);
+  }
 }
 
 /// Moves one existing note to the Recycle Bin through the repository.

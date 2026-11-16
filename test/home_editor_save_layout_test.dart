@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:atomic_notes/database/note.dart';
 import 'package:atomic_notes/database/note_document.dart';
+import 'package:atomic_notes/database/notes_source.dart';
 import 'package:atomic_notes/page/home_page.dart';
 import 'package:atomic_notes/page/notes_editor_page.dart';
 import 'package:atomic_notes/state/notes/notes_bloc.dart';
@@ -32,10 +33,36 @@ Note _fixture() {
   return document.toNote(original);
 }
 
-class _Harness {
-  _Harness() : source = FakeNotesSource(notes: [_fixture()]);
+final _rejectedMessage =
+    find.text('The notes list closed before this note was saved. '
+        'Your draft is still here.');
 
-  final FakeNotesSource source;
+class _Context implements NoteEditorContext {}
+
+/// The shared fake plus acknowledged editor saves, as the repository has.
+class _OwnedSaveSource extends FakeNotesSource implements EditorNoteSaveSource {
+  _OwnedSaveSource(List<Note> notes) : super(notes: notes);
+
+  final _context = _Context();
+
+  @override
+  NoteEditorContext? captureEditorContext() => _context;
+
+  @override
+  Future<NoteLocalSaveReceipt> saveForEditor(
+      Note note, NoteEditorContext context) async {
+    if (!identical(context, _context)) {
+      return const NoteLocalSaveRetired(NoteSaveRetirement.contextChanged);
+    }
+    await save(note);
+    return const NoteLocalSaveStored();
+  }
+}
+
+class _Harness {
+  _Harness() : source = _OwnedSaveSource([_fixture()]);
+
+  final _OwnedSaveSource source;
   late final NotesBloc bloc = NotesBloc(
     source: source,
     isSyncEnabled: () => true,
@@ -165,6 +192,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(harness.source.saveCalls, 0);
     expect(harness.source.byId('existing-rich-note')!.toMap(), before);
+    // S1: the draft is kept and the reason is shown.
+    expect(find.byType(NotesCreaterPage), findsOneWidget);
+    expect(_rejectedMessage, findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -179,6 +209,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(harness.source.saveCalls, 0);
     expect(harness.source.byId('existing-rich-note')!.toMap(), before);
+    expect(find.byType(NotesCreaterPage), findsOneWidget);
+    expect(_rejectedMessage, findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

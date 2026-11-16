@@ -4,6 +4,7 @@
 import 'dart:async';
 
 import 'package:atomic_notes/database/note.dart';
+import 'package:atomic_notes/database/notes_source.dart';
 import 'package:atomic_notes/state/notes/notes_bloc.dart';
 import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -506,4 +507,167 @@ void main() {
     await Future<void>.delayed(Duration.zero);
     expect(bloc.isClosed, isTrue);
   });
+
+  group('save acknowledgement (S1)', () {
+    Future<NoteSaveResult> acknowledged(NotesBloc bloc, Note note,
+        {NoteEditorContext? context}) {
+      final ack = NoteSaveAck();
+      bloc.add(NoteSaved(note,
+          ack: ack, context: context ?? bloc.captureEditorContext()));
+      return ack.result;
+    }
+
+    test('a confirmed write is a success', () async {
+      final source = _HeldSource();
+      final bloc = _bloc(source);
+      addTearDown(bloc.close);
+      expect(await acknowledged(bloc, Note(id: 'new', title: 'Stored')),
+          isA<NoteSaveSucceeded>());
+      expect(source.byId('new')!.title, 'Stored');
+    });
+
+    test('a retired write is reported as retired, never as a success',
+        () async {
+      final source = _HeldSource()..retire = NoteSaveRetirement.replaced;
+      final bloc = _bloc(source);
+      addTearDown(bloc.close);
+      final result = await acknowledged(bloc, Note(id: 'new'));
+      expect(result, isA<NoteSaveRetired>());
+      expect((result as NoteSaveRetired).reason, NoteSaveRetirement.replaced);
+    });
+
+    test('a failed acknowledged save reports, never rethrows', () async {
+      final source = _HeldSource()..failure = Exception('synthetic');
+      final escaped = <Object>[];
+      late NotesBloc bloc;
+      runZonedGuarded(() => bloc = _bloc(source), (e, _) => escaped.add(e));
+      addTearDown(() => bloc.close());
+      final result = await acknowledged(bloc, Note(id: 'new', title: 'Lost?'));
+      expect(result, isA<NoteSaveFailed>());
+      expect((result as NoteSaveFailed).error, same(source.failure));
+      await Future<void>.delayed(Duration.zero);
+      expect(escaped, isEmpty);
+      expect(source.byId('new'), isNull);
+    });
+
+    test('an acknowledgement without an editor context saves nothing',
+        () async {
+      final source = _HeldSource()..contextAvailable = false;
+      final bloc = _bloc(source);
+      addTearDown(bloc.close);
+      expect(bloc.captureEditorContext(), isNull);
+      expect(await acknowledged(bloc, Note(id: 'new')), isA<NoteSaveRejected>());
+      expect(source.attempts, 0);
+    });
+
+    test('a store that cannot acknowledge saves rejects acknowledgements',
+        () async {
+      final source = _source();
+      final bloc = _bloc(source);
+      addTearDown(bloc.close);
+      expect(bloc.supportsOwnedSave, isFalse);
+      final ack = NoteSaveAck();
+      bloc.add(NoteSaved(Note(id: 'new'), ack: ack));
+      expect(await ack.result, isA<NoteSaveRejected>());
+      expect(source.byId('new'), isNull, reason: 'no success inferred');
+    });
+
+    test('a save without an acknowledgement still rethrows', () async {
+      final source = _HeldSource()..failure = Exception('synthetic');
+      final escaped = <Object>[];
+      late NotesBloc bloc;
+      runZonedGuarded(() => bloc = _bloc(source), (e, _) => escaped.add(e));
+      addTearDown(() => bloc.close());
+      bloc.add(NoteSaved(Note(id: 'new')));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(escaped, [same(source.failure)]);
+    });
+
+    test('closing the bloc mid-save still delivers the real outcome',
+        () async {
+      final source = _HeldSource()..gate = Completer<void>();
+      final bloc = _bloc(source);
+      final result = acknowledged(bloc, Note(id: 'new', title: 'Stored'));
+      await Future<void>.delayed(Duration.zero);
+      final closing = bloc.close();
+      source.gate!.complete();
+      expect(await result, isA<NoteSaveSucceeded>());
+      await closing;
+      expect(source.byId('new')!.title, 'Stored');
+    });
+
+    test('each acknowledgement answers only its own attempt', () async {
+      final source = _HeldSource()..gate = Completer<void>();
+      final bloc = _bloc(source);
+      addTearDown(bloc.close);
+      final first = acknowledged(bloc, Note(id: 'a1', title: 'One'));
+      await Future<void>.delayed(Duration.zero);
+      source
+        ..gate = null
+        ..failure = Exception('second fails');
+      final second = acknowledged(bloc, Note(id: 'a2', title: 'Two'));
+      expect(await second, isA<NoteSaveFailed>());
+      source.failure = null;
+      // The first attempt's held save is released only now.
+      source.release();
+      expect(await first, isA<NoteSaveSucceeded>());
+    });
+  });
+}
+
+class _Context implements NoteEditorContext {}
+
+/// A store that acknowledges editor saves, whose save can be held open,
+/// made to fail or retired.
+class _HeldSource extends FakeNotesSource implements EditorNoteSaveSource {
+  Completer<void>? gate;
+  final _held = <Completer<void>>[];
+  Object? failure;
+  NoteSaveRetirement? retire;
+  bool contextAvailable = true;
+  int attempts = 0;
+  final _context = _Context();
+
+  /// Lets every held save continue.
+  void release() {
+    for (final held in _held) {
+      held.complete();
+    }
+    _held.clear();
+  }
+
+  @override
+  NoteEditorContext? captureEditorContext() =>
+      contextAvailable ? _context : null;
+
+  @override
+  Future<void> save(Note note) async {
+    attempts++;
+    final error = failure;
+    final wait = gate;
+    if (wait != null) {
+      final held = Completer<void>();
+      _held.add(held);
+      await Future.any([wait.future, held.future]);
+    }
+    if (error != null) throw error;
+    return super.save(note);
+  }
+
+  @override
+  Future<NoteLocalSaveReceipt> saveForEditor(
+      Note note, NoteEditorContext context) async {
+    if (!identical(context, _context)) {
+      return const NoteLocalSaveRetired(NoteSaveRetirement.contextChanged);
+    }
+    try {
+      await save(note);
+    } catch (error) {
+      return NoteLocalSaveFailed(error);
+    }
+    final reason = retire;
+    return reason == null
+        ? const NoteLocalSaveStored()
+        : NoteLocalSaveRetired(reason);
+  }
 }

@@ -83,6 +83,63 @@ class WipeOutcome {
   const WipeOutcome(this.ok, this.message);
 }
 
+/// Who may store an editor's draft: the account, its session and the store's
+/// lifecycle when the editor opened. Opaque; only its store can read it.
+abstract interface class NoteEditorContext {}
+
+/// What one acknowledged local save did.
+sealed class NoteLocalSaveReceipt {
+  const NoteLocalSaveReceipt();
+}
+
+/// This attempt's note, as submitted, was written to this device's store for
+/// the editor's own account.
+final class NoteLocalSaveStored extends NoteLocalSaveReceipt {
+  const NoteLocalSaveStored();
+}
+
+/// Why a store deliberately did not keep an attempt.
+enum NoteSaveRetirement {
+  /// The account, session or store lifecycle is no longer the editor's. The
+  /// draft must not be saved into whatever is current now.
+  contextChanged,
+
+  /// Another change to the same note replaced this attempt before it was
+  /// written.
+  replaced,
+
+  /// The note was deleted before this attempt was written.
+  deleted,
+}
+
+/// Not written, on purpose. Memory may already hold the attempt's note until
+/// the store reloads or the replacing change is written.
+final class NoteLocalSaveRetired extends NoteLocalSaveReceipt {
+  const NoteLocalSaveRetired(this.reason);
+  final NoteSaveRetirement reason;
+}
+
+/// The write was attempted and failed. Memory may already hold the change;
+/// the device's store does not have it confirmed.
+final class NoteLocalSaveFailed extends NoteLocalSaveReceipt {
+  const NoteLocalSaveFailed(this.error);
+  final Object error;
+}
+
+/// A store that can save an editor's draft and say truthfully what happened
+/// to that exact attempt. Other callers keep using [NotesSource.save].
+abstract interface class EditorNoteSaveSource {
+  /// The context for an editor opened now, or null when nobody may write
+  /// (signed out, stopped, locking, logging out, or another account's cache).
+  NoteEditorContext? captureEditorContext();
+
+  /// Saves [note] for [context] and reports what happened to this attempt.
+  /// It never writes for a context that is no longer current, and never
+  /// throws: a failure is a [NoteLocalSaveFailed].
+  Future<NoteLocalSaveReceipt> saveForEditor(
+      Note note, NoteEditorContext context);
+}
+
 /// Optional repository-owned derived data. Small test sources need not cache.
 abstract interface class NoteProjectionSource {
   NoteProjection projectionFor(Note note, {bool evict = true});
