@@ -8,7 +8,8 @@ final class DangerZoneState extends Equatable {
 
   final int onDevice;
 
-  /// Notes that exist only on this device, so a local wipe would lose them for good.
+  /// Notes with local changes not yet sent to the cloud (new notes, edits and deletions), so a
+  /// local wipe would lose those changes for good.
   final int unsynced;
 
   @override
