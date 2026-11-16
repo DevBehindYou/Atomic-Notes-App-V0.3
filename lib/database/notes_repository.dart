@@ -635,46 +635,65 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   /// while the context is still the editor's; once the context has changed
   /// it is retired instead, so the draft is hidden, not offered for retry
   /// (review R16). A committed write is never retired afterwards.
+  /// Once the write has run, its result is the receipt: a later error while
+  /// notifying listeners or scheduling sync is reported, not returned
+  /// (review R18). An admission check that throws retires the attempt,
+  /// because the context could not be verified (review R19).
   @override
   Future<NoteLocalSaveReceipt> saveForEditor(
       Note note, NoteEditorContext context) async {
-    if (context is! _EditorContext || !_isCurrent(context)) {
+    if (context is! _EditorContext) {
       return const NoteLocalSaveRetired(NoteSaveRetirement.contextChanged);
     }
-    var committed = false;
+    var admitted = false;
+    NoteLocalSaveReceipt? receipt;
     try {
+      if (!_isCurrent(context)) {
+        return const NoteLocalSaveRetired(NoteSaveRetirement.contextChanged);
+      }
       return await _trackNoteMutation(() async {
         if (!_isCurrent(context)) {
           return const NoteLocalSaveRetired(NoteSaveRetirement.contextChanged);
         }
+        admitted = true;
         _assertWritable(note.id);
         if (NoteDocument.hasRichContent(note)) NoteContentBudget.validate(note);
         note.touch();
         note.settleDirty();
         _notes[note.id] = note;
         final written = await _write(note.id, fence: context);
-        committed = written != null;
+        final settled = receipt = _receiptFor(written, note);
         notifyListeners();
         if (note.dirty) _scheduleAutoSync();
-        if (written == null) {
-          return const NoteLocalSaveRetired(NoteSaveRetirement.contextChanged);
-        }
-        if (!identical(written, note)) {
-          return const NoteLocalSaveRetired(NoteSaveRetirement.replaced);
-        }
-        if (written.deleted) {
-          return const NoteLocalSaveRetired(NoteSaveRetirement.deleted);
-        }
-        // Written for the editor's account (the write checks the owner
-        // when it runs); a later account change cannot undo that.
-        return const NoteLocalSaveStored();
+        return settled;
       });
     } catch (error) {
-      if (!committed && !_identityHolds(context)) {
+      final settled = receipt;
+      if (settled != null) {
+        debugPrint('NotesRepository: after an editor save: ${error.runtimeType}: $error');
+        return settled;
+      }
+      if (!admitted || !_identityHolds(context)) {
         return const NoteLocalSaveRetired(NoteSaveRetirement.contextChanged);
       }
       return NoteLocalSaveFailed(error);
     }
+  }
+
+  /// What one owned write did, from what [_write] returned for [note].
+  static NoteLocalSaveReceipt _receiptFor(Note? written, Note note) {
+    if (written == null) {
+      return const NoteLocalSaveRetired(NoteSaveRetirement.contextChanged);
+    }
+    if (!identical(written, note)) {
+      return const NoteLocalSaveRetired(NoteSaveRetirement.replaced);
+    }
+    if (written.deleted) {
+      return const NoteLocalSaveRetired(NoteSaveRetirement.deleted);
+    }
+    // Written for the editor's account (the write checks the owner when it
+    // runs); a later account change cannot undo that.
+    return const NoteLocalSaveStored();
   }
 
   /// [_sameIdentity] for a failed attempt. A check that cannot run (for

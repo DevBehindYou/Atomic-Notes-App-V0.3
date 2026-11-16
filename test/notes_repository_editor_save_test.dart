@@ -459,6 +459,129 @@ void main() {
     });
   });
 
+  group('review R18: the write decides the receipt, later errors do not', () {
+    // A second store on the same box with automatic sync on, so a save
+    // schedules sync after its write. Closing the sync settings box makes
+    // that scheduling throw after the note is already in Hive.
+    late NotesRepository auto;
+
+    setUp(() async {
+      await SyncStatusHelper.syncBox.put('isSyncOn', false);
+      auto = NotesRepository.forTest(
+          box: box,
+          api: api,
+          vault: vault,
+          checkConnectivity: () async => [ConnectivityResult.wifi],
+          automaticSync: true);
+      await auto.start();
+    });
+
+    tearDown(() async {
+      final gate = vault.sealGate;
+      if (gate != null && !gate.isCompleted) gate.complete();
+      await auto.stop(waitForSync: true);
+      auto.dispose();
+    });
+
+    Future<void> breakScheduling() => SyncStatusHelper.syncBox.close();
+
+    test('reviewer fixture: stored, then scheduling fails: still Stored', () async {
+      final context = auto.captureEditorContext()!;
+      await breakScheduling();
+      final result = await auto.saveForEditor(draft('n1'), context);
+      expect(result, isA<NoteLocalSaveStored>());
+      expect(box.containsKey('n1'), isTrue);
+      expect((box.get('n1') as Map)['enc_v'], greaterThan(0));
+    });
+
+    test('replaced, then scheduling fails: still Retired(replaced)', () async {
+      final context = auto.captureEditorContext()!;
+      holdSeals();
+      final earlier = auto.save(draft('other'));
+      await vault.sealEntered!.future;
+      final receipt = auto.saveForEditor(draft('n1', 'Editor draft'), context);
+      final newer = draft('n1', 'Newer change');
+      final replacing = auto.save(newer);
+      await breakScheduling();
+      release();
+      // The regular saves also schedule sync and throw; that path is
+      // unchanged and outside the owned-save receipt.
+      await expectLater(earlier, throwsA(isA<HiveError>()));
+      expect((await receipt as NoteLocalSaveRetired).reason,
+          NoteSaveRetirement.replaced);
+      await expectLater(replacing, throwsA(isA<HiveError>()));
+      expect(auto.byId('n1'), same(newer));
+    });
+
+    test('deleted, then scheduling fails: still Retired(deleted)', () async {
+      final context = auto.captureEditorContext()!;
+      holdSeals();
+      final earlier = auto.save(draft('other'));
+      await vault.sealEntered!.future;
+      // A note the cloud already has, so its tombstone stays dirty and the
+      // save schedules sync after its write.
+      final receipt = auto.saveForEditor(draft('n1')..serverVersion = 3, context);
+      await Future<void>.delayed(Duration.zero); // let the save queue its write
+      final deleting = auto.deleteNotes(['n1']);
+      await breakScheduling();
+      release();
+      await expectLater(earlier, throwsA(isA<HiveError>()));
+      expect((await receipt as NoteLocalSaveRetired).reason,
+          NoteSaveRetirement.deleted);
+      await expectLater(deleting, throwsA(isA<HiveError>()));
+    });
+
+    test('a failure before the write still follows the identity (R16)', () async {
+      final context = auto.captureEditorContext()!;
+      vault.failure = StateError('synthetic seal failure');
+      expect(await auto.saveForEditor(draft('n1'), context),
+          isA<NoteLocalSaveFailed>());
+      vault.failure = null;
+      holdSeals();
+      final receipt = auto.saveForEditor(draft('n2'), context);
+      await vault.sealEntered!.future;
+      api.sessionRevision++;
+      vault.failureAfterSeal = StateError('synthetic seal failure');
+      release();
+      expect((await receipt as NoteLocalSaveRetired).reason,
+          NoteSaveRetirement.contextChanged);
+      expect(box.containsKey('n1'), isFalse);
+      expect(box.containsKey('n2'), isFalse);
+    });
+  });
+
+  group('review R19: admission errors become a receipt', () {
+    test('reviewer fixture: a closed cache at admission retires, never throws',
+        () async {
+      final context = repository.captureEditorContext()!;
+      await box.close();
+      expect(await repository.saveForEditor(draft('n1'), context),
+          isA<NoteLocalSaveRetired>());
+    });
+
+    test('a cache that closes during sealing retires', () async {
+      final context = repository.captureEditorContext()!;
+      holdSeals();
+      final receipt = repository.saveForEditor(draft('n1'), context);
+      await vault.sealEntered!.future;
+      await box.close();
+      release();
+      expect(await receipt, isA<NoteLocalSaveRetired>());
+    });
+
+    test('a verified context still reports a real failure (protected note)',
+        () async {
+      final context = repository.captureEditorContext()!;
+      expect(await repository.saveForEditor(draft('n1'), context),
+          isA<NoteLocalSaveStored>());
+      final before = Map<dynamic, dynamic>.from(box.get('n1') as Map);
+      vault.unlocked = false;
+      expect(await repository.saveForEditor(draft('n1', 'Changed'), context),
+          isA<NoteLocalSaveFailed>());
+      expect(box.get('n1'), before);
+    });
+  });
+
   test('signed out: no editor context', () async {
     api.user = null;
     expect(repository.captureEditorContext(), isNull);
