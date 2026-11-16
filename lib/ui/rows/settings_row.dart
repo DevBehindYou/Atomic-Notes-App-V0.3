@@ -60,7 +60,7 @@ class SettingsGroup extends StatelessWidget {
 /// One settings row: a 40 dp icon tile, the title and an optional caption,
 /// and one trailing item: a value, a count, a switch, or a chevron. The
 /// whole row is one control whose label reads "{title}. {caption}. {value}",
-/// as `SettingsCard` does today.
+/// as `SettingsCard` does today, followed by the count when there is one.
 class SettingsRow extends StatelessWidget {
   const SettingsRow({
     super.key,
@@ -70,6 +70,7 @@ class SettingsRow extends StatelessWidget {
     this.onTap,
     this.value,
     this.count,
+    this.countLabel,
     this.danger = false,
     this.chevron = true,
   })  : switchValue = null,
@@ -90,6 +91,7 @@ class SettingsRow extends StatelessWidget {
         onTap = null,
         value = null,
         count = null,
+        countLabel = null,
         chevron = false;
 
   final IconData icon;
@@ -100,6 +102,11 @@ class SettingsRow extends StatelessWidget {
   /// A short value on the right, for example "On" or "System".
   final String? value;
   final int? count;
+
+  /// What screen readers hear for [count], for example "3 notes". Defaults
+  /// to the number itself; the full number is read even when the bubble
+  /// shows "99+".
+  final String? countLabel;
   final bool danger;
   final bool chevron;
   final bool? switchValue;
@@ -113,17 +120,20 @@ class SettingsRow extends StatelessWidget {
     final switchValue = this.switchValue;
     final onSwitch = this.onSwitch;
     final isToggle = switchValue != null;
-    final semantics = [title, caption, value]
-        .whereType<String>()
-        .where((s) => s.isNotEmpty)
-        .join('. ');
+    final count = this.count;
+    final semantics = [
+      title,
+      caption,
+      value,
+      if (count != null) countLabel ?? '$count',
+    ].whereType<String>().where((s) => s.isNotEmpty).join('. ');
     Widget? trailing;
     if (isToggle) {
       trailing =
           AtomicSwitchTrack(value: switchValue, enabled: onSwitch != null);
     } else if (count != null) {
       trailing =
-          CountBubble(count: count!, fill: c.badge, textColor: c.textPrimary);
+          CountBubble(count: count, fill: c.badge, textColor: c.textPrimary);
     } else if (value != null) {
       trailing = Text(value!,
           style: AtomicType.bodyMedium.copyWith(color: c.textSecondary));
