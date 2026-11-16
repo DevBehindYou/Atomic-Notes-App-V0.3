@@ -696,5 +696,45 @@ class ReviewR17Test(unittest.TestCase):
             with self.subTest(name):
                 self.assertEqual(self.outcome(workflow), 'refused')
 
+
+class ReviewN01Test(unittest.TestCase):
+    """Codex packet-7 follow-up N01: blank lines before a block scalar's first
+    content line are kept as newlines, as YAML keeps them."""
+
+    outcome = ReviewR12Test.outcome
+
+    def test_leading_blank_lines_are_kept(self):
+        # Expected values were checked against PyYAML 6.0.3 (packet 8 evidence).
+        cases = {
+            ('|-', ('', 'gradle test', 'build')): '\ngradle test\nbuild',
+            ('|', ('', '', 'gradle test')): '\n\ngradle test',
+            ('>-', ('', 'gradle test', 'build')): '\ngradle test build',
+            ('>', ('', '', 'one', '', 'two')): '\n\none\ntwo',
+            ('>+', ('', 'one', '  more', 'two')): '\none\n  more\ntwo',
+        }
+        for (header, lines), expected in cases.items():
+            with self.subTest(header=header, lines=lines):
+                self.assertEqual(decoded_run(block(header, *lines)).rstrip('\n'), expected)
+
+    def test_whitespace_only_leading_line_is_a_blank_line(self):
+        workflow = steps('      - run: |-', '          ', '          gradle test')
+        self.assertEqual(decoded_run(workflow), '\ngradle test')
+
+    def test_reviewer_example_and_classification_are_unchanged(self):
+        # Codex's N01 example: a leading blank line, then a literal block.
+        self.assertEqual(decoded_run(block('|-', '', 'gradle test', 'build')),
+                         '\ngradle test\nbuild')
+        self.assertEqual(self.outcome(block('|-', '', 'gradle test', 'build')), 'accepted')
+        for header in ('>', '>-', '>+'):
+            with self.subTest(header=header):
+                self.assertEqual(self.outcome(block(header, '', 'gradle test', 'build')),
+                                 'violation')
+                self.assertEqual(
+                    self.outcome(block(header, '', 'gradle test', 'build', guard=True)),
+                    'accepted')
+        upload = steps('      - uses: actions/upload-artifact@v6', '        with:',
+                       '          path: >', '', '            out/app', '            x.apk')
+        self.assertEqual(self.outcome(upload), 'violation')
+
 if __name__ == '__main__':
     unittest.main()

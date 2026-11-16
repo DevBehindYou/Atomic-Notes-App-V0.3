@@ -38,7 +38,8 @@ has its backslash escapes decoded (hex, Unicode and one-letter). A quoted value
 must close on its own line with only a comment after it, and an unknown escape
 is refused. A block scalar is read as YAML reads it: a literal block (`|`)
 keeps its lines, a folded block (`>`) joins them with spaces except around
-blank and more-indented lines, and `-` or `+` chomping is accepted. A block
+blank and more-indented lines, blank lines before the first content line are
+kept as newlines, and `-` or `+` chomping is accepted. A block
 with an indentation indicator (`|2`, `>1-`) is refused, and so is a plain
 `run` value continued onto another line (a plain `if:` is joined with spaces
 as YAML does). Commands, action references and upload paths are checked in
@@ -267,21 +268,25 @@ def _fold(lines):
 
 def _block_scalar(value, body, indent, where, line):
     """The text of a literal (`|`) or folded (`>`) block scalar whose key is
-    at [indent], as YAML reads it. Trailing newlines are dropped (chomping
-    does not change a command). An indentation indicator, or a content line
-    at an indentation YAML would not accept, is refused."""
+    at [indent], as YAML reads it. Blank lines before the first content line
+    are kept as newlines. Trailing newlines are dropped (chomping does not
+    change a command). An indentation indicator, or a content line at an
+    indentation YAML would not accept, is refused."""
     header = BLOCK_HEADER.fullmatch(value)
     if not header:
         _fail(where, line, f'block scalar indentation indicators are not read: {value}')
-    lines, content, ended = [], None, False
+    lines, content, ended, leading = [], None, False, 0
     for item in body:
         if not item.raw.strip(' '):
-            if content is not None and not ended:
+            if content is None:
+                leading += 1  # kept once the content starts, as YAML does
+            elif not ended:
                 lines.append('')
             continue
         width = len(item.raw) - len(item.raw.lstrip(' '))
         if content is None and not ended and width > indent:
             content = width
+            lines.extend([''] * leading)
         if not ended and content is not None and width >= content:
             lines.append(item.raw[content:])  # a `#` line here is content
             continue

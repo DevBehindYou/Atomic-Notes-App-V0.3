@@ -60,7 +60,8 @@ values are unquoted and their escapes decoded, so `run: "flutter\x20build apk"`
 is a build and `uses: "./action"` is a local action. Block scalars keep their
 YAML meaning: a literal block (`|`) keeps its lines, and a folded block (`>`)
 joins ordinary lines with spaces, so a folded `gradle test` followed by
-`build` is the single command `gradle test build`. The check fails instead of
+`build` is the single command `gradle test build`. Blank lines before the
+first content line are kept as newlines, as YAML keeps them. The check fails instead of
 guessing on a quoted value that does not close on its line, an unknown
 escape, text after a closing quote, a block with an indentation indicator
 (`|2`), a block line at an indentation YAML would not accept, and a plain
