@@ -34,6 +34,7 @@ import 'package:atomic_notes/theme/app_theme.dart';
 import 'package:atomic_notes/theme/app_tokens.dart';
 import 'package:atomic_notes/theme/atomic_theme.dart';
 import 'package:atomic_notes/theme/editorial.dart';
+import 'package:atomic_notes/ui/gallery/component_gallery.dart';
 import 'package:atomic_notes/utility/intropages/onboarding_screen.dart';
 import 'package:atomic_notes/utility/intropages/energy_intro_screen.dart';
 import 'package:atomic_notes/utility/startup_sequence.dart';
@@ -217,6 +218,8 @@ class _MyAppState extends State<MyApp> {
                   ),
               '/tcpage': (context) => const TCPage(),
               '/editprofilepage': (context) => const EditProfilePage(),
+              // Debug builds only; empty in profile and release.
+              ...ComponentGallery.debugRoutes,
             },
           ),
         ),
