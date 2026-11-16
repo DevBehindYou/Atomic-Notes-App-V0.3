@@ -85,20 +85,36 @@ class NotesBloc extends Bloc<NotesEvent, NotesState> {
   /// Counts and the list on view come from the same read of the current
   /// owner's notes, on every source change, not only when the notes on view
   /// change: a note hidden by the search can still change the chip counts.
+  ///
+  /// Each of those notes is projected once, here, and that projection answers
+  /// the to-do count, the tag counts, the to-do and tag filters and the
+  /// search. (Beyond the projection cache's capacity, every extra scan
+  /// decoded the overflow notes again on each source change.)
   static NotesState _snapshot(NotesSource source, NotesState base,
       {bool manualSyncInProgress = false}) {
     final eligible = source.visible();
-    final typeCounts = <NoteTypeFilter, int>{
-      NoteTypeFilter.all: eligible.length,
-      NoteTypeFilter.notes: source.visible(type: NoteTypeFilter.notes).length,
-      NoteTypeFilter.todos: source.visible(type: NoteTypeFilter.todos).length,
-    };
+    final projected = [
+      for (final n in eligible) projectNote(source, n, evict: false),
+    ];
+    final projectionOf = Map<Note, NoteProjection>.identity();
+    var noteCount = 0;
+    var todoCount = 0;
     final tagCounts = <String, int>{};
-    for (final n in eligible) {
-      for (final t in projectNote(source, n, evict: false).tags.toSet()) {
+    for (var i = 0; i < eligible.length; i++) {
+      final n = eligible[i];
+      final p = projected[i];
+      projectionOf[n] = p;
+      if (n.kind == NoteKind.text) noteCount++;
+      if (_isTodo(n, p)) todoCount++;
+      for (final t in p.tags.toSet()) {
         tagCounts[t] = (tagCounts[t] ?? 0) + 1;
       }
     }
+    final typeCounts = <NoteTypeFilter, int>{
+      NoteTypeFilter.all: eligible.length,
+      NoteTypeFilter.notes: noteCount,
+      NoteTypeFilter.todos: todoCount,
+    };
     // A tag that no live note carries any more falls back to every tag; the
     // type, order and search stay. A tag missing only from the search
     // results stays selected.
@@ -106,14 +122,15 @@ class NotesBloc extends Bloc<NotesEvent, NotesState> {
         base.tag != null && tagCounts.containsKey(base.tag) ? base.tag : null;
 
     final filtered =
-        source.visible(type: base.type, sort: base.sort, tag: tag);
+        _onView(source, eligible, projected, base.type, base.sort, tag);
     final q = base.query.trim().toLowerCase();
     final shown = q.isEmpty
         ? filtered
         : filtered
             .where((n) =>
                 n.title.toLowerCase().contains(q) ||
-                projectNote(source, n, evict: false).matches(q))
+                (projectionOf[n] ?? projectNote(source, n, evict: false))
+                    .matches(q))
             .toList();
     // Keep only selected notes that are still on view, so an action never
     // reaches a note the person can no longer see (deleted, pulled in as a
@@ -143,6 +160,64 @@ class NotesBloc extends Bloc<NotesEvent, NotesState> {
       // A cleared source deadline is a change, not an omitted state update.
       clearNextAutoSyncAt: nextAutoSyncAt == null,
     );
+  }
+
+  /// The notes on view for [type], [sort] and [tag], in exactly the order
+  /// `source.visible(type: type, sort: sort, tag: tag)` returns them.
+  ///
+  /// Without a to-do or tag filter no projection decides what is on view, so
+  /// the source's own read answers (the eligible read itself for the default
+  /// view). With one, the eligible notes' [projected] data decides, and the
+  /// kept notes are sorted here. That order is unique only while no two kept
+  /// notes compare equal. Equal ones are left in an order that depends on the
+  /// store's insertion order and on the sort algorithm (List.sort is not
+  /// stable above 32 items), which only the source can reproduce, so a tie
+  /// reads the list from the source.
+  static List<Note> _onView(NotesSource source, List<Note> eligible,
+      List<NoteProjection> projected, NoteTypeFilter type, NoteSort sort,
+      String? tag) {
+    if (type != NoteTypeFilter.todos && tag == null) {
+      return type == NoteTypeFilter.all && sort == NoteSort.newest
+          ? eligible
+          : source.visible(type: type, sort: sort);
+    }
+    final kept = [
+      for (var i = 0; i < eligible.length; i++)
+        if (_onViewFor(eligible[i], projected[i], type, tag)) eligible[i],
+    ];
+    int compare(Note a, Note b) => _compareForView(a, b, sort);
+    kept.sort(compare);
+    for (var i = 1; i < kept.length; i++) {
+      if (compare(kept[i - 1], kept[i]) == 0) {
+        return source.visible(type: type, sort: sort, tag: tag);
+      }
+    }
+    return kept;
+  }
+
+  /// Whether [note], projected as [projection], is cut to [type] and [tag]
+  /// the way [NotesSource.visible] cuts it.
+  static bool _onViewFor(Note note, NoteProjection projection,
+      NoteTypeFilter type, String? tag) {
+    final ofType = switch (type) {
+      NoteTypeFilter.all => true,
+      NoteTypeFilter.notes => note.kind == NoteKind.text,
+      NoteTypeFilter.todos => _isTodo(note, projection),
+    };
+    return ofType && (tag == null || projection.tags.contains(tag));
+  }
+
+  /// A legacy to-do, or any note with a checklist line (a mixed note is both
+  /// a note and a to-do).
+  static bool _isTodo(Note note, NoteProjection projection) =>
+      note.kind == NoteKind.todo || projection.hasChecklist;
+
+  /// [NotesSource.visible]'s order: pinned first, then by creation time.
+  static int _compareForView(Note a, Note b, NoteSort sort) {
+    if (a.pinned != b.pinned) return a.pinned ? -1 : 1;
+    return sort == NoteSort.oldest
+        ? a.createdAt.compareTo(b.createdAt)
+        : b.createdAt.compareTo(a.createdAt);
   }
 
   NotesNotice _notice(String text, int millis, {bool fromSync = false}) =>
