@@ -70,12 +70,50 @@ class AtomicPressable extends StatefulWidget {
   State<AtomicPressable> createState() => _AtomicPressableState();
 }
 
-class _AtomicPressableState extends State<AtomicPressable> {
+class _AtomicPressableState extends State<AtomicPressable>
+    with SingleTickerProviderStateMixin {
+  // The rendered scale. Unbounded so the release can overshoot past 1.
+  late final AnimationController _scale =
+      AnimationController.unbounded(vsync: this, value: 1);
   bool _pressed = false;
   bool _focused = false;
 
+  /// The reduced-motion preference, read only while the widget is active
+  /// (in [didChangeDependencies]), so gesture callbacks never look up
+  /// ancestors, including during teardown after deactivation (review R05).
+  bool _reduced = false;
+
+  /// False between [deactivate] and [activate] and after [dispose]: gesture
+  /// teardown callbacks then change nothing and start no animation.
+  bool _active = true;
+
   void _setPressed(bool value) {
-    if (_pressed != value && mounted) setState(() => _pressed = value);
+    if (_pressed == value) return;
+    _pressed = value;
+    if (_active) _animate();
+  }
+
+  /// Rests the child at 1 and stops any running press or release.
+  void _settle() {
+    _scale
+      ..stop()
+      ..value = 1;
+  }
+
+  /// Moves the rendered scale toward the current press state. Under reduced
+  /// motion nothing scales: any running press or release is cancelled and
+  /// the child rests at 1 at once (ADR-011).
+  void _animate() {
+    final pressed = _pressed && widget.enabled;
+    if (_reduced) {
+      _settle();
+      return;
+    }
+    _scale.animateTo(
+      pressed ? widget.pressScale : 1,
+      duration: pressed ? AtomicMotion.pressIn : AtomicMotion.pressOut,
+      curve: pressed ? AtomicMotion.standardCurve : AtomicMotion.overshootCurve,
+    );
   }
 
   void _tap() {
@@ -91,26 +129,57 @@ class _AtomicPressableState extends State<AtomicPressable> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _reduced = AtomicMotion.reduced(context);
+    // Reduced motion turned on: stop a running press or release now, even
+    // one still at its first frame with the scale exactly 1 (review R04).
+    if (_reduced) _settle();
+  }
+
+  @override
   void didUpdateWidget(AtomicPressable oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!widget.enabled) _pressed = false;
+    if (!widget.enabled && _pressed) _setPressed(false);
+  }
+
+  @override
+  void deactivate() {
+    // Only stop: changing the value here would notify listeners while the
+    // tree is being torn down.
+    _active = false;
+    _pressed = false;
+    _scale.stop();
+    super.deactivate();
+  }
+
+  @override
+  void activate() {
+    super.activate();
+    _active = true;
+    // Reparented mid-press: return to rest after this frame.
+    if (_scale.value != 1) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_active && mounted && !_pressed) _animate();
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _active = false;
+    _scale.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final enabled = widget.enabled;
-    final pressed = _pressed && enabled && !AtomicMotion.reduced(context);
     final visual = CustomPaint(
       foregroundPainter: _focused
           ? _FocusRing(context.colors.focus, widget.borderRadius)
           : null,
-      child: AnimatedScale(
-        scale: pressed ? widget.pressScale : 1,
-        duration: pressed ? AtomicMotion.pressIn : AtomicMotion.pressOut,
-        curve:
-            pressed ? AtomicMotion.standardCurve : AtomicMotion.overshootCurve,
-        child: widget.child,
-      ),
+      child: ScaleTransition(scale: _scale, child: widget.child),
     );
     return Semantics(
       container: true,
