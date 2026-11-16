@@ -159,6 +159,8 @@ void main() {
   });
 
   group('OrbitRing', () {
+    setUp(AmbientBudget.reset);
+
     testWidgets('circles while busy and stops when done', (tester) async {
       Widget ring(bool busy) => Center(
           child: OrbitRing(
@@ -229,6 +231,200 @@ void main() {
       await pumpThemed(tester, loop('a'),
           theme: theme, disableAnimations: true);
       expect(AmbientBudget.active, 0);
+    });
+
+    group('one budget for every decorative loop (F06)', () {
+      Widget orbit({bool busy = true}) => OrbitRing(
+          key: const ValueKey('orbit'),
+          busy: busy,
+          child: const SizedBox.square(dimension: 44));
+      Widget keyed(String label) =>
+          KeyedSubtree(key: ValueKey(label), child: loop(label));
+      State orbitState(WidgetTester tester) =>
+          tester.state(find.byType(OrbitRing));
+      bool orbitShown(WidgetTester tester) =>
+          tester
+              .widget<CustomPaint>(find.descendant(
+                  of: find.byType(OrbitRing),
+                  matching: find.byType(CustomPaint)))
+              .foregroundPainter !=
+          null;
+
+      testWidgets('the sync orbit counts; without a slot it still shows busy',
+          (tester) async {
+        await pumpThemed(
+            tester, Column(children: [keyed('a'), keyed('b'), orbit()]),
+            theme: theme);
+        expect(AmbientBudget.active, 2);
+        expect(AmbientBudget.holds(orbitState(tester)), isFalse);
+        expect(orbitShown(tester), isTrue, reason: 'still ring, busy shown');
+
+        await pumpThemed(tester, Column(children: [keyed('b'), orbit()]),
+            theme: theme);
+        await tester.pump();
+        expect(AmbientBudget.holds(orbitState(tester)), isTrue,
+            reason: 'took the freed slot');
+        expect(AmbientBudget.active, 2);
+      });
+
+      testWidgets('a waiting loop starts when a slot frees', (tester) async {
+        await pumpThemed(
+            tester, Column(children: [keyed('a'), keyed('b'), keyed('c')]),
+            theme: theme);
+        final c = tester.state(find.descendant(
+            of: find.byKey(const ValueKey('c')),
+            matching: find.byType(Ambient)));
+        expect(AmbientBudget.holds(c), isFalse);
+        await pumpThemed(tester, Column(children: [keyed('b'), keyed('c')]),
+            theme: theme);
+        await tester.pump();
+        expect(AmbientBudget.holds(c), isTrue);
+        expect(AmbientBudget.active, 2);
+      });
+
+      testWidgets('an orbit that stops being busy frees its slot',
+          (tester) async {
+        await pumpThemed(
+            tester, Column(children: [orbit(), keyed('a'), keyed('b')]),
+            theme: theme);
+        expect(AmbientBudget.holds(orbitState(tester)), isTrue);
+        await pumpThemed(tester,
+            Column(children: [orbit(busy: false), keyed('a'), keyed('b')]),
+            theme: theme);
+        await tester.pump();
+        expect(AmbientBudget.holds(orbitState(tester)), isFalse);
+        expect(AmbientBudget.active, 2, reason: 'b took the slot');
+        expect(orbitShown(tester), isFalse);
+      });
+
+      testWidgets('background and reduced motion release every loop',
+          (tester) async {
+        await pumpThemed(tester, Column(children: [keyed('a'), orbit()]),
+            theme: theme);
+        expect(AmbientBudget.active, 2);
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+        await tester.pump();
+        expect(AmbientBudget.active, 0);
+        expect(orbitShown(tester), isTrue, reason: 'busy still shown');
+        tester.binding
+            .handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+        await tester.pump();
+        expect(AmbientBudget.active, 2);
+
+        await pumpThemed(tester, Column(children: [keyed('a'), orbit()]),
+            theme: theme, disableAnimations: true);
+        expect(AmbientBudget.active, 0);
+        expect(orbitShown(tester), isTrue);
+      });
+
+      testWidgets('a covered route releases its loops', (tester) async {
+        await pumpThemed(
+            tester,
+            TickerMode(
+                enabled: false, child: Column(children: [keyed('a'), orbit()])),
+            theme: theme);
+        expect(AmbientBudget.active, 0);
+      });
+
+      group('review R07: a freed slot reaches the next eligible waiter', () {
+        State loopState(WidgetTester tester, String label) =>
+            tester.state(find.descendant(
+                of: find.byKey(ValueKey(label)),
+                matching: find.byType(Ambient)));
+
+        // The orbit stops during build, so its slot is offered to the first
+        // waiter before that waiter's own change in the same rebuild.
+        Widget scene(
+                {bool busy = true,
+                List<String> loops = const [],
+                Set<String> covered = const {}}) =>
+            Column(children: [
+              orbit(busy: busy),
+              for (final l in loops)
+                TickerMode(
+                    key: ValueKey('mode $l'),
+                    enabled: !covered.contains(l),
+                    child: keyed(l)),
+            ]);
+
+        Future<void> settleHandOff(WidgetTester tester) async {
+          await tester.pump();
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 300));
+        }
+
+        testWidgets('reviewer fixture: the notified waiter is disposed',
+            (tester) async {
+          final values = <String, double>{};
+          Widget tracked(String id) => Ambient(
+              key: ValueKey(id),
+              period: const Duration(seconds: 2),
+              builder: (_, t, child) {
+                values[id] = t;
+                return const SizedBox.square(dimension: 10);
+              });
+          await pumpThemed(
+              tester,
+              Column(children: [
+                orbit(),
+                tracked('b'),
+                tracked('c'),
+                tracked('d')
+              ]),
+              theme: theme);
+          expect(AmbientBudget.active, 2);
+          await pumpThemed(
+              tester,
+              Column(
+                  children: [orbit(busy: false), tracked('b'), tracked('d')]),
+              theme: theme);
+          await settleHandOff(tester);
+          expect(AmbientBudget.active, 2, reason: 'b and d hold the slots');
+          expect(values['d'], greaterThan(0), reason: 'd is looping');
+        });
+
+        testWidgets('the notified waiter stops wanting to loop',
+            (tester) async {
+          await pumpThemed(tester, scene(loops: ['b', 'c', 'd']), theme: theme);
+          expect(AmbientBudget.holds(loopState(tester, 'c')), isFalse);
+          await pumpThemed(tester,
+              scene(busy: false, loops: ['b', 'c', 'd'], covered: {'c'}),
+              theme: theme);
+          await settleHandOff(tester);
+          expect(AmbientBudget.holds(loopState(tester, 'c')), isFalse);
+          expect(AmbientBudget.holds(loopState(tester, 'd')), isTrue);
+          expect(AmbientBudget.active, 2);
+        });
+
+        testWidgets('churn: stale waiters are skipped, order is kept',
+            (tester) async {
+          await pumpThemed(tester, scene(loops: ['b', 'c', 'd', 'e', 'f']),
+              theme: theme);
+          expect(AmbientBudget.active, 2);
+          // Two slots free in one rebuild (the orbit stops, b goes); of the
+          // waiters c, d, e, f, c goes away and d is covered.
+          await pumpThemed(tester,
+              scene(busy: false, loops: ['d', 'e', 'f'], covered: {'d'}),
+              theme: theme);
+          await settleHandOff(tester);
+          expect(AmbientBudget.holds(loopState(tester, 'e')), isTrue);
+          expect(AmbientBudget.holds(loopState(tester, 'f')), isTrue);
+          expect(AmbientBudget.active, 2);
+          // d becomes eligible again: it waits for a slot, then gets one.
+          await pumpThemed(tester, scene(busy: false, loops: ['d', 'e', 'f']),
+              theme: theme);
+          await settleHandOff(tester);
+          expect(AmbientBudget.holds(loopState(tester, 'd')), isFalse);
+          await pumpThemed(tester, scene(busy: false, loops: ['d', 'f']),
+              theme: theme);
+          await settleHandOff(tester);
+          expect(AmbientBudget.holds(loopState(tester, 'd')), isTrue);
+          expect(AmbientBudget.active, 2);
+          await pumpThemed(tester, const SizedBox(), theme: theme);
+          await settleHandOff(tester);
+          expect(AmbientBudget.active, 0);
+        });
+      });
     });
   });
 

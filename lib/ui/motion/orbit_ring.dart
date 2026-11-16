@@ -1,13 +1,15 @@
 import 'dart:math' as math;
 
 import 'package:atomic_notes/theme/atomic_colors.dart';
+import 'package:atomic_notes/ui/motion/ambient.dart';
 import 'package:flutter/widgets.dart';
 
-import 'package:atomic_notes/theme/atomic_tokens.dart';
-
 /// A conic accent ring that circles [child] while [busy] (the sync orbit).
-/// It stops the moment [busy] turns false, off screen (ticker muted) and
-/// under reduced motion, where a still ring shows instead.
+///
+/// The orbit is a budgeted ambient loop ([AmbientBudget]): it turns only
+/// while busy, in the foreground, on a shown route, without reduced motion,
+/// and when a slot is free. Whenever it cannot turn but [busy] is still true,
+/// a still ring shows instead, so the busy state never disappears.
 class OrbitRing extends StatefulWidget {
   const OrbitRing({
     super.key,
@@ -27,28 +29,23 @@ class OrbitRing extends StatefulWidget {
 }
 
 class _OrbitRingState extends State<OrbitRing>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, AmbientLoop<OrbitRing> {
   late final AnimationController _controller =
       AnimationController(vsync: this, duration: OrbitRing.period);
 
-  void _update() {
-    if (widget.busy && !AtomicMotion.reduced(context)) {
-      if (!_controller.isAnimating) _controller.repeat();
-    } else {
-      _controller.stop();
-    }
-  }
+  @override
+  bool get wantsLoop => widget.busy;
 
   @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _update();
-  }
+  void startLoop() => _controller.repeat();
+
+  @override
+  void stopLoop() => _controller.stop();
 
   @override
   void didUpdateWidget(OrbitRing old) {
     super.didUpdateWidget(old);
-    if (old.busy != widget.busy) _update();
+    if (old.busy != widget.busy) updateLoop(rebuild: false);
   }
 
   @override
@@ -70,7 +67,7 @@ class _OrbitRingState extends State<OrbitRing>
                   turn: _controller.value,
                   colour: accent,
                   stroke: widget.stroke,
-                  still: AtomicMotion.reduced(context),
+                  still: !looping,
                 )
               : null,
           child: child,

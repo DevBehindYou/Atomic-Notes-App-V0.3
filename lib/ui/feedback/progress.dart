@@ -94,6 +94,9 @@ class ProgressBar extends StatelessWidget {
 /// (components spec, Skeleton). The pulse stops under reduced motion and
 /// whenever tickers are muted (off screen, route not current). Use it only
 /// when loading takes longer than 300 ms.
+///
+/// A progress indicator, not decoration: it is outside the ambient loop
+/// budget (see `AmbientBudget`), like `ProgressRing` and button spinners.
 class Skeleton extends StatefulWidget {
   const Skeleton({
     super.key,
