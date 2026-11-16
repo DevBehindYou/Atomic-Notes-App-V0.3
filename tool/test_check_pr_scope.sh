@@ -100,6 +100,8 @@ case_staged 'page editor views' page 0 lib/editor/editor_popup.dart lib/editor/n
 case_staged 'legacy removal' legacy 0 lib/theme/editorial.dart pubspec.yaml pubspec.lock assets/fonts/BebasNeue-Regular.ttf
 case_staged 'verify docs' verify 0 docs/ux/measurement.md
 case_staged 'gate files' gate 0 tool/check_pr_scope.sh tool/test_check_pr_scope.sh
+case_staged 'save-ack exact paths' save-ack 0 lib/state/notes/notes_event.dart lib/state/notes/notes_bloc.dart lib/page/home_page.dart lib/page/notes_editor_page.dart test/editor_save_ack_test.dart test/notes_editor_page_test.dart test/home_editor_save_layout_test.dart test/notes_bloc_test.dart
+case_staged 'owned-save exact paths' owned-save 0 lib/state/notes/notes_event.dart lib/state/notes/notes_bloc.dart lib/page/home_page.dart lib/page/notes_editor_page.dart test/editor_save_ack_test.dart test/notes_editor_page_test.dart test/home_editor_save_layout_test.dart test/notes_bloc_test.dart lib/database/notes_source.dart lib/database/notes_repository.dart test/editor_owned_save_test.dart test/notes_repository_editor_save_test.dart
 case_staged 'path with spaces' page 0 'lib/page/endpage/a b_page.dart'
 case_staged 'leading dash basename' page 0 'lib/page/-odd_page.dart'
 case_manifest 'page test via manifest' page 0 'test/home_page_test.dart' lib/page/home_page.dart test/home_page_test.dart
@@ -115,6 +117,20 @@ case_staged 'foundation touches gate' foundation 1 tool/check_pr_scope.sh
 case_staged 'verify CI scanner tool' verify 1 tool/scan_ci_artifacts.py
 case_staged 'verify unlisted tool' verify 1 tool/ux_frame_timing.py
 case_staged 'gate touches lib' gate 1 tool/check_pr_scope.sh lib/theme/a.dart
+case_staged 'save-ack touches notes state' save-ack 1 lib/state/notes/notes_bloc.dart lib/state/notes/notes_state.dart
+case_staged 'save-ack touches the repository' save-ack 1 lib/page/notes_editor_page.dart lib/database/notes_repository.dart
+case_staged 'save-ack touches another page' save-ack 1 lib/page/home_page.dart lib/page/settings_page.dart
+case_staged 'save-ack touches guest workspace' save-ack 1 lib/profile/guest_workspace_page.dart
+case_staged 'save-ack touches a shared test helper' save-ack 1 test/notes_bloc_test.dart test/support/fake_notes_source.dart
+case_staged 'save-ack mascot is banned' save-ack 1 lib/mascot/mascot_view.dart
+case_staged 'save-ack still refuses the repository' save-ack 1 lib/database/notes_repository.dart
+case_staged 'owned-save touches notes state' owned-save 1 lib/database/notes_repository.dart lib/state/notes/notes_state.dart
+case_staged 'owned-save touches another database file' owned-save 1 lib/database/notes_source.dart lib/database/note.dart
+case_staged 'owned-save touches the sync preservation test' owned-save 1 lib/database/notes_repository.dart test/sync_conflict_preservation_test.dart
+case_staged 'owned-save touches a shared test helper' owned-save 1 test/notes_repository_editor_save_test.dart test/support/fake_notes_source.dart
+case_staged 'owned-save touches another page' owned-save 1 lib/page/home_page.dart lib/page/settings_page.dart
+case_staged 'owned-save touches guest workspace' owned-save 1 lib/profile/guest_workspace_page.dart
+case_staged 'owned-save mascot is banned' owned-save 1 lib/mascot/mascot_view.dart
 case_staged 'component touches page' component 1 lib/ui/x.dart lib/page/settings_page.dart
 case_staged 'component other test helper' component 1 lib/ui/x.dart test/support/fake_other.dart
 case_staged 'state unrelated test' state 1 lib/state/notes/notes_bloc.dart test/energy_test.dart
@@ -146,6 +162,8 @@ case_manifest 'manifest wildcard' page 2 'test/*' lib/page/home_page.dart
 case_manifest 'manifest outside test' page 2 'lib/state/notes/notes_bloc.dart' lib/page/home_page.dart
 case_manifest 'manifest CI tool for verify' verify 2 'tool/scan_ci_artifacts.py' docs/m.md
 case_manifest 'gate refuses manifest' gate 2 'test/a_test.dart' tool/check_pr_scope.sh
+case_manifest 'save-ack refuses manifest' save-ack 2 'test/a_test.dart' lib/page/home_page.dart
+case_manifest 'owned-save refuses manifest' owned-save 2 'test/a_test.dart' lib/database/notes_source.dart
 dir=$(new_repo)
 expect 'manifest missing file' 2 "$dir" page base --allow-file "$work/no-such-manifest"
 
@@ -290,6 +308,228 @@ expect 'line removed before visible()' 1 "$dir" state base
 dir=$(region_repo)
 git_t -C "$dir" rm -q lib/database/notes_repository.dart
 expect 'repository deleted' 1 "$dir" state base
+
+# ---- region lexer: comments, strings and declarations that must not move it (F01)
+
+# region_src_repo <source>: a region fixture whose repository file is <source>.
+region_src_repo() {
+  local repo_src=$1
+  region_repo
+}
+# put_repo <dir> <source>: replace the fixture repository file in the work tree.
+put_repo() { put "$1" lib/database/notes_repository.dart "$2"; }
+
+# Codex's F01 reproduction: a method immediately after visible()'s closing
+# brace, so git reports it as an insertion on the old region's boundary.
+outside=$'    return list;\n  }\n  void outsideReservedMethod() {}\n'
+dir=$(region_repo)
+edit_repo "$dir" $'    final list = <Note>[];\n' $'    final list = <Note>[];\n    /* { */\n'
+expect 'F01 repro: brace in block comment, body only' 0 "$dir" state base
+dir=$(region_repo)
+src=${repo_src/$'    final list = <Note>[];\n'/$'    final list = <Note>[];\n    /* { */\n'}
+put_repo "$dir" "${src/$'    return list;\n  }\n'/$outside}"
+expect 'F01 repro: brace in block comment plus outside method' 1 "$dir" state base
+
+dir=$(region_repo)
+src=${repo_src/$'    final list = <Note>[];\n'/$'    final list = <Note>[];\n    /* outer /* inner } */ { still comment */\n'}
+put_repo "$dir" "${src/$'    return list;\n  }\n'/$outside}"
+expect 'nested block comment braces plus outside method' 1 "$dir" state base
+
+dir=$(region_repo)
+edit_repo "$dir" $'    final list = <Note>[];\n' $'    final list = <Note>[];\n    final s = \'\'\'\n{ {\n\'\'\';\n'
+expect 'braces in a multiline string, body only' 0 "$dir" state base
+dir=$(region_repo)
+src=${repo_src/$'    final list = <Note>[];\n'/$'    final list = <Note>[];\n    final s = \'\'\'\n{ {\n\'\'\';\n'}
+put_repo "$dir" "${src/$'    return list;\n  }\n'/$outside}"
+expect 'braces in a multiline string plus outside method' 1 "$dir" state base
+
+dir=$(region_repo)
+src=${repo_src/$'    final list = <Note>[];\n'/$'    final list = <Note>[];\n    final r = r\'\{\' + r"}";\n'}
+put_repo "$dir" "${src/$'    return list;\n  }\n'/$outside}"
+expect 'braces in raw strings plus outside method' 1 "$dir" state base
+
+dir=$(region_repo)
+edit_repo "$dir" $'    final list = <Note>[];\n' $'    final list = <Note>[];\n    final t = \'n ${list.map((n) { return \'}\'; })} done\';\n'
+expect 'interpolation with braces and quotes, body only' 0 "$dir" state base
+dir=$(region_repo)
+src=${repo_src/$'    final list = <Note>[];\n'/$'    final list = <Note>[];\n    final t = \'n ${list.map((n) { return \'{\'; })} done\';\n'}
+put_repo "$dir" "${src/$'    return list;\n  }\n'/$outside}"
+expect 'interpolation with braces plus outside method' 1 "$dir" state base
+
+dir=$(region_repo)
+edit_repo "$dir" $'    final list = <Note>[];\n' $'    final list = <Note>[];\n    /* never closed\n'
+expect 'unterminated block comment fails closed' 1 "$dir" state base
+
+dir=$(region_repo)
+edit_repo "$dir" $'    final list = <Note>[];\n' $'    final list = <Note>[];\n    final u = \'never closed;\n'
+expect 'unterminated string fails closed' 1 "$dir" state base
+
+dir=$(region_repo)
+edit_repo "$dir" '  int get pendingCount => 0;' $'  List<Note> visible2() => [];\n  List<Note> visible(int x) => [];\n  int get pendingCount => 0;'
+expect 'second visible declaration fails closed' 1 "$dir" state base
+
+dir=$(region_repo)
+edit_repo "$dir" '  @override' $'  @visibleForTesting\n  @override'
+expect 'annotation added above visible()' 0 "$dir" state base
+
+dir=$(region_repo)
+printf 'class NotesRepository {\n  List<Note> visible() {\n    return [\0];\n  }\n}\n' >"$dir/lib/database/notes_repository.dart"
+git_t -C "$dir" add lib/database/notes_repository.dart
+expect 'binary (NUL) content fails closed' 1 "$dir" state base
+
+decoy_src='class NotesRepository {
+  /*
+  List<Note> visible() {
+  */
+  final label = "a visible(";
+  // List<Note> visible() {
+
+  List<Note> visible() {
+    final list = <Note>[];
+    return list;
+  }
+
+  int get pendingCount => 0;
+}
+'
+dir=$(region_src_repo "$decoy_src")
+put_repo "$dir" "${decoy_src/'    final list = <Note>[];'/'    final list = <Note>[]; // edited'}"
+expect 'decoys in comments and strings: real body edit' 0 "$dir" state base
+dir=$(region_src_repo "$decoy_src")
+put_repo "$dir" "${decoy_src/'"a visible("'/'"b visible("'}"
+expect 'decoys in comments and strings: decoy edit' 1 "$dir" state base
+
+two_src='class A {
+  List<Note> visible() {
+    return [];
+  }
+}
+
+class B {
+  List<Note> visible() {
+    return [];
+  }
+}
+'
+dir=$(region_src_repo "$two_src")
+put_repo "$dir" "${two_src/'return [];'/'return const [];'}"
+expect 'visible() in two classes fails closed' 1 "$dir" state base
+
+# Isolates the "exactly one declaration" rule: an edit inside the second
+# class's visible() would sit inside a region if either match were accepted.
+two_b_src=${two_src/'class B {
+  List<Note> visible() {
+    return [];'/'class B {
+  List<Note> visible() {
+    return const <Note>[];'}
+dir=$(region_src_repo "$two_b_src")
+put_repo "$dir" "${two_b_src/'return const <Note>[];'/'return const <Note>[]; // b'}"
+expect 'edit inside the second of two visible() fails closed' 1 "$dir" state base
+
+# Isolates the end-of-file lexer check: the base is unparseable after the
+# class, so even an in-body edit must fail closed.
+broken_src="${repo_src}final tail = '''never closed;
+"
+dir=$(region_src_repo "$broken_src")
+put_repo "$dir" "${broken_src/'final list = <Note>[];'/'final list = <Note>[]; // edited'}"
+expect 'unparseable file fails closed for an in-body edit' 1 "$dir" state base
+
+# Review R03: valid Dart can share a boundary line with visible(). Reviewer
+# fixtures review-evidence/2026-11-12-packets-1-2/outside-on-*-line.dart.
+r03_base='class NotesRepository {
+  List<int> visible() {
+    /* { */
+    return [];
+  }
+}
+'
+dir=$(region_src_repo "$r03_base")
+put_repo "$dir" 'class NotesRepository {
+  List<int> visible() {
+    /* { */
+    return [];
+  } void outsideReservedMethod() {}
+}
+'
+expect 'R03: member after the closing brace on its line' 1 "$dir" state base
+
+dir=$(region_src_repo "$r03_base")
+put_repo "$dir" 'class NotesRepository {
+  void outsideReservedMethod() {} List<int> visible() {
+    /* { */
+    return [];
+  }
+}
+'
+expect 'R03: member before the declaration on its line' 1 "$dir" state base
+
+dir=$(region_src_repo "$r03_base")
+put_repo "$dir" 'class NotesRepository {
+  @override void outsideReservedMethod() {}
+  List<int> visible() {
+    /* { */
+    return [];
+  }
+}
+'
+expect 'R03: member on an annotation line above' 1 "$dir" state base
+
+dir=$(region_src_repo "$r03_base")
+put_repo "$dir" 'class NotesRepository {
+  List<int> visible() {
+    /* { */
+    return [];
+  } // a trailing comment is fine
+}
+'
+expect 'R03: comment after the closing brace' 0 "$dir" state base
+
+dir=$(region_src_repo "$r03_base")
+put_repo "$dir" 'class NotesRepository {
+  @override
+  @visibleForTesting
+  List<int> visible() {
+    /* { */
+    return [];
+  }
+}
+'
+expect 'R03: annotation-only lines above still allowed' 0 "$dir" state base
+
+dir=$(region_src_repo "$r03_base")
+put_repo "$dir" 'class NotesRepository {
+  List<int> visible() { /* { */ return []; } int leak() => 0;
+}
+'
+expect 'R03: one-line method with a member after it' 1 "$dir" state base
+
+# A field (no braces) before the declaration. A valid member there always
+# ends in ';' or '}', so the end scan and the trailing-code rule reject it
+# even without the declaration-line rule (defence in depth).
+dir=$(region_src_repo "$r03_base")
+put_repo "$dir" 'class NotesRepository {
+  int leak = 0; List<int> visible() {
+    /* { */
+    return [];
+  }
+}
+'
+expect 'R03: field before the declaration on its line' 1 "$dir" state base
+
+arrow_src='class NotesRepository {
+  List<Note> visible() => _all.where((n) {
+        return !n.deleted;
+      }).toList();
+
+  int get pendingCount => 0;
+}
+'
+dir=$(region_src_repo "$arrow_src")
+put_repo "$dir" "${arrow_src/'return !n.deleted;'/'return !n.deleted && n.ok;'}"
+expect 'arrow body edit' 0 "$dir" state base
+dir=$(region_src_repo "$arrow_src")
+put_repo "$dir" "${arrow_src/'int get pendingCount => 0;'/'int get pendingCount => 1;'}"
+expect 'member after an arrow body' 1 "$dir" state base
 
 dir=$(region_repo)
 printf '\n    - family: Figtree\n      fonts:\n        - asset: assets/fonts/Figtree-Regular.ttf\n' >>"$dir/pubspec.yaml"

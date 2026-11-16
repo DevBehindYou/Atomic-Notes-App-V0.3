@@ -12,7 +12,7 @@
 #   tool/check_pr_scope.sh <label> <base-ref> [--worktree] [--allow-file FILE]
 #
 #   label         foundation | component | state | page | legacy | rename |
-#                 verify | gate
+#                 verify | gate | save-ack | owned-save
 #   base-ref      the last ACCEPTED checkpoint (commit or tag). It must be an
 #                 ancestor of HEAD. Check it against the handoff record:
 #                 ancestry alone cannot prove the right checkpoint was chosen.
@@ -168,6 +168,49 @@ case $label in
     allowed=("${presentation[@]}" 'lib/main.dart')
     review=('lib/main.dart')
     ;;
+  save-ack)
+    # S1 save acknowledgement (Codex UX review of 12 November, S1): the event
+    # and bloc completion, the Home editor call site and the editor's
+    # Done/save/error/navigation flow, with their named tests. Exact paths
+    # only, every hunk reviewed, no manifest.
+    allowed=(
+      'lib/state/notes/notes_event.dart'
+      'lib/state/notes/notes_bloc.dart'
+      'lib/page/home_page.dart'
+      'lib/page/notes_editor_page.dart'
+      'test/editor_save_ack_test.dart'
+      'test/notes_editor_page_test.dart'
+      'test/home_editor_save_layout_test.dart'
+      'test/notes_bloc_test.dart'
+    )
+    review=("${allowed[@]}")
+    manifest_ok=false
+    ;;
+  owned-save)
+    # S1 corrected save acknowledgement (Codex review of packet 3, bounded
+    # owned-save exception): the eight save-ack paths plus the editor
+    # context and local-save receipt in notes_source.dart and
+    # notes_repository.dart, and two named tests. Exact paths only, every
+    # hunk reviewed, no manifest. Sync, journal, encryption, formats and
+    # logout in notes_repository.dart are not granted; the hunk review is
+    # what holds that boundary inside the file.
+    allowed=(
+      'lib/state/notes/notes_event.dart'
+      'lib/state/notes/notes_bloc.dart'
+      'lib/page/home_page.dart'
+      'lib/page/notes_editor_page.dart'
+      'test/editor_save_ack_test.dart'
+      'test/notes_editor_page_test.dart'
+      'test/home_editor_save_layout_test.dart'
+      'test/notes_bloc_test.dart'
+      'lib/database/notes_source.dart'
+      'lib/database/notes_repository.dart'
+      'test/editor_owned_save_test.dart'
+      'test/notes_repository_editor_save_test.dart'
+    )
+    review=("${allowed[@]}")
+    manifest_ok=false
+    ;;
   legacy)
     allowed=(
       'lib/theme/*'
@@ -296,38 +339,117 @@ while IFS= read -r -d '' p; do paths+=("$p"); done <"$tmp/sorted"
 # ---- region checks -----------------------------------------------------------
 
 # Prints "start end" of the region a rule names in a file, or nothing.
-# dart-method:NAME  a class member declared at two-space indentation, with its
-#                   directly preceding doc comments and annotations, through
-#                   its matching closing brace
+# dart-method:NAME  exactly one class member declared at two-space indentation
+#                   and class-body depth, with its directly preceding doc
+#                   comments and annotations, through the end of its body. The
+#                   file is lexed (line and nested block comments, single,
+#                   double, triple-quoted and raw strings, ${} interpolation),
+#                   so braces, quotes or the name inside comments and strings
+#                   never move the region. Anything the lexer cannot resolve
+#                   (unterminated comment or string, unbalanced braces, no or
+#                   several matching declarations) yields no region, which
+#                   fails the check. The member must own its boundary lines:
+#                   code before the declaration or after the closing "}" or
+#                   ";" on the same line, or an annotation line carrying more
+#                   code, also yields no region. This is a conservative
+#                   lexer, not a Dart parser: getters, generic methods and
+#                   annotations spanning lines are refused, not supported.
 # yaml-block:KEY    a two-space-indented YAML key and its nested lines
 region_bounds() {
   local rule=$1 file=$2
   awk -v mode="${rule%%:*}" -v name="${rule#*:}" '
-    function code(line,   out, i, c, q, n) {
-      out = ""; q = ""; n = length(line)
-      for (i = 1; i <= n; i++) {
-        c = substr(line, i, 1)
-        if (q != "") { if (c == "\\") { i++; continue } if (c == q) q = ""; continue }
-        if (c == "\047" || c == "\"") { q = c; continue }
-        if (c == "/" && substr(line, i + 1, 1) == "/") break
-        out = out c
+    function isident(ch) { return ch ~ /[A-Za-z0-9_$]/ }
+    # Lexes the whole file. For each line, records the brace depth at its
+    # start, whether it starts in plain code, and a copy holding only plain
+    # code characters (comments, strings and interpolations blanked).
+    function lex(   i, j, n, line, c, nx, nx2, prev, out, state, bdepth, depth, top) {
+      state = "code"; bdepth = 0; depth = 0; top = 0
+      for (i = 1; i <= NR; i++) {
+        line = lines[i]; n = length(line); out = ""
+        if (state == "line") state = "code"                  # a line comment ends here
+        if (state == "str" && !striple[top + 1]) return 0   # unterminated simple string
+        startdepth[i] = depth
+        startcode[i] = (state == "code" && top == 0)
+        for (j = 1; j <= n; j++) {
+          c = substr(line, j, 1); nx = substr(line, j + 1, 1); nx2 = substr(line, j + 2, 1)
+          if (state == "block") {
+            if (c == "/" && nx == "*") { bdepth++; j++; out = out "  "; continue }
+            if (c == "*" && nx == "/") { bdepth--; j++; out = out "  "; if (bdepth == 0) state = "code"; continue }
+            out = out " "; continue
+          }
+          if (state == "str") {
+            q = sq[top + 1]
+            if (!sraw[top + 1] && c == "\\") { j++; out = out "  "; continue }
+            if (!sraw[top + 1] && c == "$" && nx == "{") {
+              top++; idepth[top] = 0; state = "code"; j++; out = out "  "; continue
+            }
+            if (c == q) {
+              if (!striple[top + 1]) { state = "code"; out = out " "; continue }
+              if (nx == q && nx2 == q) { state = "code"; j += 2; out = out "   "; continue }
+            }
+            out = out " "; continue
+          }
+          # state == "code" (plain, or inside an interpolation when top > 0)
+          if (c == "/" && nx == "/") { state = "line"; break }
+          if (c == "/" && nx == "*") { state = "block"; bdepth = 1; j++; out = out "  "; continue }
+          prev = (j > 1) ? substr(line, j - 1, 1) : ""
+          raw = 0
+          if (c == "r" && (nx == "\047" || nx == "\"") && !isident(prev)) { raw = 1; j++; c = nx; nx = substr(line, j + 1, 1); nx2 = substr(line, j + 2, 1) }
+          if (c == "\047" || c == "\"") {
+            sq[top + 1] = c; sraw[top + 1] = raw; striple[top + 1] = 0
+            if (nx == c && nx2 == c) { striple[top + 1] = 1; j += 2 }
+            state = "str"; out = out (raw ? "  " : " ") (striple[top + 1] ? "  " : ""); continue
+          }
+          if (top > 0) {
+            if (c == "{") idepth[top]++
+            else if (c == "}") {
+              if (idepth[top] == 0) { top--; state = "str"; out = out " "; continue }
+              idepth[top]--
+            }
+            out = out " "; continue
+          }
+          if (c == "{") depth++
+          else if (c == "}") { depth--; if (depth < 0) return 0 }
+          out = out c
+        }
+        code[i] = out
       }
-      return out
+      return (state == "code" || state == "line") && top == 0 && depth == 0
     }
     { lines[NR] = $0 }
     END {
       s = 0; e = 0
       if (mode == "dart-method") {
-        for (i = 1; i <= NR; i++) if (lines[i] ~ ("^  [^ /].*[ ]" name "[ ]*\\(")) { s = i; break }
-        if (!s) exit 3
-        depth = 0; seen = 0
-        for (i = s; i <= NR; i++) {
-          t = code(lines[i]); o = gsub(/\{/, "{", t); c = gsub(/\}/, "}", t)
-          depth += o - c; if (o > 0) seen = 1
-          if (seen && depth <= 0) { e = i; break }
+        if (!lex()) exit 3
+        found = 0
+        for (i = 1; i <= NR; i++)
+          # Nothing on the line before the declaration may hold a brace or a
+          # ";", so no other member can share its first line (review R03).
+          if (startcode[i] && startdepth[i] == 1 && code[i] ~ ("^  [^ /{};][^{};]*[ ]" name "[ ]*[(]")) { s = i; found++ }
+        if (found != 1) exit 3
+        # The body: a block from the first top-level "{", or an arrow body to
+        # its ";", or a bodiless declaration ending at ";".
+        d = startdepth[s]; p = 0; kind = ""
+        for (i = s; i <= NR && !e; i++) {
+          t = code[i]; n = length(t)
+          for (j = 1; j <= n; j++) {
+            c = substr(t, j, 1)
+            if (c == "(") p++
+            else if (c == ")") p--
+            else if (c == "{") { if (kind == "" && p == 0 && d == startdepth[s]) kind = "block"; d++ }
+            else if (c == "}") { d--; if (kind == "block" && d == startdepth[s]) { e = i; ej = j; break } }
+            else if (c == "=" && substr(t, j + 1, 1) == ">" && kind == "" && p == 0 && d == startdepth[s]) { kind = "arrow"; j++ }
+            else if (c == ";" && p == 0 && d == startdepth[s] && kind != "block") { e = i; ej = j; break }
+          }
         }
         if (!e) exit 3
-        while (s > 1 && lines[s - 1] ~ /^  (\/\/\/|@)/) s--
+        # Nothing but comments may follow the body on its last line (R03).
+        if (substr(code[e], ej + 1) ~ /[^ \t]/) exit 3
+        # Doc comments, and lines holding only an annotation, belong to the
+        # member; a line with an annotation and more code does not (R03).
+        while (s > 1 && startcode[s - 1] &&
+               (lines[s - 1] ~ /^  \/\/\// ||
+                code[s - 1] ~ /^  @[A-Za-z_][A-Za-z0-9_.]*([(][^{};]*[)])?[ \t]*$/)) s--
       } else if (mode == "yaml-block") {
         for (i = 1; i <= NR; i++) if (lines[i] ~ ("^  " name ":[ \t]*$")) { s = i; break }
         if (!s) exit 3
@@ -346,7 +468,7 @@ region_bounds() {
 # the given new version lies inside the rule's region in both versions.
 check_region() {
   local path=$1 rule=$2 newsrc=$3 old=$tmp/region-old new=$tmp/region-new
-  local ob nb os oe ns ne rc line a b c d
+  local ob nb os oe ns ne rc line a b c d hunks=0
   git cat-file -e "$base_oid:$path" 2>/dev/null || return 1   # new file: no region in base
   git show "$base_oid:$path" >"$old.raw" || die "git show failed for base:$path"
   if [[ $newsrc == index ]]; then
@@ -368,6 +490,7 @@ check_region() {
   [[ $rc -le 1 ]] || die "git diff --no-index failed ($rc)"
   while IFS= read -r line; do
     [[ $line =~ ^@@\ -([0-9]+)(,([0-9]+))?\ \+([0-9]+)(,([0-9]+))?\ @@ ]] || continue
+    hunks=$((hunks + 1))
     a=${BASH_REMATCH[1]}; b=${BASH_REMATCH[3]:-1}
     c=${BASH_REMATCH[4]}; d=${BASH_REMATCH[6]:-1}
     # Changed lines must lie inside the region. A pure insertion (b = 0) or
@@ -378,6 +501,9 @@ check_region() {
     if ((d > 0)); then ((c >= ns && c + d - 1 <= ne)) || return 1
     else ((c >= ns - 1 && c <= ne)) || return 1; fi
   done <"$tmp/region-diff"
+  # Different files with no text hunk (binary or NUL content) cannot be
+  # placed inside the region: fail closed.
+  ((rc == 0 || hunks > 0)) || return 1
   return 0
 }
 
