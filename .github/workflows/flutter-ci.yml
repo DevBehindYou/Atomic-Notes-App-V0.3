@@ -190,17 +190,28 @@ jobs:
           retention-days: 1
 
   flutter:
-    name: Flutter analyze, tests, and debug APK
+    name: Flutter analyze, tests, and opt-in debug APK
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     defaults:
       run:
         shell: bash
+    env:
+      # Android packaging is explicit opt-in. Unless the repository variable
+      # ATOMIC_ANDROID_PACKAGING is 'enabled', no APK is built or uploaded and
+      # the proof records the APK steps as deferred, not passed.
+      ATOMIC_ANDROID_PACKAGING: ${{ vars.ATOMIC_ANDROID_PACKAGING == 'enabled' && 'enabled' || 'deferred' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
         with:
           persist-credentials: false
+
+      - name: Test the verification recorder and the packaging policy
+        run: |
+          python3 tool/test_record_flutter_verification.py
+          python3 tool/test_check_workflow_packaging.py
+          python3 tool/check_workflow_packaging.py
 
       - name: Create a per-run secret canary for the artifact scan
         run: echo "ATOMIC_CI_CANARY=$(openssl rand -hex 24)" >> "$GITHUB_ENV"
@@ -299,6 +310,7 @@ jobs:
 
       - name: Build verification APK
         id: build
+        if: vars.ATOMIC_ANDROID_PACKAGING == 'enabled'
         # The Gradle distribution and some dependencies are served from GitHub
         # release downloads, which intermittently answer 5xx. Retry only those
         # download failures, at most three attempts; any other failure fails
@@ -318,13 +330,20 @@ jobs:
           done
 
       - name: Verify retained artwork in the built APK
+        if: vars.ATOMIC_ANDROID_PACKAGING == 'enabled'
         run: python3 tool/verify_mascot_assets.py --apk build/app/outputs/flutter-apk/app-debug.apk
+      - name: Report deferred Android packaging
+        if: env.ATOMIC_ANDROID_PACKAGING != 'enabled'
+        run: |
+          echo '::notice::Android packaging is deferred (repository variable ATOMIC_ANDROID_PACKAGING is not enabled). No APK was built; the APK build, APK artwork check and APK upload did not run and are recorded as deferred.'
+          echo '### Android packaging deferred' >> "$GITHUB_STEP_SUMMARY"
+          echo 'No APK was built in this run. Source artwork was still verified above. APK-dependent checks are deferred, not passed.' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Report unavailable diagnostic artifact
         if: always() && steps.diagnostics.outcome == 'failure'
         run: |
           echo '::warning::Diagnostic artifact upload failed. Read the step logs above for compiler output and the upload error. If storage quota is exhausted, remove obsolete GitHub Actions artifacts before rerunning.'
-          echo 'Diagnostic artifact upload failed; compiler output remains in the workflow step logs. APK upload is still required for a successful build job.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Diagnostic artifact upload failed; compiler output remains in the workflow step logs. When Android packaging is enabled, the APK upload is still required for a successful build job.' >> "$GITHUB_STEP_SUMMARY"
 
 
       - name: Scan artifacts for secrets before any upload
@@ -461,7 +480,7 @@ jobs:
           retention-days: 1
 
       - name: Upload non-production debug APK
-        if: steps.secret_scan.outcome == 'success'
+        if: steps.secret_scan.outcome == 'success' && vars.ATOMIC_ANDROID_PACKAGING == 'enabled'
         id: apk-upload
         uses: actions/upload-artifact@v6
         with:
@@ -477,6 +496,7 @@ jobs:
           ATOMIC_VERIFY_TESTS: ${{ steps.tests.outcome }}
           ATOMIC_VERIFY_BUILD: ${{ steps.build.outcome }}
           ATOMIC_VERIFY_APKUPLOAD: ${{ steps.apk-upload.outcome }}
+          ATOMIC_VERIFY_PACKAGING: ${{ env.ATOMIC_ANDROID_PACKAGING }}
         run: python3 tool/record_flutter_verification.py
       - name: Scan the verification proof for secrets before upload
         id: secret_scan_proof
