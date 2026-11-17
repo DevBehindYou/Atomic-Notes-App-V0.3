@@ -55,7 +55,7 @@ void main() {
     // A complete platform editing-value replacement exercises paste input.
     await tester.enterText(field('note-body'), body);
     await tester.pump();
-    expect(find.text('3001 WORDS'), findsOneWidget);
+    expect(find.text('3001 words'), findsOneWidget);
     expect(find.text('3000 MAX'), findsOneWidget);
     await tester.tap(find.text('Done'));
     await tester.pump();
@@ -85,7 +85,7 @@ void main() {
     final note = document.toNote(original);
     final before = note.toMap();
     await openEditor(tester, note);
-    expect(find.text('3 WORDS'), findsOneWidget);
+    expect(find.text('3 words'), findsOneWidget);
     await tester.enterText(field('note-body'), _words(2999));
     await tester.tap(find.byTooltip('Back to notes'));
     await tester.pumpAndSettle();
@@ -177,7 +177,7 @@ void main() {
     speech.result!('two words', false);
     await tester.pump();
     final fullDraft = controller.text;
-    expect(find.text('3001 WORDS'), findsOneWidget);
+    expect(find.text('3001 words'), findsOneWidget);
     final cancellations = speech.cancels;
     await tester.tap(find.text('Done'));
     await tester.pump();

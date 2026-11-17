@@ -2,6 +2,7 @@ import 'package:atomic_notes/database/note.dart';
 import 'package:atomic_notes/database/note_document.dart';
 import 'package:atomic_notes/editor/editor_media.dart';
 import 'package:atomic_notes/page/notes_editor_page.dart';
+import 'package:atomic_notes/ui/buttons/atomic_button.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import '../notes_editor_page_test.dart' show field;
@@ -76,6 +77,12 @@ Future<void> _action(WidgetTester tester, String label) async {
   await tester.pumpAndSettle();
 }
 
+/// Opens the editor's "…" menu and chooses [item].
+Future<void> _menu(WidgetTester tester, String item) async {
+  await _action(tester, 'More actions');
+  await _tap(tester, item);
+}
+
 Finder get _body => field('note-body');
 
 Future<void> _edit(WidgetTester tester, String text) async {
@@ -92,17 +99,13 @@ Future<void> _edit(WidgetTester tester, String text) async {
 }
 
 void main() {
-  testWidgets('tag popup allows 15 characters and disables adding after three',
+  testWidgets('tag popup allows 15 characters and hides adding at three',
       (tester) async {
     final original = Note(id: 'three-tag-popup', body: 'Body');
     final document = NoteDocument.fromNote(original)
       ..setTags(['one', 'two', 'three']);
     await _open(tester, document.toNote(original));
-    expect(
-        tester
-            .widget<TextButton>(find.widgetWithText(TextButton, 'Tag'))
-            .onPressed,
-        isNull);
+    expect(find.byTooltip('Add tag'), findsNothing);
     await tester.tap(find.byTooltip('Remove tag three'));
     await tester.pumpAndSettle();
     await _action(tester, 'Add tag');
@@ -111,11 +114,7 @@ void main() {
     await tester.enterText(field, '123456789012345');
     await _tap(tester, 'Add');
     expect(find.text('#123456789012345'), findsOneWidget);
-    expect(
-        tester
-            .widget<TextButton>(find.widgetWithText(TextButton, 'Tag'))
-            .onPressed,
-        isNull);
+    expect(find.byTooltip('Add tag'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -126,7 +125,7 @@ void main() {
     await _open(tester, note);
     await _edit(tester, 'Edited');
     await _action(tester, 'Back to notes');
-    final save = find.widgetWithText(FilledButton, 'Save');
+    final save = find.widgetWithText(AtomicButton, 'Save');
     expect(save, findsOneWidget);
     expect(tester.getSize(save).height, greaterThanOrEqualTo(48));
     expect(note.body, 'Original');
@@ -182,11 +181,11 @@ void main() {
     await _open(tester, note,
         scale: 2, keyboard: 280, onDelete: () => deleted++);
     await _edit(tester, 'Unsaved draft');
-    await _action(tester, 'Delete note');
+    await _menu(tester, 'Move to Recycle Bin');
     await _tap(tester, 'Cancel');
     expect(deleted, 0);
     expect(tester.widget<TextField>(_body).controller!.text, 'Unsaved draft');
-    await _action(tester, 'Delete note');
+    await _menu(tester, 'Move to Recycle Bin');
     await _tap(tester, 'Move to Recycle Bin');
     expect(deleted, 1);
     expect(note.body, 'Saved content');
@@ -199,11 +198,11 @@ void main() {
     final note = Note(id: 'unsaved-delete', body: 'Original');
     await _open(tester, note);
     await _edit(tester, 'Unsaved changes');
-    await _action(tester, 'Delete note');
+    await _menu(tester, 'Discard note');
     expect(find.text('Discard this note?'), findsOneWidget);
     await _tap(tester, 'Cancel');
     expect(tester.widget<TextField>(_body).controller!.text, 'Unsaved changes');
-    await _action(tester, 'Delete note');
+    await _menu(tester, 'Discard note');
     await _tap(tester, 'Discard');
     expect(note.body, 'Original');
     expect(find.byType(NotesCreaterPage), findsNothing);
@@ -216,7 +215,7 @@ void main() {
     await _open(tester, Note(id: 'speech-popup', body: 'Original'),
         scale: 2, keyboard: 280, speech: speech);
     await _action(tester, 'Dictate text');
-    await _tap(tester, 'Cancel');
+    await _tap(tester, 'Not now');
     expect(speech.starts, 0);
     await _action(tester, 'Dictate text');
     await _tap(tester, 'Start dictation');

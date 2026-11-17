@@ -6,6 +6,7 @@ import 'package:atomic_notes/database/note_document.dart';
 import 'package:atomic_notes/editor/editor_media.dart';
 import 'package:atomic_notes/editor/note_image_viewer.dart';
 import 'package:atomic_notes/page/notes_editor_page.dart';
+import 'package:atomic_notes/ui/buttons/atomic_button.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as image;
@@ -91,9 +92,9 @@ Future<void> _openViewer(WidgetTester tester) async {
 }
 
 Future<void> _removeImage(WidgetTester tester) async {
-  await tester.tap(find.widgetWithText(TextButton, 'Remove image').first);
+  await tester.tap(find.byTooltip('Remove image').first);
   await tester.pumpAndSettle();
-  await tester.tap(find.widgetWithText(FilledButton, 'Remove image'));
+  await tester.tap(find.widgetWithText(AtomicButton, 'Remove image'));
   await tester.pumpAndSettle();
 }
 

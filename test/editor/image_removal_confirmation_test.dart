@@ -2,9 +2,10 @@ import 'dart:convert';
 
 import 'package:atomic_notes/database/note.dart';
 import 'package:atomic_notes/database/note_document.dart';
-import 'package:atomic_notes/editor/editor_popup.dart';
 import 'package:atomic_notes/page/notes_editor_page.dart';
-import 'package:atomic_notes/theme/app_tokens.dart';
+import 'package:atomic_notes/ui/buttons/atomic_button.dart';
+import 'package:atomic_notes/ui/motion/atomic_pressable.dart';
+import 'package:atomic_notes/ui/overlays/atomic_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as image;
@@ -65,10 +66,18 @@ Future<void> _open(WidgetTester tester, Note note,
   await tester.pumpAndSettle();
 }
 
-Finder get _remove => find.widgetWithText(TextButton, 'Remove image').first;
-Finder get _confirm => find.widgetWithText(FilledButton, 'Remove image');
+Finder get _remove => find.byTooltip('Remove image').first;
+Finder get _confirm => find.widgetWithText(AtomicButton, 'Remove image');
+Finder get _dialog => find.byWidgetPredicate((widget) => widget is AtomicDialog);
+
+/// The tap handler of the control with [tooltip].
+VoidCallback _onTap(WidgetTester tester, Finder tooltip) => tester
+    .widget<AtomicPressable>(
+        find.descendant(of: tooltip, matching: find.byType(AtomicPressable)))
+    .onTap!;
+
 Future<void> _requestRemoval(WidgetTester tester) async {
-  final candidates = find.widgetWithText(TextButton, 'Remove image');
+  final candidates = find.byTooltip('Remove image');
   if (candidates.evaluate().isEmpty) {
     await tester.scrollUntilVisible(candidates, 100,
         scrollable: find
@@ -95,11 +104,12 @@ void main() {
     final before = note.toMap();
     await _open(tester, note);
     await _requestRemoval(tester);
-    expect(find.widgetWithText(EditorPopup, 'Remove image?'), findsOneWidget);
-    expect(find.widgetWithText(OutlinedButton, 'Keep image'), findsOneWidget);
+    expect(find.descendant(of: _dialog, matching: find.text('Remove image?')),
+        findsOneWidget);
+    expect(find.widgetWithText(AtomicButton, 'Keep image'), findsOneWidget);
     expect(_confirm, findsOneWidget);
-    final destructive = tester.widget<FilledButton>(_confirm);
-    expect(destructive.style!.backgroundColor!.resolve({}), AppColors.error);
+    final destructive = tester.widget<AtomicButton>(_confirm);
+    expect(destructive.variant, AtomicButtonVariant.danger);
     expect(note.toMap(), before);
   });
 
@@ -170,10 +180,7 @@ void main() {
       (tester) async {
     final note = _note(checklistFirst: true);
     await _open(tester, note);
-    final removeEarlier = tester
-        .widget<IconButton>(find.byWidgetPredicate((widget) =>
-            widget is IconButton && widget.tooltip == 'Remove item 1'))
-        .onPressed!;
+    final removeEarlier = _onTap(tester, find.byTooltip('Remove item 1'));
     await _requestRemoval(tester);
     // Simulate an independent row mutation while the asynchronous decision is
     // pending. The original image, rather than its now-stale index, is removed.
@@ -194,14 +201,14 @@ void main() {
     final note = _note();
     final before = note.toMap();
     await _open(tester, note);
-    final request = tester.widget<TextButton>(_remove).onPressed!;
+    final request = _onTap(tester, _remove);
     request();
     request();
     await tester.pumpAndSettle();
     expect(find.text('Remove image?'), findsOneWidget);
     await tester.tap(find.text('Keep image'));
     await tester.pumpAndSettle();
-    expect(find.byType(EditorPopup), findsNothing);
+    expect(_dialog, findsNothing);
     expect(note.toMap(), before);
   });
 
@@ -212,7 +219,7 @@ void main() {
     await _open(tester, note, scale: 2, keyboard: 260);
     await _requestRemoval(tester);
     for (final target in [
-      find.widgetWithText(OutlinedButton, 'Keep image'),
+      find.widgetWithText(AtomicButton, 'Keep image'),
       _confirm
     ]) {
       await tester.ensureVisible(target);

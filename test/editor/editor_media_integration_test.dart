@@ -4,6 +4,7 @@ import 'package:atomic_notes/database/note.dart';
 import 'package:atomic_notes/database/note_document.dart';
 import 'package:atomic_notes/editor/editor_media.dart';
 import 'package:atomic_notes/page/notes_editor_page.dart';
+import 'package:atomic_notes/ui/buttons/atomic_button.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as image;
@@ -150,6 +151,13 @@ Future<void> _action(WidgetTester tester, String label) async {
   await tester.pumpAndSettle();
 }
 
+/// Opens the editor's "…" menu and chooses [item].
+Future<void> _menu(WidgetTester tester, String item) async {
+  await _action(tester, 'More actions');
+  await tester.tap(find.text(item));
+  await tester.pumpAndSettle();
+}
+
 Future<void> _startSpeech(WidgetTester tester) async {
   await _action(tester, 'Dictate text');
   await tester.tap(find.text('Start dictation'));
@@ -188,12 +196,12 @@ Future<void> _dismissMessage(WidgetTester tester) async {
 }
 
 Future<void> _removeFirstImage(WidgetTester tester) async {
-  final button = find.widgetWithText(TextButton, 'Remove image').first;
+  final button = find.byTooltip('Remove image').first;
   await tester.ensureVisible(button);
   await tester.pumpAndSettle();
   await tester.tap(button);
   await tester.pumpAndSettle();
-  await tester.tap(find.widgetWithText(FilledButton, 'Remove image'));
+  await tester.tap(find.widgetWithText(AtomicButton, 'Remove image'));
   await tester.pumpAndSettle();
 }
 
@@ -326,13 +334,13 @@ void main() {
     final bytes = image.encodeJpg(image.Image(width: 16, height: 12));
     final encoded = base64Encode(bytes);
     await _open(tester, note, images: _ImageInput()..result = encoded);
-    expect(find.text('4 WORDS'), findsOneWidget);
+    expect(find.text('4 words'), findsOneWidget);
     await _action(tester, 'Add image');
     expect(find.text('Optimize image'), findsNothing);
     expect(find.text('Insert image'), findsNothing);
     expect(find.byType(Image), findsOneWidget);
-    expect(find.text('4 WORDS'), findsOneWidget);
-    expect(find.text('1 MIN READ'), findsOneWidget);
+    expect(find.text('4 words'), findsOneWidget);
+    expect(find.text('1 min read'), findsOneWidget);
     expect(note.body, 'two plain words');
     await tester.tap(find.text('Done'));
     await tester.pumpAndSettle();
@@ -343,7 +351,7 @@ void main() {
     await tester.tap(find.text('Open'));
     await tester.pumpAndSettle();
     expect(find.byType(Image), findsOneWidget);
-    expect(find.text('4 WORDS'), findsOneWidget);
+    expect(find.text('4 words'), findsOneWidget);
     expect(find.textContaining(encoded), findsNothing);
     expect(tester.takeException(), isNull);
   });
@@ -517,8 +525,8 @@ void main() {
     await _action(tester, 'Dictate text');
     expect(find.text('Dictate into your note'), findsOneWidget);
     expect(
-        find.textContaining('may send audio to its provider'), findsOneWidget);
-    await tester.tap(find.text('Cancel'));
+        find.textContaining('may send speech to its provider'), findsOneWidget);
+    await tester.tap(find.text('Not now'));
     await tester.pumpAndSettle();
     expect(input.starts, 0);
     expect(_controller(tester).text, 'Keep me');
@@ -578,7 +586,7 @@ void main() {
     expect(note.body, 'Before');
     expect(find.byTooltip('Dictate text'), findsOneWidget);
     expect(find.byTooltip('Stop dictation'), findsNothing);
-    expect(find.text('LISTENING…'), findsNothing);
+    expect(find.text('Listening…'), findsNothing);
     expect(
         find.textContaining('Speech recognition is unavailable'), findsNothing);
     await tester.tap(find.text('Done'));
@@ -721,14 +729,14 @@ void main() {
     var deletes = 0;
     await _open(tester, note, onDelete: () => deletes++);
     await tester.enterText(_body, 'Unsaved content');
-    await _action(tester, 'Delete note');
+    await _menu(tester, 'Move to Recycle Bin');
     expect(find.text('Move note to Recycle Bin?'), findsOneWidget);
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
     expect(deletes, 0);
     expect(_controller(tester).text, 'Unsaved content');
     expect(note.toMap(), original);
-    await _action(tester, 'Delete note');
+    await _menu(tester, 'Move to Recycle Bin');
     await tester.tap(find.text('Move to Recycle Bin'));
     await tester.pumpAndSettle();
     expect(deletes, 1);
