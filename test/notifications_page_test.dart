@@ -10,18 +10,25 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-AppNotification _n(String id, {bool read = false, bool dismissible = true, String priority = 'normal'}) =>
+AppNotification _n(String id,
+        {bool read = false,
+        bool dismissible = true,
+        String priority = 'normal',
+        String? action,
+        String? actionUrl,
+        String? subject,
+        DateTime? createdAt}) =>
     AppNotification(
       id: id,
       type: 'general',
-      subject: 'Subject $id',
+      subject: subject ?? 'Subject $id',
       description: 'Body $id',
       priority: priority,
       status: 'active',
-      action: null,
-      actionUrl: null,
+      action: action,
+      actionUrl: actionUrl,
       icon: null,
-      createdAt: DateTime(2026, 9, 27, 18, 3),
+      createdAt: createdAt ?? DateTime(2026, 9, 27, 18, 3),
       expiresAt: null,
       isRead: read,
       dismissedAt: null,
@@ -37,9 +44,9 @@ class _FakeFeed extends ChangeNotifier implements NotificationsSource {
   @override
   List<AppNotification> get items => _items;
   @override
-  bool get loading => false;
+  bool loading = false;
   @override
-  String? get error => null;
+  String? error;
 
   @override
   Future<void> refresh() async => calls.add('refresh');
@@ -86,12 +93,13 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('notification-b')));
     await tester.pump();
     expect(feed.calls.where((c) => c.startsWith('read ')), ['read a']);
-    expect(find.text('MARK ALL READ'), findsNothing, reason: 'nothing unread is left');
+    expect(find.byKey(const ValueKey('notifications-mark-all-read')), findsNothing,
+        reason: 'nothing unread is left');
   });
 
   testWidgets('the ✕ dismisses without also counting as a card tap', (tester) async {
     final feed = await _open(tester, [_n('a')]);
-    await tester.tap(find.byIcon(Icons.close));
+    await tester.tap(find.byTooltip('Dismiss'));
     await tester.pump();
     expect(feed.calls, contains('dismiss a'));
     expect(feed.calls, isNot(contains('read a')));
@@ -100,7 +108,7 @@ void main() {
 
   testWidgets('a pinned message shows a pin, not a ✕', (tester) async {
     await _open(tester, [_n('p', dismissible: false, priority: 'critical')]);
-    expect(find.byIcon(Icons.close), findsNothing);
-    expect(find.byIcon(Icons.push_pin_outlined), findsOneWidget);
+    expect(find.byTooltip('Dismiss'), findsNothing);
+    expect(find.byKey(const ValueKey('notification-pinned')), findsOneWidget);
   });
 }
