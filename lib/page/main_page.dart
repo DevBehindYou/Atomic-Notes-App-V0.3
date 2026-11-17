@@ -1,59 +1,63 @@
-// ignore_for_file: use_build_context_synchronously, use_super_parameters
+import 'dart:async';
 
 import 'package:atomic_notes/authentication/auth_services/auth_service.dart';
-import 'package:atomic_notes/utility/component/profile_avatar.dart';
 import 'package:atomic_notes/page/home_page.dart';
-import 'package:atomic_notes/page/settings_page.dart';
 import 'package:atomic_notes/state/notes/notes_bloc.dart';
 import 'package:atomic_notes/state/notifications/notifications_cubit.dart';
 import 'package:atomic_notes/state/profile/profile_cubit.dart';
-import 'package:atomic_notes/theme/app_tokens.dart';
-import 'package:atomic_notes/theme/editorial.dart';
-import 'package:atomic_notes/utility/intropages/energy_intro_screen.dart';
-import 'package:hive_ce/hive_ce.dart';
-import 'package:atomic_notes/utility/component/cloud_button.dart';
+import 'package:atomic_notes/theme/atomic_colors.dart';
+import 'package:atomic_notes/theme/atomic_icons.dart';
+import 'package:atomic_notes/ui/buttons/atomic_icon_button.dart';
+import 'package:atomic_notes/ui/feedback/progress.dart';
+import 'package:atomic_notes/ui/motion/atomic_pressable.dart';
 import 'package:atomic_notes/utility/component/energy_popup.dart';
 import 'package:atomic_notes/utility/component/my_snackbar.dart';
+import 'package:atomic_notes/utility/component/profile_avatar.dart';
+import 'package:atomic_notes/utility/intropages/energy_intro_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:google_nav_bar/google_nav_bar.dart';
+import 'package:hive_ce/hive_ce.dart';
 
+/// The signed-in shell (screens spec, Shell). It hosts Home only: Settings is
+/// a pushed route opened from the avatar in the Home header, so there is no
+/// app bar, tab stack or bottom bar here. The shell keeps the app-level duties
+/// it always had: Back twice to exit, the one-time Energy intro, refreshing
+/// the profile, and showing the answer to a sync.
 class MainPage extends StatefulWidget {
-  const MainPage({Key? key}) : super(key: key);
+  const MainPage({super.key, this.refreshHandle, this.energyIntroSeen});
+
+  /// Refreshes the cached account handle that Settings shows. Defaults to
+  /// [AuthServices.getUserInfo]; injectable so tests stay off the network.
+  final Future<void> Function()? refreshHandle;
+
+  /// Whether the Energy intro was already shown. Defaults to the
+  /// `authBox` flag; injectable for tests.
+  final bool Function()? energyIntroSeen;
 
   @override
   State<MainPage> createState() => _MainPageState();
 }
 
 class _MainPageState extends State<MainPage> {
-  final AuthServices serve = AuthServices();
-  String? username = AuthServices.cachedHandle;
-  bool _isLoading2 = false;
-  int currentIndex = 0;
-
-  // Explicitly List<Widget>. As a bare `List` this is List<dynamic>, which the
-  // old `body: _pages[currentIndex]` accepted (dynamic -> Widget is an
-  // implicit downcast) but IndexedStack's `children` does not — so switching
-  // to IndexedStack turned this into a hard compile error.
-  final List<Widget> _pages = [
-    // home page
-    const HomePage(),
-
-    // settings page
-    const SettingsPage(),
-  ];
-
   @override
   void initState() {
-    // Sign-out handling lives in SessionGuard now, not per screen — the shell
-    // used to push a replacement route here, which left itself alive underneath
-    // the login page so Back walked straight back into the authenticated app.
-    _getUserName();
     super.initState();
+    // Sign-out handling lives in SessionGuard, not per screen.
+    unawaited(_refreshHandle());
     // The picture is kept per account and nothing announces a new sign-in, so read it afresh.
     context.read<ProfileCubit>().refresh();
     _maybeShowEnergyIntro();
+  }
+
+  /// The header no longer shows the handle, but Settings reads the cached
+  /// one, so keep warming it on entry as the old masthead did.
+  Future<void> _refreshHandle() async {
+    try {
+      await (widget.refreshHandle ?? () => AuthServices().getUserInfo())();
+    } catch (_) {
+      // Offline or signed out: Settings keeps the handle it last had.
+    }
   }
 
   /// Show the Atomic Energy feature tour once, the first time the home screen
@@ -65,10 +69,9 @@ class _MainPageState extends State<MainPage> {
       if (!mounted) return;
       bool seen;
       try {
-        seen =
-            Hive.box<bool>(
-              'authBox',
-            ).get(EnergyIntroScreen.seenFlag, defaultValue: false) ??
+        seen = widget.energyIntroSeen?.call() ??
+            Hive.box<bool>('authBox')
+                .get(EnergyIntroScreen.seenFlag, defaultValue: false) ??
             false;
       } catch (_) {
         seen = true; // if the box isn't ready, don't nag; skip this launch
@@ -76,47 +79,6 @@ class _MainPageState extends State<MainPage> {
       if (!seen && mounted) {
         Navigator.of(context).pushNamed('/energyintro');
       }
-    });
-  }
-
-  // get the user name
-  Future<void> _getUserName() async {
-    if (!mounted) return;
-    setState(() {
-      _isLoading2 = true;
-    });
-
-    try {
-      username = await serve.getUserInfo();
-    } catch (e) {
-      // error
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading2 = false;
-        });
-      }
-    }
-  }
-
-  @override
-  void dispose() {
-    _isLoading2 = false;
-    super.dispose();
-  }
-
-  // sync notes data to cloud: the Bloc checks the switch and the connection, runs the sync and
-  // answers with a notice, which the listener in build shows.
-  //
-  // Manual button = INSTANT sync (10 energy). The energy gate lives inside the sync: it charges
-  // only when there are changes to upload, and refuses when the balance is short. Automatic and
-  // background syncs go through the same gate at the standard cost (5).
-  void _syncData() =>
-      context.read<NotesBloc>().add(const NotesSyncRequested(instant: true));
-
-  void goToPage(index) {
-    setState(() {
-      currentIndex = index;
     });
   }
 
@@ -159,235 +121,64 @@ class _MainPageState extends State<MainPage> {
           text: state.notice!.text,
           sec: state.notice!.millis,
         ).showMySnackBar(context),
-        child: _scaffold(context),
-      ),
-    );
-  }
-
-  Widget _scaffold(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.paper,
-      appBar: AppBar(
-        toolbarHeight: 64,
-        titleSpacing: AppSpace.md,
-        backgroundColor: AppColors.paper,
-        surfaceTintColor: Colors.transparent,
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        // Masthead: avatar in an Ink frame, mono account line. Tap to refresh
-        // the username, same as before.
-        title: GestureDetector(
-          onTap: () {
-            _getUserName();
-          },
-          behavior: HitTestBehavior.opaque,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const ProfileAvatar(size: 34, frame: 2),
-              const SizedBox(width: AppSpace.sm + 2),
-              Flexible(
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxWidth: MediaQuery.sizeOf(context).width * 0.45,
-                  ),
-                  child: _isLoading2
-                      ? Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Container(
-                              height: 8,
-                              width: 44,
-                              decoration: const BoxDecoration(
-                                color: AppColors.surfaceHighest,
-                                borderRadius: AppRadius.sm,
-                              ),
-                            ),
-                            const SizedBox(height: 5),
-                            Container(
-                              height: 11,
-                              width: 88,
-                              decoration: const BoxDecoration(
-                                color: AppColors.surfaceHighest,
-                                borderRadius: AppRadius.sm,
-                              ),
-                            ),
-                          ],
-                        )
-                      : Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const MonoLabel('+ ATOMIC', small: true),
-                            Text(
-                              username!,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: AppType.headlineSm.copyWith(height: 1.1),
-                            ),
-                          ],
-                        ),
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          const _NotificationBell(),
-          const SizedBox(width: AppSpace.sm),
-          // Tap = sync (unchanged). Long-press = Atomic Energy popup.
-          BlocSelector<NotesBloc, NotesState, bool>(
-            selector: (state) => state.syncing,
-            builder: (context, syncing) => CloudButton(
-              ico: "assets/sync.svg",
-              action: _syncData,
-              clr: 0xff5F5EF7,
-              isLoading: syncing,
-              onLongPress: () => showEnergyPopup(context),
-            ),
-          ),
-          const SizedBox(width: AppSpace.md),
-        ],
-        bottom: const PreferredSize(
-          preferredSize: Size.fromHeight(AppStroke.rule),
-          child: HairRule(color: AppColors.ink),
-        ),
-      ),
-      // pages to show in body — IndexedStack keeps both pages'
-      // State alive (scroll position, loaded notes list) instead of
-      // destroying and rebuilding them every time the tab changes.
-      body: IndexedStack(
-        index: currentIndex,
-        children: [
-          for (var index = 0; index < _pages.length; index++)
-            TickerMode(enabled: currentIndex == index, child: _pages[index]),
-        ],
-      ),
-
-      // bottom Navigation bar section — the active tab becomes a solid Ink
-      // block, which is how the reference marks the current nav item.
-      bottomNavigationBar: Container(
-        decoration: const BoxDecoration(
-          color: AppColors.paper,
-          border: Border(
-            top: BorderSide(color: AppColors.ink, width: AppStroke.rule),
-          ),
-        ),
-        child: SafeArea(
-          top: false,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(
-              horizontal: AppSpace.md,
-              vertical: AppSpace.sm + 2,
-            ),
-            child: GNav(
-              mainAxisAlignment: MainAxisAlignment.center,
-              onTabChange: (index) => goToPage(index),
-              backgroundColor: AppColors.paper,
-              color: AppColors.slateData,
-              activeColor: AppColors.paper,
-              tabBackgroundColor: AppColors.ink,
-              rippleColor: AppColors.surfaceHighest,
-              hoverColor: AppColors.surfaceHigh,
-              iconSize: 18,
-              gap: AppSpace.sm,
-              tabBorderRadius: 4,
-              padding: const EdgeInsets.symmetric(
-                horizontal: AppSpace.md,
-                vertical: 12,
-              ),
-              tabs: const [
-                GButton(
-                  icon: Icons.article_outlined,
-                  text: 'NOTES',
-                  textStyle: TextStyle(
-                    fontFamily: AppFonts.mono,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w500,
-                    letterSpacing: 0.9,
-                    color: AppColors.paper,
-                  ),
-                ),
-                GButton(
-                  icon: Icons.tune,
-                  text: 'SETTINGS',
-                  textStyle: TextStyle(
-                    fontFamily: AppFonts.mono,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w500,
-                    letterSpacing: 0.9,
-                    color: AppColors.paper,
-                  ),
-                ),
-              ],
-            ),
-          ),
+        child: const HomePage(
+          headerActions: [
+            _SyncButton(),
+            _NotificationBell(),
+            _SettingsAvatar()
+          ],
         ),
       ),
     );
   }
 }
 
-/// App-bar bell with an unread badge; opens the Notification Center. Rebuilds
-/// with the feed so the badge stays live.
-class _NotificationBell extends StatelessWidget {
-  const _NotificationBell();
+/// Sync (components spec, Progress and sync indicator). Tap syncs at once
+/// (INSTANT, 10 energy: the energy gate inside the sync charges only when
+/// there are changes to upload and refuses when the balance is short).
+/// Long-press opens the Atomic Energy popup. A ring runs around the button
+/// while a sync is in flight, and a dot shows when changes wait to sync.
+class _SyncButton extends StatelessWidget {
+  const _SyncButton();
 
   @override
   Widget build(BuildContext context) {
-    return BlocSelector<NotificationsCubit, NotificationsState, int>(
-      selector: (state) => state.unreadCount,
-      builder: (context, count) {
-        return GestureDetector(
-          onTap: () => Navigator.pushNamed(context, '/notifications'),
-          behavior: HitTestBehavior.opaque,
+    return BlocBuilder<NotesBloc, NotesState>(
+      buildWhen: (previous, current) =>
+          previous.syncing != current.syncing ||
+          previous.pending != current.pending,
+      builder: (context, state) {
+        final waiting = state.pending > 0;
+        final label = state.syncing
+            ? 'Sync now, syncing'
+            : (waiting
+                ? 'Sync now, ${state.pending} '
+                    '${state.pending == 1 ? 'change' : 'changes'} waiting'
+                : 'Sync now');
+        return SizedBox.square(
+          dimension: 48,
           child: Stack(
-            clipBehavior: Clip.none,
+            alignment: Alignment.center,
             children: [
-              Container(
-                height: 38,
-                width: 46,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: AppColors.paper,
-                  borderRadius: AppRadius.std,
-                  border: Border.all(
-                    color: AppColors.ink,
-                    width: AppStroke.rule,
-                  ),
-                ),
-                child: const Icon(
-                  Icons.notifications_none,
-                  size: 20,
-                  color: AppColors.ink,
-                ),
+              AtomicIconButton(
+                icon:
+                    waiting ? AtomicIcons.cloudUpload : AtomicIcons.cloudCheck,
+                tooltip: 'Sync now',
+                semanticsLabel: label,
+                dot: waiting && !state.syncing,
+                onPressed: state.syncing
+                    ? null
+                    : () => context
+                        .read<NotesBloc>()
+                        .add(const NotesSyncRequested(instant: true)),
+                onLongPress: () => showEnergyPopup(context),
               ),
-              if (count > 0)
-                Positioned(
-                  top: -4,
-                  right: -4,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 5,
-                      vertical: 1,
-                    ),
-                    constraints: const BoxConstraints(minWidth: 16),
-                    decoration: BoxDecoration(
-                      color: AppColors.signal,
-                      borderRadius: AppRadius.chip,
-                      border: Border.all(
-                        color: AppColors.paper,
-                        width: AppStroke.rule,
-                      ),
-                    ),
-                    child: Text(
-                      count > 9 ? '9+' : '$count',
-                      textAlign: TextAlign.center,
-                      style: AppType.labelMonoSm.copyWith(
-                        color: Colors.white,
-                        height: 1.1,
-                      ),
+              if (state.syncing)
+                const IgnorePointer(
+                  child: ExcludeSemantics(
+                    child: ProgressRing(
+                      key: ValueKey('home-sync-ring'),
+                      size: AtomicIconButton.size + 4,
                     ),
                   ),
                 ),
@@ -395,6 +186,62 @@ class _NotificationBell extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+/// The notification bell with its unread badge ("9+" above nine). Opens the
+/// Notification Center and rebuilds with the feed so the badge stays live.
+class _NotificationBell extends StatelessWidget {
+  const _NotificationBell();
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocSelector<NotificationsCubit, NotificationsState, int>(
+      selector: (state) => state.unreadCount,
+      builder: (context, count) => AtomicIconButton(
+        icon: AtomicIcons.bell,
+        tooltip: 'Notifications',
+        semanticsLabel: count > 0 ? 'Notifications, $count unread' : null,
+        badgeCount: count,
+        onPressed: () => Navigator.pushNamed(context, '/notifications'),
+      ),
+    );
+  }
+}
+
+/// The account picture as a 40 dp circle in a 48 target: the Settings entry
+/// point now that the bottom bar is gone (components spec, Avatar).
+class _SettingsAvatar extends StatelessWidget {
+  const _SettingsAvatar();
+
+  static const String label = 'Settings and profile';
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Tooltip(
+      message: label,
+      excludeFromSemantics: true,
+      child: AtomicPressable(
+        onTap: () => Navigator.pushNamed(context, '/settingspage'),
+        semanticsLabel: label,
+        excludeSemantics: true,
+        child: SizedBox.square(
+          dimension: 48,
+          child: Center(
+            child: Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: c.surfaceInset,
+                shape: BoxShape.circle,
+              ),
+              child: const ClipOval(child: ProfileAvatar(size: 40, frame: 0)),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

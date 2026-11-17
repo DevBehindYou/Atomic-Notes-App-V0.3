@@ -5,6 +5,9 @@ import 'package:atomic_notes/database/notes_source.dart';
 import 'package:atomic_notes/page/notes_editor_page.dart';
 import 'package:atomic_notes/state/notes/notes_bloc.dart';
 import 'package:atomic_notes/theme/app_tokens.dart';
+import 'package:atomic_notes/theme/atomic_colors.dart';
+import 'package:atomic_notes/theme/atomic_tokens.dart';
+import 'package:atomic_notes/theme/atomic_type.dart';
 import 'package:atomic_notes/theme/editorial.dart';
 import 'package:atomic_notes/utility/component/atomic_brand.dart';
 import 'package:atomic_notes/utility/component/my_snackbar.dart';
@@ -20,10 +23,16 @@ import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 /// so a tick on one card does not rebuild the header and typing in the search box does not
 /// rebuild the add menu.
 class HomePage extends StatefulWidget {
-  const HomePage({super.key, this.now});
+  const HomePage({super.key, this.now, this.headerActions = const []});
 
   /// Local clock used for the welcome line; injectable for date/resume tests.
   final DateTime Function()? now;
+
+  /// The app-level actions at the right of the header row (sync,
+  /// notifications, the Settings avatar). The shell supplies them, so Home
+  /// stays free of the profile and notification state. Read once, when the
+  /// page is built, like the rest of the header.
+  final List<Widget> headerActions;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -59,8 +68,11 @@ class _HomePageState extends State<HomePage>
   late final Widget _body;
 
   /// Below this height (a phone on its side) the header would leave the grid a strip a
-  /// card tall, so it scrolls away with the notes instead of staying put.
-  static const double _shortScreen = 480;
+  /// card tall, so it scrolls away with the notes instead of staying put. The
+  /// header now includes the 64 dp title row that used to be the shell's app
+  /// bar, so the breakpoint rises by that much: the switch happens at the same
+  /// screen height as before.
+  static const double _shortScreen = 480 + AtomicSpace.x16;
   late final Widget _scrollingBody;
 
   // Keyboard resizing replaces the grid, but the Home owner must still accept
@@ -82,7 +94,10 @@ class _HomePageState extends State<HomePage>
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _Header(
-            key: _headerKey, searchController: _searchCtrl, welcome: _welcome),
+            key: _headerKey,
+            searchController: _searchCtrl,
+            welcome: _welcome,
+            actions: widget.headerActions),
         Expanded(child: _NotesGrid(controller: _controller, onEdit: _editNote)),
       ],
     );
@@ -92,7 +107,8 @@ class _HomePageState extends State<HomePage>
           child: _Header(
               key: _headerKey,
               searchController: _searchCtrl,
-              welcome: _welcome),
+              welcome: _welcome,
+              actions: widget.headerActions),
         ),
       ],
       // No controller of its own: the grid scrolls through the NestedScrollView's.
@@ -176,25 +192,31 @@ class _HomePageState extends State<HomePage>
         selector: (state) => state.selecting,
         builder: (context, selecting) => Scaffold(
           backgroundColor: AppColors.paper,
-          // A tap anywhere that isn't the search field itself drops its focus —
-          // otherwise the keyboard and cursor stay put until something else
-          // happens to take focus.
-          body: GestureDetector(
-            onTap: () => FocusScope.of(context).unfocus(),
-            behavior: HitTestBehavior.opaque,
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final fontSize = AppType.bodyMd.fontSize!;
-                final largeText =
-                    MediaQuery.textScalerOf(context).scale(fontSize) >
-                        fontSize * 1.6;
-                // A fixed welcome/search header can crowd out enlarged note
-                // cards. Reuse the scrolling header so notes remain reachable
-                // immediately, as well as after the four-second collapse.
-                return constraints.maxHeight < _shortScreen || largeText
-                    ? _scrollingBody
-                    : _body;
-              },
+          // Home has no app bar above it any more, so it keeps clear of the
+          // status bar itself.
+          body: SafeArea(
+            bottom: false,
+            // A tap anywhere that isn't the search field itself drops its
+            // focus — otherwise the keyboard and cursor stay put until
+            // something else happens to take focus.
+            child: GestureDetector(
+              onTap: () => FocusScope.of(context).unfocus(),
+              behavior: HitTestBehavior.opaque,
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final fontSize = AppType.bodyMd.fontSize!;
+                  final largeText =
+                      MediaQuery.textScalerOf(context).scale(fontSize) >
+                          fontSize * 1.6;
+                  // A fixed header (title row, welcome, search) can crowd out
+                  // enlarged note cards. Reuse the scrolling header so notes
+                  // remain reachable immediately, as well as after the
+                  // four-second collapse.
+                  return constraints.maxHeight < _shortScreen || largeText
+                      ? _scrollingBody
+                      : _body;
+                },
+              ),
             ),
           ),
           floatingActionButton: selecting ? null : const _AddMenu(),
@@ -206,29 +228,118 @@ class _HomePageState extends State<HomePage>
 
 // ---- header ---------------------------------------------------------------
 
-class _Header extends StatelessWidget {
-  const _Header(
-      {super.key, required this.searchController, required this.welcome});
+/// The Home header row (screens spec, Home 1): the "Notes" title and the
+/// actions the shell passes in. At least 64 high, and part of [_Header], so it
+/// scrolls away with it in the short-screen layout. Below 360 dp, or when the
+/// title would not fit beside the actions (large text), the title takes its
+/// own line above them instead of truncating.
+class _TopBar extends StatelessWidget {
+  const _TopBar({required this.actions});
 
-  final TextEditingController searchController;
-  final Widget welcome;
+  final List<Widget> actions;
+
+  static const String title = 'Notes';
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(
-        AppSpace.md,
-        AppSpace.md,
-        AppSpace.md,
-        0,
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _TitleRow(welcome: welcome),
-          _FilterAndSearch(searchController: searchController),
+    final c = context.colors;
+    final width = MediaQuery.sizeOf(context).width;
+    final margin = AtomicSpace.screenMargin(width);
+    final style = AtomicType.display.copyWith(color: c.textPrimary);
+    final heading = Semantics(
+      header: true,
+      child: Text(title, key: const ValueKey('home-title'), style: style),
+    );
+    final buttons = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (var i = 0; i < actions.length; i++) ...[
+          if (i > 0) const SizedBox(width: AtomicSpace.x1),
+          actions[i],
         ],
+      ],
+    );
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: margin),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: AtomicSpace.x16),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            // Each action is a 48 dp target, 4 dp apart.
+            final actionsWidth = actions.isEmpty
+                ? 0.0
+                : actions.length * AtomicSpace.x12 +
+                    (actions.length - 1) * AtomicSpace.x1;
+            final painter = TextPainter(
+              text: TextSpan(text: title, style: style),
+              textDirection: Directionality.of(context),
+              textScaler: MediaQuery.textScalerOf(context),
+              maxLines: 1,
+            )..layout();
+            final fits = painter.width + AtomicSpace.x2 + actionsWidth <=
+                constraints.maxWidth;
+            painter.dispose();
+            if (actions.isNotEmpty && (width < 360 || !fits)) {
+              return Column(
+                key: const ValueKey('home-top-bar-stacked'),
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  heading,
+                  Align(alignment: AlignmentDirectional.centerEnd, child: buttons),
+                ],
+              );
+            }
+            return Row(
+              key: const ValueKey('home-top-bar'),
+              children: [
+                Expanded(child: heading),
+                buttons,
+              ],
+            );
+          },
+        ),
       ),
+    );
+  }
+}
+
+/// The title row, welcome, counts, filters and search. Fixed above the grid
+/// on a normal screen; on a short screen or with large text the whole of it
+/// scrolls with the notes (screens spec, Home: layout guards).
+class _Header extends StatelessWidget {
+  const _Header({
+    super.key,
+    required this.searchController,
+    required this.welcome,
+    required this.actions,
+  });
+
+  final TextEditingController searchController;
+  final Widget welcome;
+  final List<Widget> actions;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _TopBar(actions: actions),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(
+            AppSpace.md,
+            AppSpace.sm,
+            AppSpace.md,
+            0,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _TitleRow(welcome: welcome),
+              _FilterAndSearch(searchController: searchController),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
