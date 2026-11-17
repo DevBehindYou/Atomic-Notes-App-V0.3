@@ -1,18 +1,52 @@
 // ignore_for_file: use_build_context_synchronously
 
-import 'package:atomic_notes/theme/app_tokens.dart';
-import 'package:atomic_notes/theme/editorial.dart';
-import 'package:atomic_notes/utility/component/my_appbar.dart';
 import 'package:atomic_notes/security/screen_security.dart';
-import 'package:atomic_notes/utility/component/my_snackbar.dart';
-import 'package:flutter/cupertino.dart';
+import 'package:atomic_notes/theme/atomic_colors.dart';
+import 'package:atomic_notes/theme/atomic_icons.dart';
+import 'package:atomic_notes/theme/atomic_tokens.dart';
+import 'package:atomic_notes/ui/feedback/atomic_banner.dart';
+import 'package:atomic_notes/ui/headers/page_header.dart';
+import 'package:atomic_notes/ui/motion/entrance.dart';
+import 'package:atomic_notes/ui/overlays/atomic_snack_bar.dart';
+import 'package:atomic_notes/ui/rows/settings_row.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:hive_ce/hive_ce.dart';
 import 'package:local_auth/local_auth.dart';
 
+/// Security (screens spec, Security): the app lock and screen privacy
+/// switches, and what the app lock needs from the device.
+///
+/// The choices live in the process-wide 'authBox'. Biometric unlock is only
+/// stored after the device check passes; the screenshot block is only stored
+/// after the platform applies it.
 class BiomPage extends StatefulWidget {
-  const BiomPage({super.key});
+  const BiomPage({super.key, this.auth, this.openAuthBox});
+
+  /// The device check. Defaults to the real [LocalAuthentication].
+  final LocalAuthentication? auth;
+
+  /// Opens the 'authBox'. Defaults to `Hive.openBox<bool>('authBox')`.
+  final Future<Box<bool>> Function()? openAuthBox;
+
+  static const String title = 'Security';
+
+  static const String biometricTitle = 'Biometric unlock';
+  static const String biometricCaption =
+      'Require a fingerprint or face check before opening Atomic.';
+  static const String biometricUnsupported =
+      "This device doesn't report biometric support.";
+
+  static const String requirementsTitle = 'Requirements';
+  static const String requirementsBody =
+      'The device needs a lock-screen credential and a fingerprint sensor '
+      'for this to work. If you remove the lock-screen password while this '
+      'is on, unlocking Atomic may fail.';
+
+  static const String screenshotTitle = 'Block screenshots';
+  static const String screenshotCaption =
+      'Blocks screenshots and screen recording inside Atomic, and hides its '
+      'preview in the recent-apps switcher. Takes effect immediately.';
 
   @override
   State<BiomPage> createState() => _BiomPageState();
@@ -28,9 +62,18 @@ class _BiomPageState extends State<BiomPage> {
   bool _noScreenshot = false;
   bool _supportState = false;
 
+  /// True while a change to that switch is in progress; taps wait for it.
+  bool _biometricBusy = false;
+  bool _screenshotBusy = false;
+
+  final ScrollController _scroll = ScrollController();
+
+  /// The collapsed header title shows once the large title has scrolled away.
+  final ValueNotifier<bool> _titleAway = ValueNotifier(false);
+
   @override
   void initState() {
-    auth = LocalAuthentication();
+    auth = widget.auth ?? LocalAuthentication();
     auth.isDeviceSupported().then(
       (bool isSupported) {
         if (!mounted) return;
@@ -40,11 +83,23 @@ class _BiomPageState extends State<BiomPage> {
       },
     );
     _initAuthHive();
+    _scroll.addListener(() => _titleAway.value =
+        _scroll.hasClients && _scroll.offset > AtomicSpace.x10);
     super.initState();
   }
 
+  @override
+  void dispose() {
+    _scroll.dispose();
+    _titleAway.dispose();
+    super.dispose();
+  }
+
   Future<void> _initAuthHive() async {
-    final box = await Hive.openBox<bool>('authBox');
+    final openAuthBox = widget.openAuthBox;
+    final box = openAuthBox != null
+        ? await openAuthBox()
+        : await Hive.openBox<bool>('authBox');
     if (!mounted) return;
     setState(() {
       _authBox = box;
@@ -54,25 +109,79 @@ class _BiomPageState extends State<BiomPage> {
     });
   }
 
+  Future<void> _setBiometric(bool value) async {
+    final box = _authBox;
+    // Nothing to persist to yet — the box is still opening.
+    if (box == null) return;
+    if (_biometricBusy) return;
+    setState(() => _biometricBusy = true);
+    try {
+      if (_supportState && await _checkCapability()) {
+        if (!mounted) return;
+        // The write is awaited outside setState: setState's callback is for
+        // mutating state, not for I/O.
+        try {
+          await box.put('isAuthOn', value);
+        } catch (_) {
+          // Show what is stored, not what was asked for.
+          if (!mounted) return;
+          const AtomicSnackBar(
+            text: "Couldn't change biometric unlock. Try again.",
+            millis: 3000,
+            error: true,
+          ).show(context);
+          return;
+        }
+        if (!mounted) return;
+        setState(() {
+          isAuthOn = value;
+        });
+        AtomicSnackBar(
+          text: value ? 'Biometric unlock on' : 'Biometric unlock off',
+          millis: 2000,
+        ).show(context);
+      }
+    } finally {
+      if (mounted) setState(() => _biometricBusy = false);
+    }
+  }
+
   Future<void> _setNoScreenshot(bool value) async {
     final box = _authBox;
     if (box == null) return;
-    final bool applied = await ScreenSecurity.set(value);
-    if (!mounted) return;
-    if (!applied) {
-      const MySnackBar(
-        text: "This device can't block screenshots",
-        sec: 2500,
-      ).showMySnackBar(context);
-      return;
+    if (_screenshotBusy) return;
+    setState(() => _screenshotBusy = true);
+    try {
+      final bool applied = await ScreenSecurity.set(value);
+      if (!mounted) return;
+      if (!applied) {
+        const AtomicSnackBar(
+          text: "This device can't block screenshots",
+          millis: 2500,
+        ).show(context);
+        return;
+      }
+      try {
+        await box.put(ScreenSecurity.prefKey, value);
+      } catch (_) {
+        // Show what is stored, not what was asked for.
+        if (!mounted) return;
+        const AtomicSnackBar(
+          text: "Couldn't save the screenshot setting. Try again.",
+          millis: 3000,
+          error: true,
+        ).show(context);
+        return;
+      }
+      if (!mounted) return;
+      setState(() => _noScreenshot = value);
+      AtomicSnackBar(
+        text: value ? 'Screenshots blocked' : 'Screenshots allowed',
+        millis: 2000,
+      ).show(context);
+    } finally {
+      if (mounted) setState(() => _screenshotBusy = false);
     }
-    await box.put(ScreenSecurity.prefKey, value);
-    if (!mounted) return;
-    setState(() => _noScreenshot = value);
-    MySnackBar(
-      text: value ? "Screenshots blocked" : "Screenshots allowed",
-      sec: 2000,
-    ).showMySnackBar(context);
   }
 
   Future<bool> _checkCapability() async {
@@ -92,10 +201,11 @@ class _BiomPageState extends State<BiomPage> {
       // The biometric prompt can sit open for a while — the user may have
       // left this screen by the time it fails.
       if (!mounted) return false;
-      const MySnackBar(
-        text: "Error Establishing Biometric Auth",
-        sec: 2000,
-      ).showMySnackBar(context);
+      const AtomicSnackBar(
+        text: "Couldn't run the biometric check. See the requirements below.",
+        millis: 2000,
+        error: true,
+      ).show(context);
       return false;
     }
   }
@@ -106,142 +216,86 @@ class _BiomPageState extends State<BiomPage> {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.colors;
+    final margin = AtomicSpace.screenMargin(MediaQuery.sizeOf(context).width);
+    final ready = _authBox != null;
     return Scaffold(
-      backgroundColor: AppColors.paper,
-      appBar: const MyAppBar(text: "Security"),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(
-            AppSpace.md, AppSpace.lg, AppSpace.md, AppSpace.xl),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            SectionHeader(
-              'DEVICE LOCK',
-              trailing: DataChip(
-                isAuthOn ? 'ARMED' : 'OFF',
-                active: true,
-                activeColor: isAuthOn ? AppColors.signal : AppColors.outline,
+      backgroundColor: c.canvas,
+      body: SafeArea(
+        bottom: false,
+        child: EntranceGroup(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              ValueListenableBuilder<bool>(
+                valueListenable: _titleAway,
+                builder: (context, away, _) =>
+                    AtomicPageHeader(title: BiomPage.title, showTitle: away),
               ),
-            ),
-            const SizedBox(height: AppSpace.md),
-            EditorialModule(
-              accent: isAuthOn,
-              padding: const EdgeInsets.all(AppSpace.md),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const EditorialHeading('Biometric unlock',
-                            style: AppType.headlineSm),
-                        const SizedBox(height: AppSpace.xs),
-                        Text(
-                          _supportState
-                              ? "Require a fingerprint or face check before "
-                                  "opening Atomic."
-                              : "This device doesn't report biometric support.",
-                          style: AppType.bodySm,
-                        ),
-                      ],
+              Expanded(
+                child: ListView(
+                  controller: _scroll,
+                  padding: EdgeInsets.fromLTRB(margin, 0, margin,
+                      AtomicSpace.x8 + MediaQuery.paddingOf(context).bottom),
+                  children: [
+                    const Entrance(index: 0, child: PageTitle(BiomPage.title)),
+                    const SizedBox(height: AtomicSpace.x2),
+                    Entrance(
+                      index: 1,
+                      child: SettingsGroup(
+                        label: 'App lock',
+                        children: [
+                          SettingsRow.toggle(
+                            key: const ValueKey('security-biometric'),
+                            icon: AtomicIcons.fingerprint,
+                            title: BiomPage.biometricTitle,
+                            caption: _supportState
+                                ? BiomPage.biometricCaption
+                                : BiomPage.biometricUnsupported,
+                            value: isAuthOn,
+                            // Off while the box opens, while a change is in
+                            // progress, and on a device without support.
+                            onChanged: ready && _supportState && !_biometricBusy
+                                ? _setBiometric
+                                : null,
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: AppSpace.md),
-                  CupertinoSwitch(
-                value: isAuthOn,
-                // activeColor was deprecated after Flutter 3.24.
-                activeTrackColor: AppColors.signal,
-                onChanged: (bool value) async {
-                  final box = _authBox;
-                  // Nothing to persist to yet — the box is still opening.
-                  if (box == null) return;
-                  if (_supportState && await _checkCapability()) {
-                    if (!mounted) return;
-                    // The write is awaited outside setState: setState's
-                    // callback is for mutating state, not for I/O.
-                    await box.put('isAuthOn', value);
-                    if (!mounted) return;
-                    setState(() {
-                      isAuthOn = value;
-                    });
-                    MySnackBar(
-                      text: value
-                          ? "Biometric Authentication On"
-                          : "Biometric Authentication Off",
-                      sec: 2000,
-                    ).showMySnackBar(context);
-                  }
-                },
-              ),
-                ],
-              ),
-            ),
-            const SizedBox(height: AppSpace.lg),
-            // Prerequisites, framed as a warning module rather than a wall of
-            // grey body text.
-            EditorialModule(
-              fill: AppColors.errorContainer,
-              padding: const EdgeInsets.all(AppSpace.md),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const MonoLabel('REQUIREMENTS',
-                      color: AppColors.onErrorContainer),
-                  const SizedBox(height: AppSpace.sm),
-                  Text(
-                    "The device needs a lock-screen credential and a "
-                    "fingerprint sensor for this to work. If you remove the "
-                    "lock-screen password while this is on, unlocking Atomic "
-                    "may fail.",
-                    style: AppType.bodySm
-                        .copyWith(color: AppColors.onErrorContainer),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: AppSpace.lg),
-            SectionHeader(
-              'SCREEN PRIVACY',
-              trailing: DataChip(
-                _noScreenshot ? 'BLOCKED' : 'ALLOWED',
-                active: true,
-                activeColor: _noScreenshot ? AppColors.signal : AppColors.outline,
-              ),
-            ),
-            const SizedBox(height: AppSpace.md),
-            EditorialModule(
-              accent: _noScreenshot,
-              padding: const EdgeInsets.all(AppSpace.md),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        EditorialHeading('No screenshots',
-                            style: AppType.headlineSm),
-                        SizedBox(height: AppSpace.xs),
-                        Text(
-                          "Blocks screenshots and screen recording inside "
-                          "Atomic, and hides its preview in the recent-apps "
-                          "switcher. Takes effect immediately.",
-                          style: AppType.bodySm,
-                        ),
-                      ],
+                    const SizedBox(height: AtomicSpace.x4),
+                    const Entrance(
+                      index: 2,
+                      child: AtomicBanner(
+                        tone: BannerTone.info,
+                        icon: AtomicIcons.infoCircle,
+                        title: BiomPage.requirementsTitle,
+                        body: BiomPage.requirementsBody,
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: AppSpace.md),
-                  CupertinoSwitch(
-                    value: _noScreenshot,
-                    activeTrackColor: AppColors.signal,
-                    onChanged: _setNoScreenshot,
-                  ),
-                ],
+                    const SizedBox(height: AtomicSpace.x6),
+                    Entrance(
+                      index: 3,
+                      child: SettingsGroup(
+                        label: 'Screen privacy',
+                        children: [
+                          SettingsRow.toggle(
+                            key: const ValueKey('security-screenshots'),
+                            icon: AtomicIcons.eyeOff,
+                            title: BiomPage.screenshotTitle,
+                            caption: BiomPage.screenshotCaption,
+                            value: _noScreenshot,
+                            onChanged: ready && !_screenshotBusy
+                                ? _setNoScreenshot
+                                : null,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
