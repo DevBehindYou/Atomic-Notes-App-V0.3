@@ -132,19 +132,19 @@ void main() {
       for (final v in [30, 40, 50, 100]) {
         expect(find.byKey(ValueKey('capacity-$v')), findsOneWidget, reason: '$v');
       }
-      // TACHYON is also the current-tier header label, so it appears twice.
-      for (final name in ['TACHYON', 'ANTIMATTER', 'MONOPOLE', 'STRANGELET']) {
+      // Tachyon is also the current-tier section label, so it appears twice.
+      for (final name in ['Tachyon', 'Antimatter', 'Monopole', 'Strangelet']) {
         expect(find.text(name), findsWidgets, reason: name);
       }
       expect(find.text('0 of 30 notes used'), findsOneWidget);
-      expect(find.text('BECOME ANTIMATTER  ·  10 COINS'), findsOneWidget);
+      expect(find.text('Become Antimatter · 10 coins'), findsOneWidget);
     });
 
     testWidgets('asks before spending coins', (tester) async {
       _wallet();
       await open(tester);
 
-      await tester.tap(find.text('BECOME ANTIMATTER  ·  10 COINS'));
+      await tester.tap(find.text('Become Antimatter · 10 coins'));
       await tester.pumpAndSettle();
       expect(
         find.text('Spend 10 coins to become Antimatter and raise your note limit '
@@ -152,7 +152,7 @@ void main() {
         findsOneWidget,
       );
 
-      await tester.tap(find.text('CANCEL'));
+      await tester.tap(find.text('Cancel'));
       await tester.pumpAndSettle();
       expect(EnergyService.instance.noteLimit, 30);
       expect(EnergyService.instance.coins, 30);
@@ -163,7 +163,7 @@ void main() {
       _wallet(coins: 2);
       await open(tester);
 
-      await tester.tap(find.text('BECOME ANTIMATTER  ·  10 COINS'));
+      await tester.tap(find.text('Become Antimatter · 10 coins'));
       await tester.pump();
       expect(find.text('Becoming Antimatter costs 10 coins. You have 2.'),
           findsOneWidget);
@@ -175,7 +175,7 @@ void main() {
 
       expect(find.text('This is the most notes an account can hold.'),
           findsOneWidget);
-      expect(find.textContaining('BECOME'), findsNothing);
+      expect(find.textContaining('Become'), findsNothing);
     });
   });
 }

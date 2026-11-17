@@ -1,35 +1,43 @@
 import 'package:atomic_notes/database/energy_service.dart';
 import 'package:atomic_notes/state/energy/energy_cubit.dart';
-import 'package:atomic_notes/theme/app_tokens.dart';
-import 'package:atomic_notes/theme/editorial.dart';
+import 'package:atomic_notes/theme/atomic_colors.dart';
+import 'package:atomic_notes/theme/atomic_tokens.dart';
+import 'package:atomic_notes/theme/atomic_type.dart';
+import 'package:atomic_notes/ui/buttons/atomic_button.dart';
+import 'package:atomic_notes/ui/cards/atomic_card.dart';
+import 'package:atomic_notes/ui/feedback/progress.dart';
 import 'package:atomic_notes/utility/component/atomic_icon.dart';
-import 'package:atomic_notes/utility/component/energy_bar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 /// Compact Atomic Energy / Coins popup shown on a long-press of the Sync
-/// button. Anchored near the top-right (where the button lives), scales in from
-/// that corner, dismisses on outside tap, and never overflows the screen.
-///
-/// Tapping a row opens the full Atomic Energy page.
+/// button (screens spec, Energy popup): a centred card that scales in,
+/// showing energy and coins, with "Open energy" and "Dismiss". A tap outside
+/// or Back dismisses it too; it scrolls instead of overflowing.
 Future<void> showEnergyPopup(BuildContext context) {
+  final c = context.colors;
+  final reduced = AtomicMotion.reduced(context);
   return showGeneralDialog(
     context: context,
     barrierDismissible: true,
     barrierLabel: 'Dismiss',
-    // ignore: deprecated_member_use
-    barrierColor: Colors.black.withOpacity(0.10),
-    transitionDuration: const Duration(milliseconds: 180),
+    barrierColor: c.scrim,
+    transitionDuration:
+        reduced ? AtomicMotion.reducedFade : const Duration(milliseconds: 200),
     pageBuilder: (ctx, a1, a2) => const _EnergyPopup(),
     transitionBuilder: (ctx, anim, sec, child) {
-      final curved = CurvedAnimation(parent: anim, curve: Curves.easeOutCubic);
+      final curved = CurvedAnimation(
+          parent: anim,
+          curve: AtomicMotion.standardCurve,
+          reverseCurve: AtomicMotion.exitCurve);
       return FadeTransition(
         opacity: curved,
-        child: ScaleTransition(
-          scale: Tween<double>(begin: 0.92, end: 1).animate(curved),
-          alignment: Alignment.topRight,
-          child: child,
-        ),
+        child: reduced
+            ? child
+            : ScaleTransition(
+                scale: Tween<double>(begin: 0.92, end: 1).animate(curved),
+                child: child,
+              ),
       );
     },
   );
@@ -51,6 +59,8 @@ class _EnergyPopup extends StatelessWidget {
 class _EnergyPopupView extends StatelessWidget {
   const _EnergyPopupView();
 
+  static const double maxWidth = 360;
+
   void _openPage(BuildContext context) {
     Navigator.of(context).pop(); // close popup first
     Navigator.of(context).pushNamed('/energypage');
@@ -58,85 +68,111 @@ class _EnergyPopupView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final media = MediaQuery.of(context);
-    final width =
-        (media.size.width - AppSpace.md * 2).clamp(0.0, 300.0).toDouble();
-
+    final c = context.colors;
     return SafeArea(
-      child: Align(
-        alignment: Alignment.topRight,
+      child: Center(
         child: Padding(
-          // Sit just under the app bar, aligned to the right margin near the
-          // Sync button. kToolbarHeight covers the app bar; +8 for breathing room.
-          padding: const EdgeInsets.only(
-              top: kToolbarHeight + AppSpace.sm, right: AppSpace.md),
-          child: SizedBox(
-            width: width,
-            child: BlocBuilder<EnergyCubit, EnergyState>(
-              builder: (context, energy) => EditorialModule(
-                fill: AppColors.paper,
-                padding: const EdgeInsets.all(AppSpace.md),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Row 1 — Atomic Energy
-                    GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: () => _openPage(context),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const AtomicIcon.energy(size: 22),
-                          const SizedBox(width: AppSpace.sm),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+          padding: const EdgeInsets.all(AtomicSpace.x6),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: maxWidth),
+            child: Material(
+              key: const ValueKey('energy-popup'),
+              type: MaterialType.transparency,
+              child: AtomicCard(
+                padding: EdgeInsets.zero,
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(AtomicSpace.x5),
+                  child: BlocBuilder<EnergyCubit, EnergyState>(
+                    builder: (context, energy) => Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        // Atomic Energy
+                        Semantics(
+                          container: true,
+                          label: 'Atomic energy, ${energy.energy} of '
+                              '${energy.energyCap}',
+                          child: ExcludeSemantics(
+                            child: Row(
                               children: [
-                                const MonoLabel('ATOMIC ENERGY', small: true),
-                                const SizedBox(height: AppSpace.xs),
-                                EnergyBar(
-                                  fraction: energy.wallet.energyFraction,
-                                  color: EnergyBar.colorFor(energy.energy),
-                                ),
-                                const SizedBox(height: AppSpace.xs),
-                                Text(
-                                  '${energy.energy} / ${energy.energyCap}',
-                                  style: AppType.labelMonoSm,
+                                const AtomicIcon.energy(size: 32),
+                                const SizedBox(width: AtomicSpace.x3),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text('Atomic energy',
+                                          style: AtomicType.bodySmall.copyWith(
+                                              color: c.textSecondary)),
+                                      Text(
+                                        '${energy.energy} / ${energy.energyCap}',
+                                        style: AtomicType.numeric(
+                                                AtomicType.titleLarge)
+                                            .copyWith(color: c.textPrimary),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ],
                             ),
                           ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: AppSpace.sm),
-                    const HairRule(),
-                    const SizedBox(height: AppSpace.sm),
-                    // Row 2 — Atomic Coins
-                    GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: () => _openPage(context),
-                      child: Row(
-                        children: [
-                          const AtomicIcon.coin(size: 22),
-                          const SizedBox(width: AppSpace.sm),
-                          const Expanded(
-                            child: MonoLabel('ATOMIC COINS', small: true),
+                        ),
+                        const SizedBox(height: AtomicSpace.x3),
+                        ExcludeSemantics(
+                          child:
+                              ProgressBar(value: energy.wallet.energyFraction),
+                        ),
+                        const SizedBox(height: AtomicSpace.x4),
+                        Divider(height: 1, thickness: 1, color: c.outline),
+                        const SizedBox(height: AtomicSpace.x4),
+                        // Atomic Coins
+                        MergeSemantics(
+                          child: Row(
+                            children: [
+                              const ExcludeSemantics(
+                                  child: AtomicIcon.coin(size: 32)),
+                              const SizedBox(width: AtomicSpace.x3),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text('Atomic coins',
+                                        style: AtomicType.bodySmall
+                                            .copyWith(color: c.textSecondary)),
+                                    Text(
+                                      '${energy.coins}',
+                                      style: AtomicType.numeric(
+                                              AtomicType.titleLarge)
+                                          .copyWith(color: c.textPrimary),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
                           ),
-                          Text(
-                            '${energy.coins}',
-                            style: AppType.headlineSm,
-                          ),
-                        ],
-                      ),
+                        ),
+                        const SizedBox(height: AtomicSpace.x5),
+                        Wrap(
+                          alignment: WrapAlignment.end,
+                          spacing: AtomicSpace.x2,
+                          runSpacing: AtomicSpace.x2,
+                          children: [
+                            AtomicButton.text(
+                              key: const ValueKey('energy-popup-dismiss'),
+                              label: 'Dismiss',
+                              onPressed: () => Navigator.of(context).pop(),
+                            ),
+                            AtomicButton.primary(
+                              key: const ValueKey('energy-popup-open'),
+                              label: 'Open energy',
+                              onPressed: () => _openPage(context),
+                            ),
+                          ],
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: AppSpace.sm),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: ArrowLink('Open energy', onTap: () => _openPage(context)),
-                    ),
-                  ],
+                  ),
                 ),
               ),
             ),

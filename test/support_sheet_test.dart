@@ -38,12 +38,12 @@ void main() {
         home: EnergyPage(store: store, notes: notes),
       ));
       await tester.pumpAndSettle();
-      final open = find.text('GET ATOMIC COINS');
+      final open = find.text('Get coins');
       await tester.scrollUntilVisible(open, 200,
           scrollable: find.byType(Scrollable).first);
       await tester.tap(open);
       await tester.pumpAndSettle();
-      expect(find.text('COIN STORE'), findsOneWidget);
+      expect(find.text('Coin store'), findsOneWidget);
       expect(tester.takeException(), isNull);
 
       // Resize/scale the actual open modal, as when rotating or changing font size.
@@ -52,17 +52,17 @@ void main() {
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull,
           reason: 'The modal must fit or scroll instead of overflowing.');
-      final support = find.text('SUPPORT ATOMIC NOTES');
+      final support = find.text('Support Atomic Notes');
       await tester.ensureVisible(support);
       await tester.pumpAndSettle();
       expect(support.hitTestable(), findsOneWidget);
-      final dismiss = find.text('NOT NOW');
+      final dismiss = find.text('Not now');
       await tester.ensureVisible(dismiss);
       await tester.pumpAndSettle();
       expect(dismiss.hitTestable(), findsOneWidget);
       await tester.tap(dismiss);
       await tester.pumpAndSettle();
-      expect(find.text('COIN STORE'), findsNothing);
+      expect(find.text('Coin store'), findsNothing);
       expect(store.converted, isEmpty);
       expect(store.upgrades, 0);
       await tester.pumpWidget(const SizedBox.shrink());
