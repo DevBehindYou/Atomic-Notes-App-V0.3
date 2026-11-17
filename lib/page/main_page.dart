@@ -171,7 +171,7 @@ class _SyncButton extends StatelessWidget {
                     ? null
                     : () => context
                         .read<NotesBloc>()
-                        .add(const NotesSyncRequested(instant: false)),
+                        .add(const NotesSyncRequested(instant: true)),
                 onLongPress: () => showEnergyPopup(context),
               ),
               if (state.syncing)
