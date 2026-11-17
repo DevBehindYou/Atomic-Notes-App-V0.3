@@ -58,7 +58,8 @@ class SettingsGroup extends StatelessWidget {
 }
 
 /// One settings row: a 40 dp icon tile, the title and an optional caption,
-/// and one trailing item: a value, a count, a switch, or a chevron. The
+/// and one trailing item: a value, a count, a switch, or a chevron. A value
+/// that does not fit beside the title moves under it. The
 /// whole row is one control whose label reads "{title}. {caption}. {value}",
 /// as `SettingsCard` does today, followed by the count when there is one.
 class SettingsRow extends StatelessWidget {
@@ -134,10 +135,20 @@ class SettingsRow extends StatelessWidget {
     } else if (count != null) {
       trailing =
           CountBubble(count: count, fill: c.badge, textColor: c.textPrimary);
-    } else if (value != null) {
-      trailing = Text(value!,
-          style: AtomicType.bodyMedium.copyWith(color: c.textSecondary));
     }
+    // A count wins over a value, as before; a toggle has no value.
+    final shown = count == null ? value : null;
+    final text = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(title,
+            style: AtomicType.titleMedium.copyWith(color: c.textPrimary)),
+        if (caption != null && caption!.isNotEmpty)
+          Text(caption!,
+              style: AtomicType.bodySmall.copyWith(color: c.textSecondary)),
+      ],
+    );
     final row = ConstrainedBox(
       constraints: const BoxConstraints(minHeight: minHeight),
       child: Padding(
@@ -157,19 +168,22 @@ class SettingsRow extends StatelessWidget {
             ),
             const SizedBox(width: AtomicSpace.x3),
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(title,
-                      style: AtomicType.titleMedium
-                          .copyWith(color: c.textPrimary)),
-                  if (caption != null && caption!.isNotEmpty)
-                    Text(caption!,
-                        style: AtomicType.bodySmall
-                            .copyWith(color: c.textSecondary)),
-                ],
-              ),
+              // A value sits at the end of the title's line while both fit,
+              // and moves under the title when they do not (narrow screens,
+              // large text), so it never pushes the row wider.
+              child: shown == null
+                  ? text
+                  : Wrap(
+                      alignment: WrapAlignment.spaceBetween,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: AtomicSpace.x3,
+                      children: [
+                        text,
+                        Text(shown,
+                            style: AtomicType.bodyMedium
+                                .copyWith(color: c.textSecondary)),
+                      ],
+                    ),
             ),
             if (trailing != null) ...[
               const SizedBox(width: AtomicSpace.x3),
