@@ -71,13 +71,19 @@ void main() {
     await show(tester);
     await tester.scrollUntilVisible(
         find.byKey(const ValueKey('choose-052-tilde')), 180);
+    await tester.pump();
     await tester.tap(find.byKey(const ValueKey('choose-052-tilde')));
     await tester.pump();
     expect(preferences.state.desired.selectedId, '052-tilde');
     expect(store.writes.last.selectedId, '052-tilde');
     await tester.drag(find.byType(ListView), const Offset(0, 3000));
     await tester.pump();
-    expect(find.text('Your mascot: Tilde'), findsOneWidget);
+    expect(
+        find.descendant(
+            of: find.byKey(const ValueKey('mascot-hero-name')),
+            matching: find.text('Tilde'),
+            matchRoot: true),
+        findsOneWidget);
     expect(find.text('Hero 052-tilde'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
   });
@@ -87,10 +93,10 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     await show(tester, scale: 2);
-    await tester.scrollUntilVisible(find.byType(SwitchListTile), 120);
-    await tester.ensureVisible(find.byType(SwitchListTile));
+    await tester.scrollUntilVisible(find.byKey(const ValueKey('mascot-animate')), 120);
+    await tester.ensureVisible(find.byKey(const ValueKey('mascot-animate')));
     await tester.pump();
-    await tester.tap(find.byType(SwitchListTile));
+    await tester.tap(find.byKey(const ValueKey('mascot-animate')));
     await tester.pump();
     expect(preferences.state.desired.animationsEnabled, isFalse);
     await tester.scrollUntilVisible(
