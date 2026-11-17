@@ -86,26 +86,31 @@ class NotesBloc extends Bloc<NotesEvent, NotesState> {
   /// owner's notes, on every source change, not only when the notes on view
   /// change: a note hidden by the search can still change the chip counts.
   ///
-  /// Each of those notes is projected once, here, and that projection answers
-  /// the to-do count, the tag counts, the to-do and tag filters and the
-  /// search. (Beyond the projection cache's capacity, every extra scan
-  /// decoded the overflow notes again on each source change.)
+  /// Projections, in the order they are requested:
+  /// - The source's to-do read comes first, as it always has. A caching
+  ///   source projects the notes that are not legacy to-dos there, in its own
+  ///   order, and with `evict: false` the first notes projected are the ones
+  ///   its cache keeps. Only the source knows that order, so the read stays.
+  /// - Then one pass projects every eligible note once. That projection
+  ///   answers the notes count, the tag counts, the to-do and tag filters
+  ///   and the search, which used to project each note again.
+  /// - A to-do or tag view whose notes tie on the sort keys still reads the
+  ///   list from the source, which can project them again (see [_onView]).
   static NotesState _snapshot(NotesSource source, NotesState base,
       {bool manualSyncInProgress = false}) {
     final eligible = source.visible();
+    final todos = source.visible(type: NoteTypeFilter.todos);
     final projected = [
       for (final n in eligible) projectNote(source, n, evict: false),
     ];
     final projectionOf = Map<Note, NoteProjection>.identity();
     var noteCount = 0;
-    var todoCount = 0;
     final tagCounts = <String, int>{};
     for (var i = 0; i < eligible.length; i++) {
       final n = eligible[i];
       final p = projected[i];
       projectionOf[n] = p;
       if (n.kind == NoteKind.text) noteCount++;
-      if (_isTodo(n, p)) todoCount++;
       for (final t in p.tags.toSet()) {
         tagCounts[t] = (tagCounts[t] ?? 0) + 1;
       }
@@ -113,7 +118,7 @@ class NotesBloc extends Bloc<NotesEvent, NotesState> {
     final typeCounts = <NoteTypeFilter, int>{
       NoteTypeFilter.all: eligible.length,
       NoteTypeFilter.notes: noteCount,
-      NoteTypeFilter.todos: todoCount,
+      NoteTypeFilter.todos: todos.length,
     };
     // A tag that no live note carries any more falls back to every tag; the
     // type, order and search stay. A tag missing only from the search
@@ -122,7 +127,7 @@ class NotesBloc extends Bloc<NotesEvent, NotesState> {
         base.tag != null && tagCounts.containsKey(base.tag) ? base.tag : null;
 
     final filtered =
-        _onView(source, eligible, projected, base.type, base.sort, tag);
+        _onView(source, eligible, todos, projected, base.type, base.sort, tag);
     final q = base.query.trim().toLowerCase();
     final shown = q.isEmpty
         ? filtered
@@ -165,21 +170,35 @@ class NotesBloc extends Bloc<NotesEvent, NotesState> {
   /// The notes on view for [type], [sort] and [tag], in exactly the order
   /// `source.visible(type: type, sort: sort, tag: tag)` returns them.
   ///
-  /// Without a to-do or tag filter no projection decides what is on view, so
-  /// the source's own read answers (the eligible read itself for the default
-  /// view). With one, the eligible notes' [projected] data decides, and the
+  /// The reads already made answer the views they are: [eligible] (all,
+  /// newest) and [todos] (to-dos, newest), both without a tag. Other views
+  /// without a to-do or tag filter use the source's own read, which projects
+  /// nothing. With one, the eligible notes' [projected] data decides, and the
   /// kept notes are sorted here. That order is unique only while no two kept
   /// notes compare equal. Equal ones are left in an order that depends on the
   /// store's insertion order and on the sort algorithm (List.sort is not
   /// stable above 32 items), which only the source can reproduce, so a tie
-  /// reads the list from the source.
-  static List<Note> _onView(NotesSource source, List<Note> eligible,
-      List<NoteProjection> projected, NoteTypeFilter type, NoteSort sort,
+  /// reads the list from the source, which can project the notes again.
+  static List<Note> _onView(
+      NotesSource source,
+      List<Note> eligible,
+      List<Note> todos,
+      List<NoteProjection> projected,
+      NoteTypeFilter type,
+      NoteSort sort,
       String? tag) {
+    if (tag == null && sort == NoteSort.newest) {
+      switch (type) {
+        case NoteTypeFilter.all:
+          return eligible;
+        case NoteTypeFilter.todos:
+          return todos;
+        case NoteTypeFilter.notes:
+          break;
+      }
+    }
     if (type != NoteTypeFilter.todos && tag == null) {
-      return type == NoteTypeFilter.all && sort == NoteSort.newest
-          ? eligible
-          : source.visible(type: type, sort: sort);
+      return source.visible(type: type, sort: sort);
     }
     final kept = [
       for (var i = 0; i < eligible.length; i++)

@@ -1,12 +1,20 @@
-// F09 option A: NotesBloc._snapshot projects each eligible note once and
-// derives the type counts, the tag counts, the to-do and tag filters and the
-// search from that one pass. These tests count the projections one snapshot
-// requests, for a library larger than the 64-entry projection cache, and
-// compare every derived field with the snapshot as it was before the change
-// (base 6c91580), kept below as `_before`.
+// F09 option A: NotesBloc._snapshot keeps the source's to-do read first (in
+// a caching source it decides which notes the projection cache admits), then
+// projects each eligible note once and derives the notes count, the tag
+// counts, the to-do and tag filters and the search from that pass. A to-do or
+// tag view whose notes tie on the sort keys still reads from the source,
+// which can project them again.
 //
-// Set F09_PRINT_COUNTS=1 to print the per-view projection counts.
+// These tests compare every derived field with the snapshot as it was before
+// the change (base 6c91580), kept below as `_before`, count every projection
+// request a snapshot makes, and check through the production
+// NoteProjectionCache (unchanged limits) that the new request sequence is a
+// prefix of the earlier one: the same notes are admitted, and no note is
+// decoded that the earlier snapshot did not decode.
+//
+// Set F09_PRINT_COUNTS=1 to print the counts.
 
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 
@@ -133,6 +141,42 @@ class _CountingSource extends FakeNotesSource implements NoteProjectionSource {
           : b.createdAt.compareTo(a.createdAt);
     });
     return list;
+  }
+}
+
+/// [_CountingSource] with the production [NoteProjectionCache] (default
+/// limits: 64 entries, 256 Ki text units, 16 Mi source units) in front of the
+/// decoder, as the repository has it. It records every projection request and
+/// every decode (a cache miss), in order, and drops cache entries for changed
+/// or deleted notes before telling listeners, as the repository does.
+class _CacheSource extends _CountingSource {
+  _CacheSource(super.notes) {
+    cache = NoteProjectionCache(decode: (note) {
+      misses.add(note.id);
+      return NoteDocument.fromNote(note);
+    });
+  }
+
+  late final NoteProjectionCache cache;
+  final requests = <String>[];
+  final misses = <String>[];
+
+  @override
+  NoteProjection projectionFor(Note note, {bool evict = true}) {
+    projections++;
+    requests.add(evict ? '${note.id}+evict' : note.id);
+    return cache.get(note, evict: evict);
+  }
+
+  @override
+  void notifyListeners() {
+    cache.retainNotes({for (final n in all) n.id: n});
+    super.notifyListeners();
+  }
+
+  void clearLog() {
+    requests.clear();
+    misses.clear();
   }
 }
 
@@ -285,11 +329,15 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test(
-      '100 eligible notes: one projection per note per snapshot, with and '
-      'without a search, and the same state as before', () async {
+      '100 eligible notes: the to-do read, then one projection per note; never '
+      'more requests than before, fewer for a search, a to-do view or a tag, '
+      'and the same state', () async {
     final source = _CountingSource(_distinct());
-    final n = source.visible().length;
+    final eligible = source.visible();
+    final n = eligible.length;
     expect(n, 100);
+    // The to-do read projects every note that is not a legacy to-do.
+    final now = n + eligible.where((x) => x.kind != NoteKind.todo).length;
     final bloc = NotesBloc(
         source: source, isSyncEnabled: () => false, isOnline: () async => true);
     addTearDown(bloc.close);
@@ -311,9 +359,13 @@ void main() {
       final before = source.projections;
 
       expect(_after(bloc.state), expected, reason: view);
-      expect(onSearch, n, reason: '$view: projections for a search change');
-      expect(onSourceChange, n, reason: '$view: projections for a poke');
-      expect(before, greaterThan(n), reason: '$view: the earlier snapshot');
+      expect(onSearch, now, reason: '$view: projections for a search change');
+      expect(onSourceChange, now, reason: '$view: projections for a poke');
+      final fewer = query.isNotEmpty ||
+          type == NoteTypeFilter.todos ||
+          expected['tag'] != null;
+      expect(before, fewer ? greaterThan(now) : now,
+          reason: '$view: the earlier snapshot');
       rows[view] = 'before $before, now $onSourceChange';
     }
     _report('distinct n=$n', rows);
@@ -420,8 +472,9 @@ void main() {
     });
 
     test(
-        'no to-do or tag read: the bloc requests one projection per eligible '
-        'note, and shows what the earlier snapshot showed', () async {
+        'without ties: the eligible and to-do reads first, no other read that '
+        'projects, one bloc projection per eligible note, and the same state',
+        () async {
       final source = _Recording(repository);
       final n = repository.visible().length;
       expect(n, 100);
@@ -450,16 +503,222 @@ void main() {
 
         expect(_after(bloc.state), expected, reason: view);
         expect(projections, n, reason: '$view: projections requested');
-        expect(
-            reads.where((r) => r.startsWith('todos|') || !r.endsWith('|-')),
+        expect(reads.take(2), ['all|-', 'todos|-'],
+            reason: '$view: the to-do read still comes first');
+        expect(reads.skip(2).where((r) => r != 'all|-' && r != 'notes|-'),
             isEmpty,
-            reason: '$view: no read that projects inside the repository');
-        expect(beforeReads, contains('todos|-'),
-            reason: '$view: the earlier snapshot read the to-dos');
+            reason: '$view: no further read that projects in the repository');
+        expect(beforeReads.take(3), ['all|-', 'notes|-', 'todos|-'],
+            reason: '$view: the earlier snapshot');
         rows[view] = 'reads before ${beforeReads.join(',')}; '
             'now ${reads.join(',')} + $projections projections';
       }
       _report('repository n=$n', rows);
     }, timeout: const Timeout(Duration(minutes: 3)));
   });
+
+  group('cache admission through the production NoteProjectionCache', () {
+    for (final (name, build, expensive) in _admissionShapes()) {
+      test('$name: the request sequence is a prefix of the earlier one',
+          () async {
+        final rows = await _lockstep(build, expensive);
+        _report(name, rows);
+      }, timeout: const Timeout(Duration(minutes: 3)));
+    }
+
+    test(
+        'R20: 70 notes, six early image notes and 20 newer legacy to-dos: a '
+        'warm snapshot decodes no image note', () async {
+      final source = _CacheSource(_r20Shape(70));
+      await NotesBloc(
+              source: source,
+              isSyncEnabled: () => false,
+              isOnline: () async => true)
+          .close(); // the normal first-snapshot fill
+      expect(source.cache.length, 64);
+      source
+        ..clearLog()
+        ..projections = 0;
+      await NotesBloc(
+              source: source,
+              isSyncEnabled: () => false,
+              isOnline: () async => true)
+          .close();
+      expect(source.misses, ['n55', 'n54', 'n53', 'n52', 'n51', 'n50'],
+          reason: 'the six newest legacy to-dos beyond the cache, as before');
+      expect(source.projections, 120, reason: 'the to-do read 50 + pass 70');
+    });
+  });
+}
+
+String? _jpegCache;
+
+/// A 50,000-byte synthetic JPEG, as in the reviewer's R20 fixture.
+String _jpeg() => _jpegCache ??= base64Encode([
+      0xff, 0xd8, 0xff, 0xc0, 0, 8, 8, 0, 1, 0, 1, 1, //
+      ...List<int>.generate(50000 - 14, (i) => (i * 7) & 255),
+      0xff, 0xd9,
+    ]);
+
+Note _imageNote(int i, {List<String> tags = const []}) {
+  final base = Note(
+      id: 'n$i',
+      title: 'Synthetic $i',
+      body: 'Sample text with a step',
+      createdAt: _t0.add(Duration(minutes: i)));
+  final doc = NoteDocument.fromNote(base)..insertImageAfter(0, _jpeg());
+  if (tags.isNotEmpty) doc.setTags(tags);
+  return doc.toNote(base);
+}
+
+Note _textNote(int i, {List<String> tags = const []}) {
+  final base = Note(
+      id: 'n$i',
+      title: 'Synthetic $i',
+      body: 'Sample text',
+      createdAt: _t0.add(Duration(minutes: i)));
+  if (tags.isEmpty) return base;
+  return (NoteDocument.fromNote(base)..setTags(tags)).toNote(base);
+}
+
+Note _legacyTodo(int i) => Note(
+    id: 'n$i',
+    title: 'Task $i',
+    kind: NoteKind.todo,
+    createdAt: _t0.add(Duration(minutes: i)),
+    items: [TodoItem(text: 'Synthetic step')]);
+
+/// The reviewer's R20 shape, in insertion order: six image notes first, the
+/// newest 20 notes legacy to-dos, plain notes between.
+List<Note> _r20Shape(int size) => [
+      for (var i = 0; i < size; i++)
+        if (i >= size - 20)
+          _legacyTodo(i)
+        else if (i < 6)
+          _imageNote(i)
+        else
+          _textNote(i),
+    ];
+
+/// Expensive notes late: 30 old legacy to-dos first, six image notes among
+/// the newest, every fourth note tagged; 100 notes.
+List<Note> _lateShape() => [
+      for (var i = 0; i < 100; i++)
+        if (i < 30)
+          _legacyTodo(i)
+        else if (i >= 90 && i < 96)
+          _imageNote(i, tags: i.isEven ? const ['Work'] : const [])
+        else
+          _textNote(i, tags: i % 4 == 0 ? const ['Work'] : const []),
+    ];
+
+const _r20Images = {'n0', 'n1', 'n2', 'n3', 'n4', 'n5'};
+const _lateImages = {'n90', 'n91', 'n92', 'n93', 'n94', 'n95'};
+
+Iterable<(String, List<Note> Function(), Set<String>)>
+    _admissionShapes() sync* {
+  for (final size in [64, 70, 100]) {
+    yield ('R20 shape, $size notes', () => _r20Shape(size), _r20Images);
+  }
+  yield ('expensive notes late, 100 notes', _lateShape, _lateImages);
+  yield ('tied, 90 notes (to-do and tag fallbacks)', () => _tied(5, 90), {});
+}
+
+/// Drives the bloc over one source and the earlier snapshot over an
+/// identical second source, one snapshot at a time: cold, warm, every view
+/// (each event is one snapshot), a deletion and an edit. Each step checks the
+/// state, that the bloc's projection requests and decodes are a prefix of the
+/// earlier ones, that it decodes no more expensive notes, and that both
+/// caches hold as many entries.
+Future<Map<String, String>> _lockstep(
+    List<Note> Function() build, Set<String> expensive) async {
+  final now = _CacheSource(build());
+  final old = _CacheSource(build());
+  final rows = <String, String>{};
+  final total = <String, int>{};
+  var type = NoteTypeFilter.all;
+  var sort = NoteSort.newest;
+  String? tag;
+  var query = '';
+  final bloc = NotesBloc(
+      source: now, isSyncEnabled: () => false, isOnline: () async => true);
+  addTearDown(bloc.close);
+
+  void compare(String step, Map<String, Object?> before) {
+    expect(_after(bloc.state), before, reason: step);
+    expect(old.requests.take(now.requests.length), now.requests,
+        reason: '$step: requests are a prefix of the earlier ones');
+    expect(old.misses.take(now.misses.length), now.misses,
+        reason: '$step: decodes are a prefix of the earlier ones');
+    int dear(List<String> misses) => misses.where(expensive.contains).length;
+    expect(dear(now.misses), lessThanOrEqualTo(dear(old.misses)),
+        reason: '$step: expensive decodes');
+    expect(now.cache.length, old.cache.length, reason: '$step: cache length');
+    final counts = {
+      'requests old': old.requests.length,
+      'requests now': now.requests.length,
+      'misses old': old.misses.length,
+      'misses now': now.misses.length,
+      'expensive old': dear(old.misses),
+      'expensive now': dear(now.misses),
+    };
+    if (step == 'cold' || step == 'warm') {
+      rows[step] = counts.entries.map((e) => '${e.key} ${e.value}').join(', ');
+    } else {
+      counts.forEach((k, v) => total[k] = (total[k] ?? 0) + v);
+    }
+    now.clearLog();
+    old.clearLog();
+  }
+
+  Map<String, Object?> earlier() => _before(old, type, sort, tag, query);
+
+  compare('cold', earlier());
+  now.poke();
+  old.poke();
+  await _settle();
+  compare('warm', earlier());
+
+  for (final (t, s, g, q) in _views()) {
+    if (q == 'zebra' || g == 'Missing') continue;
+    type = t;
+    await _send(bloc, NotesTypeFilterChanged(t));
+    compare('${t.name} (type)', earlier());
+    sort = s;
+    await _send(bloc, NotesSortChanged(s));
+    compare('${s.name} (sort)', earlier());
+    tag = g;
+    await _send(bloc, NotesTagFilterChanged(g));
+    compare('$g (tag)', earlier());
+    tag = bloc.state.tag;
+    query = q;
+    await _send(bloc, NotesQueryChanged(q));
+    compare('"$q" (search)', earlier());
+  }
+
+  final live = now.visible();
+  final victim = live[live.length ~/ 2].id;
+  await now.deleteNotes([victim]);
+  await old.deleteNotes([victim]);
+  await _settle();
+  compare('delete $victim', earlier());
+
+  final target = expensive.isEmpty ? now.visible().first.id : expensive.first;
+  Note edited(_CacheSource source) {
+    final note = source.byId(target);
+    if (note == null) throw StateError('no note $target');
+    // A new instance with changed content, as the editor saves: the cache
+    // drops its entry, and the next snapshot admits a note again.
+    return (NoteDocument.fromNote(note)..replaceText(0, 'Edited $target'))
+        .toNote(note);
+  }
+
+  await now.save(edited(now));
+  await old.save(edited(old));
+  await _settle();
+  compare('edit $target', earlier());
+
+  rows['views, delete and edit (sum)'] =
+      total.entries.map((e) => '${e.key} ${e.value}').join(', ');
+  return rows;
 }
