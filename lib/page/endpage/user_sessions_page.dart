@@ -2,18 +2,35 @@ import 'dart:async';
 
 import 'package:atomic_notes/api/atomic_notes_api.dart';
 import 'package:atomic_notes/api/user_sessions.dart';
-import 'package:atomic_notes/theme/app_tokens.dart';
-import 'package:atomic_notes/theme/editorial.dart';
+import 'package:atomic_notes/theme/atomic_colors.dart';
+import 'package:atomic_notes/theme/atomic_icons.dart';
+import 'package:atomic_notes/theme/atomic_tokens.dart';
+import 'package:atomic_notes/theme/atomic_type.dart';
+import 'package:atomic_notes/ui/buttons/atomic_button.dart';
+import 'package:atomic_notes/ui/buttons/atomic_icon_button.dart';
+import 'package:atomic_notes/ui/cards/atomic_card.dart';
+import 'package:atomic_notes/ui/chips/status_chip.dart';
+import 'package:atomic_notes/ui/feedback/atomic_banner.dart';
+import 'package:atomic_notes/ui/feedback/empty_state.dart';
+import 'package:atomic_notes/ui/feedback/progress.dart';
+import 'package:atomic_notes/ui/headers/page_header.dart';
+import 'package:atomic_notes/ui/mascot/mascot_stage.dart';
+import 'package:atomic_notes/ui/motion/entrance.dart';
+import 'package:atomic_notes/ui/overlays/atomic_dialog.dart';
 import 'package:atomic_notes/utility/component/atomic_brand.dart';
-import 'package:atomic_notes/utility/component/my_appbar.dart';
 import 'package:flutter/material.dart';
 
+/// Sign-ins (screens spec, Sign-ins): this account's sign-ins as the Server
+/// stores them, with "End sign-in" on every sign-in but this one.
+///
 /// Inventory belongs to this exact account and token revision for this route.
 /// Ending another sign-in never clears this device's note cache or bypasses
 /// Settings' safe logout flow for the current sign-in.
 class UserSessionsPage extends StatefulWidget {
   const UserSessionsPage({super.key, this.api});
   final ApiClient? api;
+
+  static const String title = 'Sign-ins';
 
   @override
   State<UserSessionsPage> createState() => _UserSessionsPageState();
@@ -29,6 +46,11 @@ class _UserSessionsPageState extends State<UserSessionsPage> {
   String? _error, _pendingHandle;
   int _read = 0;
 
+  final ScrollController _scroll = ScrollController();
+
+  /// The collapsed header title shows once the large title has scrolled away.
+  final ValueNotifier<bool> _titleAway = ValueNotifier(false);
+
   bool get _current =>
       mounted &&
       _owner != null &&
@@ -40,6 +62,8 @@ class _UserSessionsPageState extends State<UserSessionsPage> {
   @override
   void initState() {
     super.initState();
+    _scroll.addListener(() => _titleAway.value =
+        _scroll.hasClients && _scroll.offset > AtomicSpace.x10);
     // Freeze the binding before starting any I/O.
     final binding = (_owner, _revision);
     assert(binding.$2 >= 0);
@@ -113,26 +137,24 @@ class _UserSessionsPageState extends State<UserSessionsPage> {
     }
     if (_busy || _pendingHandle != null || session.isCurrent) return;
     setState(() => _confirming = true);
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showAtomicDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('End this other sign-in?'),
-        content: const Text(
-          'That sign-in will need Google login again. Unsynced notes remain on that device; sign back into the same account to recover them. Requests already in flight may still finish.',
+      // Destructive: only the buttons close it.
+      barrierDismissible: false,
+      destructive: true,
+      icon: AtomicIcons.logout,
+      title: 'End this sign-in?',
+      body: 'It will need Google sign-in again. Unsynced notes remain on that '
+          'device; sign back into the same account to recover them. Requests '
+          'already in progress may still finish.',
+      actions: const [
+        AtomicDialogAction(label: 'Cancel', result: false),
+        AtomicDialogAction(
+          label: 'End sign-in',
+          result: true,
+          variant: AtomicButtonVariant.danger,
         ),
-        actions: [
-          TextButton(
-            key: const ValueKey('cancel-session-revoke'),
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            key: const ValueKey('confirm-session-revoke'),
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('End sign-in'),
-          ),
-        ],
-      ),
+      ],
     );
     if (!_current) {
       _retire();
@@ -169,9 +191,8 @@ class _UserSessionsPageState extends State<UserSessionsPage> {
       }
       setState(() {
         _pendingHandle = null;
-        _rows = _rows
-            .where((row) => row.handle != handle)
-            .toList(growable: false);
+        _rows =
+            _rows.where((row) => row.handle != handle).toList(growable: false);
       });
       await _load();
     } catch (error) {
@@ -179,8 +200,7 @@ class _UserSessionsPageState extends State<UserSessionsPage> {
         _retire();
         return;
       }
-      final refused =
-          error is ApiException &&
+      final refused = error is ApiException &&
           error.statusCode >= 400 &&
           error.statusCode < 500;
       setState(() {
@@ -204,107 +224,284 @@ class _UserSessionsPageState extends State<UserSessionsPage> {
   void dispose() {
     _read++;
     unawaited(_ended?.cancel());
+    _scroll.dispose();
+    _titleAway.dispose();
     super.dispose();
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    backgroundColor: AppColors.paper,
-    appBar: const MyAppBar(text: 'Sign-ins'),
-    body: ListView(
-      padding: const EdgeInsets.all(AppSpace.md),
-      children: [
-        const SectionHeader('YOUR SIGN-INS'),
-        const SizedBox(height: AppSpace.sm),
-        const Text(
-          'New sign-ins last up to 180 days from login, without an inactivity timeout. Older sign-ins can have earlier deadlines. Issued and expiry times below are the Server’s stored dates, shown in local time. Up to five sign-ins are retained.',
-          style: AppType.bodySm,
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final current = _current;
+    return Scaffold(
+      backgroundColor: c.canvas,
+      body: SafeArea(
+        bottom: false,
+        child: EntranceGroup(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              ValueListenableBuilder<bool>(
+                valueListenable: _titleAway,
+                builder: (context, away, _) => AtomicPageHeader(
+                  title: UserSessionsPage.title,
+                  showTitle: away,
+                  actions: [
+                    if (current)
+                      AtomicIconButton(
+                        key: const ValueKey('refresh-sessions'),
+                        icon: AtomicIcons.refresh,
+                        tooltip: 'Refresh',
+                        onPressed:
+                            _busy || _pendingHandle != null ? null : _load,
+                      ),
+                  ],
+                ),
+              ),
+              Expanded(child: _body(context, current)),
+            ],
+          ),
         ),
-        const SizedBox(height: AppSpace.md),
-        if (!_current)
-          const EditorialModule(
-            child: Text('Your sign-in changed. Return to Settings.'),
+      ),
+    );
+  }
+
+  Widget _body(BuildContext context, bool current) {
+    final c = context.colors;
+    final margin = AtomicSpace.screenMargin(MediaQuery.sizeOf(context).width);
+    final error = _error;
+    final pending = _pendingHandle;
+    return ListView(
+      controller: _scroll,
+      padding: EdgeInsets.fromLTRB(margin, 0, margin,
+          AtomicSpace.x8 + MediaQuery.paddingOf(context).bottom),
+      children: [
+        const Entrance(index: 0, child: PageTitle(UserSessionsPage.title)),
+        Entrance(
+          index: 1,
+          child: Text(
+            'New sign-ins last up to 180 days from login, without an '
+            'inactivity timeout. Older sign-ins can have earlier deadlines. '
+            'Issued and expiry times below are the Server’s stored dates, '
+            'shown in local time. Up to five sign-ins are retained.',
+            style: AtomicType.bodyMedium.copyWith(color: c.textSecondary),
+          ),
+        ),
+        const SizedBox(height: AtomicSpace.x6),
+        if (!current)
+          Entrance(
+            index: 2,
+            child: Semantics(
+              liveRegion: true,
+              child: const AtomicBanner(
+                key: ValueKey('sessions-changed'),
+                tone: BannerTone.attention,
+                icon: AtomicIcons.alertTriangle,
+                title: 'Your sign-in changed. Return to Settings.',
+              ),
+            ),
           )
         else ...[
-          if (_loading || _writing) ...[
-            const Center(child: DevBehindYouMascot(size: 56)),
-            Semantics(
-              liveRegion: true,
-              child: Text(
-                _writing ? 'Ending sign-in…' : 'Loading sign-ins…',
-                style: AppType.bodySm,
+          if (_loading || _writing)
+            Entrance(
+              index: 2,
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: AtomicSpace.x4),
+                child: _Progress(writing: _writing),
               ),
             ),
-            const LinearProgressIndicator(),
-          ],
-          if (_error != null) ...[
-            EditorialModule(child: Text(_error!, style: AppType.bodySm)),
-            const SizedBox(height: AppSpace.sm),
-            InkActionButton(
-              key: const ValueKey('retry-sessions'),
-              label: _pendingHandle == null ? 'Retry' : 'Retry ending sign-in',
-              onTap: _busy
-                  ? null
-                  : () => _pendingHandle == null
-                        ? _load()
-                        : _revoke(_pendingHandle!),
-            ),
-          ],
-          if (!_loading && _error == null && _rows.isEmpty)
-            const EditorialModule(
-              child: Text('No sign-ins were returned. Refresh to check again.'),
-            ),
-          for (final session in _rows) ...[
-            const SizedBox(height: AppSpace.md),
-            EditorialModule(
-              key: ValueKey('session-${session.handle}'),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  MonoLabel(
-                    session.isCurrent ? 'THIS SIGN-IN' : 'OTHER SIGN-IN',
-                  ),
-                  const SizedBox(height: AppSpace.xs),
-                  Text(
-                    'Issued: ${_date(session.createdAt)}\nExpires: ${_date(session.expiresAt)}',
-                    style: AppType.bodySm,
-                  ),
-                  const SizedBox(height: AppSpace.xs),
-                  Text(
-                    'Client hint (unverified): ${session.agentLabel == null || session.agentLabel!.isEmpty ? 'Unavailable' : session.agentLabel}',
-                    style: AppType.bodySm,
-                  ),
-                  const Text(
-                    'This hint does not verify a device or show its last activity.',
-                    style: AppType.bodySm,
-                  ),
-                  const SizedBox(height: AppSpace.sm),
-                  if (session.isCurrent)
-                    const Text(
-                      'Use Logout in Settings for this sign-in so unsynced notes are protected.',
-                      style: AppType.bodySm,
-                    )
-                  else
-                    InkActionButton(
-                      key: ValueKey('end-${session.handle}'),
-                      label: 'End sign-in',
-                      danger: true,
-                      onTap: _busy || _pendingHandle != null
-                          ? null
-                          : () => _confirm(session),
+          if (error != null)
+            Entrance(
+              index: 2,
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: AtomicSpace.x4),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Semantics(
+                      liveRegion: true,
+                      child: AtomicBanner(
+                        key: const ValueKey('sessions-error'),
+                        tone: BannerTone.danger,
+                        icon: AtomicIcons.alertCircle,
+                        title: error,
+                      ),
                     ),
-                ],
+                    const SizedBox(height: AtomicSpace.x3),
+                    AtomicButton.tonal(
+                      key: const ValueKey('retry-sessions'),
+                      label: pending == null ? 'Retry' : 'Retry ending sign-in',
+                      icon: AtomicIcons.refresh,
+                      onPressed: _busy
+                          ? null
+                          : () => pending == null ? _load() : _revoke(pending),
+                    ),
+                  ],
+                ),
               ),
             ),
-          ],
-          const SizedBox(height: AppSpace.md),
-          InkActionButton(
-            key: const ValueKey('refresh-sessions'),
-            label: 'Refresh',
-            onTap: _busy || _pendingHandle != null ? null : _load,
-          ),
+          if (!_loading && error == null && _rows.isEmpty)
+            const Entrance(
+              index: 2,
+              child: Padding(
+                padding: EdgeInsets.only(top: AtomicSpace.x8),
+                child: EmptyState(
+                  key: ValueKey('sessions-empty'),
+                  title: 'No sign-ins were returned',
+                  body: 'Refresh to check again.',
+                ),
+              ),
+            ),
+          for (final (i, session) in _rows.indexed)
+            Stagger(
+              key: ValueKey('session-${session.handle}'),
+              index: i,
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: AtomicSpace.x3),
+                child: _SignInCard(
+                  session: session,
+                  issued: _date(session.createdAt),
+                  expires: _date(session.expiresAt),
+                  ending: _writing && pending == session.handle,
+                  // One sign-in at a time, and never while another request
+                  // or the confirmation is open.
+                  onEnd:
+                      _busy || pending != null ? null : () => _confirm(session),
+                ),
+              ),
+            ),
         ],
       ],
-    ),
-  );
+    );
+  }
+}
+
+/// Loading or ending, read out as it changes.
+class _Progress extends StatelessWidget {
+  const _Progress({required this.writing});
+
+  final bool writing;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    const stage = 56.0;
+    return Row(
+      children: [
+        MascotStage(
+          size: stage,
+          child: DevBehindYouMascot(size: MascotStage.artSize(stage)),
+        ),
+        const SizedBox(width: AtomicSpace.x3),
+        Expanded(
+          child: Semantics(
+            liveRegion: true,
+            child: Text(
+              writing ? 'Ending sign-in…' : 'Loading sign-ins…',
+              style: AtomicType.bodyMedium.copyWith(color: c.textSecondary),
+            ),
+          ),
+        ),
+        const SizedBox(width: AtomicSpace.x3),
+        const ExcludeSemantics(child: ProgressRing(size: 20)),
+      ],
+    );
+  }
+}
+
+/// One sign-in: what the Server stores about it, and either the way to end
+/// it or, for this sign-in, where to log out safely instead.
+class _SignInCard extends StatelessWidget {
+  const _SignInCard({
+    required this.session,
+    required this.issued,
+    required this.expires,
+    required this.ending,
+    required this.onEnd,
+  });
+
+  final UserSession session;
+  final String issued;
+  final String expires;
+  final bool ending;
+  final VoidCallback? onEnd;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final hint = session.agentLabel;
+    final secondary = AtomicType.bodySmall.copyWith(color: c.textSecondary);
+    return AtomicCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ExcludeSemantics(
+                child: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: c.surfaceInset,
+                    borderRadius: AtomicRadius.mediumAll,
+                  ),
+                  // The hint is unverified, so no device type is implied.
+                  child:
+                      Icon(AtomicIcons.devices, size: 20, color: c.textPrimary),
+                ),
+              ),
+              const SizedBox(width: AtomicSpace.x3),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      session.isCurrent ? 'This sign-in' : 'Other sign-in',
+                      style:
+                          AtomicType.titleMedium.copyWith(color: c.textPrimary),
+                    ),
+                    if (session.isCurrent) ...[
+                      const SizedBox(height: AtomicSpace.x1),
+                      const StatusChip('This device', tone: StatusTone.accent),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: AtomicSpace.x3),
+          Text('Issued: $issued', style: secondary),
+          Text('Expires: $expires', style: secondary),
+          const SizedBox(height: AtomicSpace.x2),
+          Text(
+            'Client hint (unverified): '
+            '${hint == null || hint.isEmpty ? 'Unavailable' : hint}',
+            style: AtomicType.bodySmall.copyWith(color: c.textPrimary),
+          ),
+          Text(
+            'This hint does not verify a device or show its last activity.',
+            style: secondary,
+          ),
+          const SizedBox(height: AtomicSpace.x3),
+          if (session.isCurrent)
+            Text(
+              'Use Logout in Settings for this sign-in so unsynced notes are '
+              'protected.',
+              style: secondary,
+            )
+          else
+            AtomicButton.danger(
+              key: ValueKey('end-${session.handle}'),
+              label: 'End sign-in',
+              icon: AtomicIcons.logout,
+              size: AtomicButtonSize.compact,
+              onCard: true,
+              busy: ending,
+              onPressed: onEnd,
+            ),
+        ],
+      ),
+    );
+  }
 }
