@@ -7,6 +7,7 @@ import 'package:atomic_notes/state/notifications/notifications_cubit.dart';
 import 'package:atomic_notes/state/profile/profile_cubit.dart';
 import 'package:atomic_notes/theme/atomic_colors.dart';
 import 'package:atomic_notes/theme/atomic_icons.dart';
+import 'package:atomic_notes/theme/atomic_tokens.dart';
 import 'package:atomic_notes/ui/buttons/atomic_icon_button.dart';
 import 'package:atomic_notes/ui/feedback/progress.dart';
 import 'package:atomic_notes/ui/motion/atomic_pressable.dart';
@@ -170,15 +171,18 @@ class _SyncButton extends StatelessWidget {
                     ? null
                     : () => context
                         .read<NotesBloc>()
-                        .add(const NotesSyncRequested(instant: true)),
+                        .add(const NotesSyncRequested(instant: false)),
                 onLongPress: () => showEnergyPopup(context),
               ),
               if (state.syncing)
-                const IgnorePointer(
+                IgnorePointer(
                   child: ExcludeSemantics(
+                    // Under reduced motion the ring stays visible as a still
+                    // arc instead of spinning (Codex R22).
                     child: ProgressRing(
-                      key: ValueKey('home-sync-ring'),
+                      key: const ValueKey('home-sync-ring'),
                       size: AtomicIconButton.size + 4,
+                      value: AtomicMotion.reduced(context) ? 0.75 : null,
                     ),
                   ),
                 ),

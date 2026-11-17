@@ -242,6 +242,22 @@ class _TopBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Until UX-03-home migrates Home's body, the page it is painted on is
+    // still the legacy light page in every appearance. The row and the
+    // actions the shell passes in therefore use the light roles, so the
+    // title keeps its contrast in the dark appearance (Codex R21).
+    final theme = Theme.of(context);
+    return Theme(
+      data: theme.copyWith(extensions: [
+        for (final e in theme.extensions.values)
+          if (e is! AtomicColors) e,
+        AtomicColors.light,
+      ]),
+      child: Builder(builder: _row),
+    );
+  }
+
+  Widget _row(BuildContext context) {
     final c = context.colors;
     final width = MediaQuery.sizeOf(context).width;
     final margin = AtomicSpace.screenMargin(width);

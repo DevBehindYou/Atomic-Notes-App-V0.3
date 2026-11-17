@@ -17,7 +17,9 @@ import 'package:atomic_notes/state/notes/notes_bloc.dart';
 import 'package:atomic_notes/state/notifications/notifications_cubit.dart';
 import 'package:atomic_notes/state/profile/profile_cubit.dart';
 import 'package:atomic_notes/theme/atomic_icons.dart';
+import 'package:atomic_notes/theme/app_tokens.dart';
 import 'package:atomic_notes/theme/atomic_theme.dart';
+import 'package:atomic_notes/ui/feedback/progress.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
@@ -114,6 +116,7 @@ Future<_Shell> _pump(
   int unread = 0,
   List<String> pendingIds = const [],
   bool disableAnimations = false,
+  bool accessibleNavigation = false,
 }) async {
   tester.view.physicalSize = size * 3;
   tester.view.devicePixelRatio = 3;
@@ -168,6 +171,7 @@ Future<_Shell> _pump(
           data: MediaQuery.of(context).copyWith(
             textScaler: TextScaler.linear(textScale),
             disableAnimations: disableAnimations,
+            accessibleNavigation: accessibleNavigation,
           ),
           child: child!,
         ),
@@ -551,6 +555,71 @@ void main() {
         expect(size.width, greaterThanOrEqualTo(48), reason: label);
         expect(size.height, greaterThanOrEqualTo(48), reason: label);
       }
+    });
+  });
+
+  group('Codex packet-9 findings', () {
+    double contrast(Color a, Color b) {
+      final la = a.computeLuminance(), lb = b.computeLuminance();
+      final hi = la > lb ? la : lb, lo = la > lb ? lb : la;
+      return (hi + 0.05) / (lo + 0.05);
+    }
+
+    testWidgets(
+        'R21: in the dark appearance the title keeps its contrast on '
+        'the legacy Home page it is painted on', (tester) async {
+      await _pump(tester, theme: AtomicTheme.dark, size: const Size(480, 860));
+      final title =
+          tester.widget<Text>(find.byKey(const ValueKey('home-title')));
+      // Home's body is still the legacy light page in every appearance.
+      final page = tester
+          .widgetList<Scaffold>(find.ancestor(
+              of: find.byKey(const ValueKey('home-title')),
+              matching: find.byType(Scaffold)))
+          .first
+          .backgroundColor!;
+      expect(page, AppColors.paper);
+      expect(contrast(title.style!.color!, page), greaterThanOrEqualTo(4.5));
+      expect(tester.takeException(), isNull);
+    });
+
+    for (final flag in ['disableAnimations', 'accessibleNavigation']) {
+      testWidgets('R22: with $flag the sync ring is a still arc',
+          (tester) async {
+        final shell = await _pump(tester,
+            disableAnimations: flag == 'disableAnimations',
+            accessibleNavigation: flag == 'accessibleNavigation');
+        final gate = Completer<void>();
+        shell.notes.syncGate = gate;
+        await tester.tap(find.byTooltip('Sync now'));
+        await tester.pump();
+        await tester.pump();
+        final ring = find.byKey(const ValueKey('home-sync-ring'));
+        expect(tester.widget<ProgressRing>(ring).value, isNotNull);
+        expect(
+            find.descendant(of: ring, matching: find.byType(AnimatedBuilder)),
+            findsNothing);
+        gate.complete();
+        await tester.pump();
+        await tester.pump();
+        expect(ring, findsNothing);
+        await tester.pump(const Duration(seconds: 5));
+      });
+    }
+
+    testWidgets('R22: with full motion the ring still spins', (tester) async {
+      final shell = await _pump(tester);
+      final gate = Completer<void>();
+      shell.notes.syncGate = gate;
+      await tester.tap(find.byTooltip('Sync now'));
+      await tester.pump();
+      await tester.pump();
+      final ring = find.byKey(const ValueKey('home-sync-ring'));
+      expect(tester.widget<ProgressRing>(ring).value, isNull);
+      gate.complete();
+      await tester.pump();
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 5));
     });
   });
 }
