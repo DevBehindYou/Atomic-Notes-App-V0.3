@@ -2,6 +2,7 @@
 
 import 'package:atomic_notes/theme/atomic_colors.dart';
 import 'package:atomic_notes/theme/atomic_icons.dart';
+import 'package:atomic_notes/theme/atomic_tokens.dart';
 import 'package:atomic_notes/ui/cards/atomic_card.dart';
 import 'package:atomic_notes/ui/controls/atomic_checkbox.dart';
 import 'package:atomic_notes/ui/rows/checklist_row.dart';
@@ -10,6 +11,38 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../support/themed.dart';
+
+/// [row] in a settings group on a real phone screen [width] logical pixels
+/// wide (device pixel ratio 1), with the page margins for that width.
+Future<void> _pumpOnPhone(
+  WidgetTester tester,
+  Widget row, {
+  required ThemeData theme,
+  required double width,
+  double textScale = 1,
+  TextDirection direction = TextDirection.ltr,
+}) async {
+  tester.view.physicalSize = Size(width, 640);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.reset);
+  await tester.pumpWidget(MaterialApp(
+    theme: theme,
+    builder: (context, child) => MediaQuery(
+      data: MediaQuery.of(context)
+          .copyWith(textScaler: TextScaler.linear(textScale)),
+      child: Directionality(textDirection: direction, child: child!),
+    ),
+    home: Scaffold(
+      body: Padding(
+        padding:
+            EdgeInsets.symmetric(horizontal: AtomicSpace.screenMargin(width)),
+        child: Column(children: [
+          SettingsGroup(children: [row])
+        ]),
+      ),
+    ),
+  ));
+}
 
 void main() {
   for (final MapEntry(key: name, value: theme) in atomicThemes.entries) {
@@ -265,6 +298,67 @@ void main() {
         );
         expect(tester.takeException(), isNull);
       });
+
+      SettingsRow appearance(String value, {String title = 'Appearance'}) =>
+          SettingsRow(
+              icon: AtomicIcons.palette,
+              title: title,
+              value: value,
+              onTap: () {});
+
+      for (final direction in TextDirection.values) {
+        testWidgets(
+            'a value that fits stays at the end of the title line '
+            '(${direction.name})', (tester) async {
+          // Short enough for one line even in the square test font.
+          await _pumpOnPhone(tester, appearance('Dark', title: 'Theme'),
+              theme: theme, width: 360, direction: direction);
+          final title = tester.getRect(find.text('Theme'));
+          final shown = tester.getRect(find.text('Dark'));
+          final chevron = tester.getRect(find.byIcon(AtomicIcons.chevronRight));
+          expect(shown.center.dy, moreOrLessEquals(title.center.dy));
+          if (direction == TextDirection.ltr) {
+            expect(
+                shown.right, moreOrLessEquals(chevron.left - AtomicSpace.x2));
+            expect(title.right, lessThan(shown.left));
+          } else {
+            expect(
+                shown.left, moreOrLessEquals(chevron.right + AtomicSpace.x2));
+            expect(title.left, greaterThan(shown.right));
+          }
+          expect(tester.widget<Text>(find.text('Dark')).style!.color,
+              c.textSecondary);
+        });
+
+        // The overflows these replace: 26 px for "System" on a 320 dp
+        // phone and 16 px for "English" on a 360 dp phone, at 2.0 text.
+        for (final (width, value) in [(320.0, 'System'), (360.0, 'English')]) {
+          testWidgets(
+              'a value too wide for the title line moves under it, '
+              '$width dp at 2.0 text (${direction.name})', (tester) async {
+            final handle = tester.ensureSemantics();
+            await _pumpOnPhone(tester, appearance(value),
+                theme: theme, width: width, textScale: 2, direction: direction);
+            expect(tester.takeException(), isNull);
+            final title = tester.getRect(find.text('Appearance'));
+            final shown = tester.getRect(find.text(value));
+            expect(shown.top, greaterThanOrEqualTo(title.bottom));
+            if (direction == TextDirection.ltr) {
+              expect(shown.left, moreOrLessEquals(title.left));
+            } else {
+              expect(shown.right, moreOrLessEquals(title.right));
+            }
+            expect(find.byIcon(AtomicIcons.chevronRight), findsOneWidget);
+            expect(
+                tester
+                    .getSemantics(find.bySemanticsLabel('Appearance. $value')),
+                isSemantics(isButton: true, hasTapAction: true));
+            expect(tester.getSize(find.byType(SettingsRow)).height,
+                greaterThanOrEqualTo(SettingsRow.minHeight));
+            handle.dispose();
+          });
+        }
+      }
     });
 
     testWidgets('LedgerRow reads as one item and fits 320 dp ($name)',
