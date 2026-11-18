@@ -38,6 +38,7 @@ import 'package:atomic_notes/ui/rows/checklist_row.dart';
 import 'package:atomic_notes/ui/rows/settings_row.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderAbstractViewport;
 
 /// Every `lib/ui` component in its states, in either theme, for screenshots
 /// and device checks. Debug builds only: [debugRoutes] is empty otherwise.
@@ -431,7 +432,7 @@ class _ComponentGalleryState extends State<ComponentGallery> {
                       ],
                       stacked: true),
                   _Section('Progress', [
-                    const ProgressRing(semanticsLabel: 'Loading'),
+                    const _SimulatedLoading(),
                     const ProgressRing(
                         value: 0.6, semanticsLabel: 'Sixty percent'),
                     const SizedBox(
@@ -579,6 +580,107 @@ class _ComponentGalleryState extends State<ComponentGallery> {
           ),
         );
       }),
+    );
+  }
+}
+
+/// The gallery's indeterminate ring. Nothing is loading, so it spins only
+/// while someone could watch it: on screen, with its route showing, the app
+/// in the foreground and reduced motion off (either flag). Otherwise it
+/// holds a still arc (review R26). The spinning ring owns its controller, so
+/// swapping in the still one ends that work, and so does leaving the page.
+class _SimulatedLoading extends StatefulWidget {
+  const _SimulatedLoading();
+
+  /// How much of the circle the still ring fills.
+  static const double still = 0.25;
+
+  @override
+  State<_SimulatedLoading> createState() => _SimulatedLoadingState();
+}
+
+class _SimulatedLoadingState extends State<_SimulatedLoading>
+    with WidgetsBindingObserver {
+  ScrollPosition? _position;
+
+  /// Whether any of the ring is inside the page's viewport. The page is
+  /// built in full, so the ring exists while scrolled out of view. It
+  /// starts still until the first layout says where it is.
+  bool _onScreen = false;
+  bool _checkScheduled = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final position = Scrollable.maybeOf(context)?.position;
+    if (!identical(position, _position)) {
+      _position?.removeListener(_scheduleCheck);
+      _position = position?..addListener(_scheduleCheck);
+    }
+    _scheduleCheck();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _position?.removeListener(_scheduleCheck);
+    super.dispose();
+  }
+
+  /// Measures after the frame's layout, never during a scroll or build.
+  void _scheduleCheck() {
+    if (_checkScheduled) return;
+    _checkScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkScheduled = false;
+      if (!mounted) return;
+      final onScreen = _measureOnScreen();
+      if (onScreen != _onScreen) setState(() => _onScreen = onScreen);
+    });
+    WidgetsBinding.instance.scheduleFrame();
+  }
+
+  bool _measureOnScreen() {
+    final box = context.findRenderObject();
+    if (box is! RenderBox || !box.attached || !box.hasSize) return false;
+    final Object? viewport = RenderAbstractViewport.maybeOf(box);
+    if (viewport is! RenderBox) return true;
+    final top = box.localToGlobal(Offset.zero, ancestor: viewport).dy;
+    return top < viewport.size.height && top + box.size.height > 0;
+  }
+
+  bool get _resumed {
+    final state = WidgetsBinding.instance.lifecycleState;
+    return state == null || state == AppLifecycleState.resumed;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final spin = _onScreen &&
+        _resumed &&
+        TickerMode.valuesOf(context).enabled &&
+        !AtomicMotion.reduced(context);
+    // Read as "Loading" either way: the still arc is not a percentage.
+    return Semantics(
+      container: true,
+      label: 'Loading',
+      child: ExcludeSemantics(
+        child: ProgressRing(
+          value: spin ? null : _SimulatedLoading.still,
+          semanticsLabel: 'Loading',
+        ),
+      ),
     );
   }
 }

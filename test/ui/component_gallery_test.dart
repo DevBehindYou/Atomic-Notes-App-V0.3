@@ -1,5 +1,6 @@
 // The debug-only component gallery.
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:atomic_notes/theme/atomic_colors.dart';
@@ -66,16 +67,20 @@ const _frame = Duration(milliseconds: 600);
 Widget _app({
   double textScale = 1,
   bool reduced = false,
+  bool accessible = false,
   Widget home = const ComponentGallery(),
   Map<String, WidgetBuilder> routes = const {},
+  GlobalKey<NavigatorState>? navigator,
 }) {
   return MaterialApp(
     theme: AtomicTheme.light,
     routes: routes,
+    navigatorKey: navigator,
     builder: (context, child) => MediaQuery(
       data: MediaQuery.of(context).copyWith(
         textScaler: TextScaler.linear(textScale),
         disableAnimations: reduced,
+        accessibleNavigation: accessible,
       ),
       child: child!,
     ),
@@ -196,6 +201,51 @@ double _opacityAbove(WidgetTester tester, String text) => tester
         .first)
     .opacity
     .value;
+
+/// The gallery's indeterminate "Loading" ring, found even while its route
+/// is covered (offstage).
+final _loading = find.byWidgetPredicate(
+    (w) => w is ProgressRing && w.semanticsLabel == 'Loading',
+    skipOffstage: false);
+
+/// The positions of whatever animates inside the ring: empty for a still
+/// (determinate) ring.
+List<double> _ringFrames(WidgetTester tester) => tester
+    .widgetList<AnimatedBuilder>(find.descendant(
+        of: _loading,
+        matching: find.byType(AnimatedBuilder),
+        skipOffstage: false))
+    .map((w) => w.animation)
+    .whereType<Animation<double>>()
+    .map((a) => a.value)
+    .toList();
+
+/// The ring measures where it is after a layout, then rebuilds.
+Future<void> _remeasure(WidgetTester tester) async {
+  await tester.pump();
+  await tester.pump();
+}
+
+Future<void> _showRing(WidgetTester tester) async {
+  await tester.ensureVisible(_loading);
+  await _remeasure(tester);
+}
+
+Future<void> _expectSpinning(WidgetTester tester, String reason) async {
+  expect(tester.widget<ProgressRing>(_loading).value, isNull, reason: reason);
+  final before = _ringFrames(tester);
+  expect(before, isNotEmpty, reason: reason);
+  await tester.pump(const Duration(milliseconds: 420));
+  expect(_ringFrames(tester), isNot(before), reason: '$reason: it moves');
+}
+
+Future<void> _expectStill(WidgetTester tester, String reason) async {
+  for (var i = 0; i < 2; i++) {
+    expect(tester.widget<ProgressRing>(_loading).value, 0.25, reason: reason);
+    expect(_ringFrames(tester), isEmpty, reason: reason);
+    await tester.pump(const Duration(milliseconds: 420));
+  }
+}
 
 CustomPainter? _burstPainter(WidgetTester tester) => tester
     .widget<CustomPaint>(find
@@ -647,5 +697,151 @@ void main() {
       expect(tester.binding.transientCallbackCount, 0);
     }
     expect(tester.takeException(), isNull);
+  });
+
+  // Review R26: nothing loads in the gallery, so its indeterminate ring is
+  // still unless someone could watch it move.
+  group('the simulated loading ring', () {
+    for (final flag in ['disableAnimations', 'accessibleNavigation']) {
+      testWidgets('is still under $flag, and reads as Loading', (tester) async {
+        final handle = tester.ensureSemantics();
+        _screen(tester);
+        await tester.pumpWidget(_app(
+          reduced: flag == 'disableAnimations',
+          accessible: flag == 'accessibleNavigation',
+        ));
+        await tester.pump(_frame);
+        await _showRing(tester);
+        await _expectStill(tester, flag);
+        // The still arc is not a percentage.
+        final node = tester.getSemantics(find.bySemanticsLabel('Loading'));
+        expect(node.value, isEmpty, reason: flag);
+        handle.dispose();
+      });
+    }
+
+    testWidgets('spins on screen, with the same label, and stops off screen',
+        (tester) async {
+      final handle = tester.ensureSemantics();
+      await _pumpGallery(tester);
+      await _remeasure(tester);
+      await _expectStill(tester, 'built below the fold');
+
+      await _showRing(tester);
+      await _expectSpinning(tester, 'scrolled into view');
+      expect(
+          tester.getSemantics(find.bySemanticsLabel('Loading')).value, isEmpty);
+
+      tester.state<ScrollableState>(_list).position.jumpTo(0);
+      await _remeasure(tester);
+      await _expectStill(tester, 'scrolled back out of view');
+
+      await _showRing(tester);
+      await _expectSpinning(tester, 'scrolled into view again');
+      handle.dispose();
+    });
+
+    testWidgets('stops and restarts as reduced motion changes while open',
+        (tester) async {
+      await _pumpGallery(tester);
+      await _showRing(tester);
+      await _expectSpinning(tester, 'normal motion');
+
+      for (final (reduced, accessible) in [(true, false), (false, true)]) {
+        final flag = reduced ? 'disableAnimations' : 'accessibleNavigation';
+        await tester.pumpWidget(_app(reduced: reduced, accessible: accessible));
+        await _remeasure(tester);
+        await _expectStill(tester, '$flag turned on');
+
+        await tester.pumpWidget(_app());
+        await _remeasure(tester);
+        await _expectSpinning(tester, '$flag turned off');
+      }
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('stops while the app is in the background', (tester) async {
+      await _pumpGallery(tester);
+      await _showRing(tester);
+      await _expectSpinning(tester, 'foreground');
+
+      for (final state in [
+        AppLifecycleState.inactive,
+        AppLifecycleState.hidden,
+        AppLifecycleState.paused,
+      ]) {
+        tester.binding.handleAppLifecycleStateChanged(state);
+      }
+      await _remeasure(tester);
+      await _expectStill(tester, 'paused');
+
+      for (final state in [
+        AppLifecycleState.hidden,
+        AppLifecycleState.inactive,
+        AppLifecycleState.resumed,
+      ]) {
+        tester.binding.handleAppLifecycleStateChanged(state);
+      }
+      await _remeasure(tester);
+      await _expectSpinning(tester, 'resumed');
+    });
+
+    testWidgets('stops while another page covers the gallery', (tester) async {
+      final navigator = GlobalKey<NavigatorState>();
+      _screen(tester);
+      await tester.pumpWidget(_app(navigator: navigator));
+      await tester.pump(_frame);
+      await _showRing(tester);
+      await _expectSpinning(tester, 'gallery showing');
+
+      unawaited(navigator.currentState!.push(MaterialPageRoute<void>(
+          builder: (_) => const Scaffold(body: Text('Covering page')))));
+      await _run(tester, const Duration(seconds: 1));
+      expect(find.text('Covering page'), findsOneWidget);
+      await _expectStill(tester, 'covered');
+
+      navigator.currentState!.pop();
+      await _run(tester, const Duration(seconds: 1));
+      await _remeasure(tester);
+      await _expectSpinning(tester, 'uncovered');
+    });
+
+    testWidgets('leaving the gallery ends the ring and its observers',
+        (tester) async {
+      _screen(tester);
+      await tester.pumpWidget(_app(
+        routes: ComponentGallery.debugRoutes,
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: Center(
+              child: AtomicButton.primary(
+                label: 'Open gallery',
+                onPressed: () =>
+                    Navigator.pushNamed(context, ComponentGallery.route),
+              ),
+            ),
+          ),
+        ),
+      ));
+      await tester.tap(find.text('Open gallery'));
+      await _run(tester, const Duration(seconds: 1));
+      await _showRing(tester);
+      await _expectSpinning(tester, 'open');
+      final ring = tester.state(find.ancestor(
+          of: _loading,
+          matching: find.byWidgetPredicate(
+              (w) => '${w.runtimeType}' == '_SimulatedLoading')));
+
+      await tester.binding.handlePopRoute();
+      await _run(tester, const Duration(seconds: 1));
+      expect(find.byType(ComponentGallery), findsNothing);
+      expect(_loading, findsNothing);
+      expect(ring.mounted, isFalse);
+      expect(tester.binding.transientCallbackCount, 0);
+      // Already removed: the ring no longer hears lifecycle changes.
+      expect(tester.binding.removeObserver(ring as WidgetsBindingObserver),
+          isFalse);
+      expect(tester.takeException(), isNull);
+    });
   });
 }
