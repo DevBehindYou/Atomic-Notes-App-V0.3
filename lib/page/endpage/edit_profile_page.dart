@@ -115,39 +115,48 @@ class _EditProfilePageState extends State<EditProfilePage> {
     _say('Username copied', 1500);
   }
 
+  /// One save at a time. The admission is claimed before the first await
+  /// (the connectivity check), so a second tap during that check does not
+  /// start a second update (review R30), and it is released on every exit.
+  /// Editing closes only when the update answered; otherwise the draft stays.
   Future<void> _save() async {
     if (_saving) return;
-
-    final List<ConnectivityResult> link = await (widget.checkConnectivity ??
-        () => Connectivity().checkConnectivity())();
-    if (!mounted) return;
-    if (link.contains(ConnectivityResult.none)) {
-      _say('No Internet Connection!');
-      return;
-    }
-
-    final String name = _usernameController.text.trim().toLowerCase();
-    if (!_editing || name.isEmpty) {
-      _say('Please enter your username');
-      return;
-    }
-
     setState(() => _saving = true);
+    var answered = false;
     try {
-      final String? response = await (widget.updateUsername ??
-          (n) => _serve.updateUserInfo(username: n))(name);
+      final List<ConnectivityResult> link = await (widget.checkConnectivity ??
+          () => Connectivity().checkConnectivity())();
       if (!mounted) return;
-      _say(response.toString(), 1500);
-      await _loadUsername();
-    } catch (_) {
-      if (!mounted) return;
-      _say('Error occurred while updating user info');
+      if (link.contains(ConnectivityResult.none)) {
+        _say('No Internet Connection!');
+        return;
+      }
+
+      final String name = _usernameController.text.trim().toLowerCase();
+      if (!_editing || name.isEmpty) {
+        _say('Please enter your username');
+        return;
+      }
+
+      try {
+        final String? response = await (widget.updateUsername ??
+            (n) => _serve.updateUserInfo(username: n))(name);
+        if (!mounted) return;
+        answered = true;
+        _say(response.toString(), 1500);
+        await _loadUsername();
+      } catch (_) {
+        if (!mounted) return;
+        _say('Error occurred while updating user info');
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _saving = false;
+          if (answered) _editing = false;
+        });
+      }
     }
-    if (!mounted) return;
-    setState(() {
-      _saving = false;
-      _editing = false;
-    });
   }
 
   @override

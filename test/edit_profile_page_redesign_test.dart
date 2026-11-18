@@ -41,6 +41,8 @@ class _Account {
   Completer<String?>? updateGate;
   Object? updateError;
   List<ConnectivityResult> link = const [ConnectivityResult.wifi];
+  Completer<List<ConnectivityResult>>? linkGate;
+  int checks = 0;
 
   Future<String> load() async {
     loads++;
@@ -56,7 +58,11 @@ class _Account {
     return 'Username updated wait for refresh';
   }
 
-  Future<List<ConnectivityResult>> connectivity() async => link;
+  Future<List<ConnectivityResult>> connectivity() async {
+    checks++;
+    if (linkGate != null) return linkGate!.future;
+    return link;
+  }
 }
 
 Future<_Account> _open(
@@ -227,7 +233,9 @@ void main() {
       expect(a.updates, isEmpty);
     });
 
-    testWidgets('a failed save shows the existing error and ends editing',
+    // Review R30: an unsaved outcome keeps the draft (it used to end
+    // editing and drop the typed name). A later retry saves it.
+    testWidgets('a failed save shows the existing error and keeps the draft',
         (tester) async {
       final a = await _open(tester);
       a.updateError = StateError('server down');
@@ -239,7 +247,14 @@ void main() {
       expect(
           find.text('Error occurred while updating user info'), findsOneWidget);
       await tester.pumpAndSettle();
-      expect(_field, findsNothing);
+      expect(_field, findsOneWidget);
+      expect(
+          tester
+              .widget<EditableText>(find.descendant(
+                  of: _field, matching: find.byType(EditableText)))
+              .controller
+              .text,
+          'grace');
     });
 
     testWidgets('Copy puts the name (without @) on the clipboard',
@@ -262,6 +277,93 @@ void main() {
       expect(copied, 'ada');
       expect(find.text('Username copied'), findsOneWidget);
       await tester.pump(const Duration(seconds: 2));
+    });
+  });
+
+  // Review R30: the save admission covers the connectivity check.
+  group('save admission (R30)', () {
+    testWidgets('two taps during a slow connectivity check send one update',
+        (tester) async {
+      final a = await _open(tester);
+      a.linkGate = Completer<List<ConnectivityResult>>();
+      await _startEditing(tester);
+      await _type(tester, 'grace');
+      await tester.tap(_save);
+      await tester.pump();
+      await tester.tap(_save, warnIfMissed: false);
+      await tester.pump();
+      expect(a.checks, 1);
+      a.linkGate!.complete(const [ConnectivityResult.wifi]);
+      await tester.pumpAndSettle();
+      expect(a.updates, ['grace']);
+      expect(_field, findsNothing);
+    });
+
+    testWidgets('offline keeps the draft and a later retry saves once',
+        (tester) async {
+      final a = await _open(tester);
+      a.link = const [ConnectivityResult.none];
+      await _startEditing(tester);
+      await _type(tester, 'grace');
+      await tester.tap(_save);
+      await tester.pumpAndSettle();
+      expect(find.text('No Internet Connection!'), findsOneWidget);
+      expect(a.updates, isEmpty);
+      expect(_field, findsOneWidget);
+
+      a.link = const [ConnectivityResult.wifi];
+      // Let the message leave; it floats over the pinned Save button.
+      await tester.pump(const Duration(seconds: 4));
+      await tester.pumpAndSettle();
+      await tester.tap(_save);
+      await tester.pumpAndSettle();
+      expect(a.updates, ['grace']);
+    });
+
+    testWidgets('a failed update can be retried, one update per attempt',
+        (tester) async {
+      final a = await _open(tester);
+      a.updateError = StateError('server down');
+      await _startEditing(tester);
+      await _type(tester, 'grace');
+      await tester.tap(_save);
+      await tester.pumpAndSettle();
+      expect(a.updates, ['grace']);
+
+      a.updateError = null;
+      // Let the message leave; it floats over the pinned Save button.
+      await tester.pump(const Duration(seconds: 4));
+      await tester.pumpAndSettle();
+      await tester.tap(_save);
+      await tester.pumpAndSettle();
+      expect(a.updates, ['grace', 'grace']);
+      expect(_field, findsNothing);
+    });
+
+    testWidgets('leaving during the connectivity check sends nothing',
+        (tester) async {
+      final a = await _open(tester);
+      a.linkGate = Completer<List<ConnectivityResult>>();
+      await _startEditing(tester);
+      await _type(tester, 'grace');
+      await tester.tap(_save);
+      await tester.pump();
+      await tester.tap(find.byTooltip('Back'));
+      await tester.pumpAndSettle();
+      a.linkGate!.complete(const [ConnectivityResult.wifi]);
+      await tester.pumpAndSettle();
+      expect(a.updates, isEmpty);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a valid name is trimmed and lowercased, as before',
+        (tester) async {
+      final a = await _open(tester);
+      await _startEditing(tester);
+      await _type(tester, '  Grace  ');
+      await tester.tap(_save);
+      await tester.pumpAndSettle();
+      expect(a.updates, ['grace']);
     });
   });
 
