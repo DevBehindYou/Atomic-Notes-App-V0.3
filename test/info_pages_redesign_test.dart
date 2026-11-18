@@ -27,8 +27,8 @@ final List<String> _aboutBefore = [
   AppInfoText.copyright,
   'OVERVIEW',
   "Welcome to Atomic Notes. It keeps note-taking simple and keeps your data yours. Notes live on your device first and sync to the cloud only when you choose. There are no trackers, no ads, and no AI reading your notes.",
-  "Our Vision:\nCapturing your thoughts should be effortless and private. Turn on end-to-end encryption and every note is sealed with AES-256-GCM using a recovery phrase that never leaves your device, so only you can read them.",
-  "Key Features:\n**Offline First: Create, edit, and open your notes with no internet connection. Every change saves to your device instantly.\n\n**Optional End-to-End Encryption: Turn it on and your notes are sealed with AES-256-GCM before they leave your device. The recovery phrase never leaves your device, so the server only ever stores unreadable ciphertext.\n\n**No Tracking: No analytics, no crash reporters, no ad SDKs, and no third-party trackers.\n\n**No AI on Your Notes: Your notes are never sent to a model and never used as training data.\n\n**Your Cloud, Your Choice: Cloud sync is optional and fully under your control. Turn it off and your notes stay on this device only.",
+  "Our Vision:\nCapturing your thoughts should be effortless and private. Your notes are saved on your device. With cloud sync on, Atomic Notes uses its server to sync them with your Google Drive.",
+  "Key Features:\n**Offline First: Create, edit, and open your notes with no internet connection. Every change saves to your device instantly.\n\n**Optional End-to-End Encryption: With note encryption enabled, the app encrypts protected note content before upload. The sync service still handles account and file metadata. Keep your recovery phrase safe; you need it to unlock your encrypted notes.\n\n**No Tracking: No analytics, no crash reporters, no ad SDKs, and no third-party trackers.\n\n**No AI on Your Notes: Your notes are never sent to a model and never used as training data.\n\n**Your Cloud, Your Choice: Cloud sync is optional. Your Google Drive stores the synced note files. The Atomic Notes server processes sync requests and maintains account, sign-in, cloud-file metadata and Energy records. When encryption is off, readable note content passes through the server during sync. Turn sync off and your notes stay on this device; copies already in Google Drive aren't removed.",
   "Join Us on this Secure Journey:\nAt Atomic Notes, we invite you to join us on this secure journey of capturing thoughts, making ideas tangible, and staying organized with the utmost privacy. Your feedback is crucial in shaping the future of our Note App, so please reach out and share your thoughts.",
   "Thank you for choosing Atomic Notes as your secure note-taking companion. Let's create, capture, and organize securely together!",
   "**The operating system may still gather usage data.",
@@ -47,13 +47,13 @@ const List<String> _termsBefore = [
   "AGREEMENT TO OUR LEGAL TERMS",
   'Welcome to use Atomic Notes software and services! The software and services are provided by Atomic Notes Company Limited (hereinafter referred to as "we", "us", "our"). In order to use Atomic Notes software and services (hereinafter referred to as "the Software"), you should read and abide by the "Atomic Notes Terms of Use" (hereinafter referred to as "the Agreement") and the "Atomic Notes Privacy Policy". Please read carefully and fully understand the content of each clause, especially the clauses for exemption or limitation of liability, and the separate agreement for the use of a certain service, and choose to accept or not. Unless you have read and accepted all the terms of this agreement, you have no right to download, install or use this product and related services. Your download, installation, use, login and other actions shall be deemed to have read and agreed to the above agreement',
   "We operate the mobile application Atomic Notes (the 'App'), as well as any other related products and services that refer or link to these legal terms (the 'Legal Terms') (collectively, the 'Services').",
-  'Atomic Notes is a local-first note-taking app with optional cloud sync. Notes are saved on your device first and sync to the cloud only when you choose. You can turn on end-to-end encryption, which seals your notes with AES-256-GCM using a recovery phrase that never leaves your device, so only you can read them. The app works fully offline, and you control cloud sync with the cloud sync button. A note contains a title, a body, and a creation date and time. Notes appear in a grid view.',
+  'Atomic Notes is a local-first note-taking app with optional cloud sync. Notes are saved on your device first and sync to the cloud only when you choose. You can turn on note encryption, which encrypts protected note content on your device before upload; keep your recovery phrase safe, because you need it to unlock your encrypted notes. The app works fully offline, and you control cloud sync with the cloud sync button. A note contains a title, a body, and a creation date and time. Notes appear in a grid view.',
   "These Legal Terms constitute a legally binding agreement made between you, whether personally or on behalf of an entity ('you'), and Atomic Notes inc, concerning your access to and use of the Services. You agree that by accessing the Services, you have read, understood, and agreed to be bound by all of these Legal Terms. IF YOU DO NOT AGREE WITH ALL OF THESE LEGAL TERMS, THEN YOU ARE EXPRESSLY PROHIBITED FROM USING THE SERVICES AND YOU MUST DISCONTINUE USE IMMEDIATELY.",
   'The Services are intended for users who are at least 13 years of age. All users who are minors in the jurisdiction in which they reside (generally under the age of 18) must have the permission of, and be directly supervised by, their parent or guardian to use the Services. If you are a minor, you must have your parent or guardian read and agree to these Legal Terms prior to you using the Services.',
   '1. The scope of the Agreement',
   '**1.1 The scope of the Agreement This agreement is an agreement between you and us regarding your download, installation, use, copying of this software, and use of Atomic Notes related services.\n\n**1.2 This license agreement points to content The license content under this agreement refers to the Atomic Notes software license and services (hereinafter referred to as "the service") that we provide to users.The content of this agreement also includes relevant agreements and business rules that we may continue to publish on this service. Once the above content is officially released, it is an integral part of this agreement, and you should also abide by it.',
   'This Privacy Policy governs the collection, use, and protection of your information by our Note App with Cloud Sync. Please read this policy carefully to understand how we handle your data.',
-  '**1. Information Collected: - Your notes (their content), and the basic account information needed to sign in and sync: an email address and an authentication session. Note content is stored in your own Google Drive account, not on our servers. If you turn on end-to-end encryption, note content is stored only as ciphertext that neither Google Drive nor our servers can read.\n\n**2. Cloud Sync: - Cloud sync is optional. When it is on, your note content is stored in your own Google Drive account, and account/sync metadata (note list, timestamps, settings) is stored on our servers, scoped to your signed-in session so only your account can read or write it. When sync is off, your notes stay on your device.\n\n**3. Data Security: - Data is protected in transit by HTTPS. Note content at rest is protected by your own Google account\'s security, since it lives in your Drive; account metadata at rest is protected by session-scoped access control on our servers. With end-to-end encryption enabled, note content is additionally sealed with AES-256-GCM on your device before upload, and the recovery phrase and encryption key never leave your device.\n\n**4. No Analytics or Tracking: - The app contains no analytics, no crash reporters, no advertising SDKs, and no third-party trackers, and it sets no tracking cookies.\n\n**5. No Advertising: - The app does not display ads.\n\n**6. No AI Training: - Your notes are never sent to an AI model and are never used as training data.\n\n**7. Third-Party Services: - The app uses Google Sign-In for authentication and Google Drive to store your note content in your own Google account; account and sync metadata is stored on our own servers. Please review Google\'s privacy policy for details on how Sign-In and Drive handle data.\n\n**8. Your Controls: - You can enable or disable cloud sync at any time, disconnect your Google account, and delete your synced data from the app, so you choose where your notes are stored.\n\n**9. Updates: - This Privacy Policy may be updated to reflect changes in the app. Significant updates will be noted here.\n\n**10. Contact: - For questions about this Privacy Policy, contact devbehindyou@gmail.com.',
+  '**1. Information Collected: - Your notes (their content), and the basic account information needed to sign in and sync: an email address and an authentication session. Synced note files are stored in your own Google Drive account. Our server processes sync requests; when encryption is off, readable note content passes through it during sync. With note encryption enabled, protected note content is encrypted on your device before upload, and the sync service still handles account and file metadata.\n\n**2. Cloud Sync: - Cloud sync is optional. When it is on, your note content is stored in your own Google Drive account, and account/sync metadata (note list, timestamps, settings) is stored on our servers, scoped to your signed-in session so only your account can read or write it. When sync is off, your notes stay on your device, and copies already in your Google Drive aren\'t removed.\n\n**3. Data Security: - Data is protected in transit by HTTPS. Note content at rest is protected by your own Google account\'s security, since it lives in your Drive; account metadata at rest is protected by session-scoped access control on our servers. With note encryption enabled, protected note content is additionally encrypted on your device before upload.\n\n**4. No Analytics or Tracking: - The app contains no analytics, no crash reporters, no advertising SDKs, and no third-party trackers, and it sets no tracking cookies.\n\n**5. No Advertising: - The app does not display ads.\n\n**6. No AI Training: - Your notes are never sent to an AI model and are never used as training data.\n\n**7. Third-Party Services: - The app uses Google Sign-In for authentication and Google Drive to store your note content in your own Google account; account and sync metadata is stored on our own servers. Please review Google\'s privacy policy for details on how Sign-In and Drive handle data.\n\n**8. Your Controls: - You can enable or disable cloud sync at any time, disconnect your Google account, and delete your synced data from the app, so you choose where your notes are stored.\n\n**9. Updates: - This Privacy Policy may be updated to reflect changes in the app. Significant updates will be noted here.\n\n**10. Contact: - For questions about this Privacy Policy, contact devbehindyou@gmail.com.',
   'Effective Date: 14-08-2026',
   'Thank you for trusting our Atomic Notes App with Cloud Sync. We prioritize the security and privacy of your data to provide you with a seamless note-taking experience.',
 ];
@@ -158,6 +158,56 @@ void main() {
     expect(
         _words('**1. Grant of License: - Atomic'), '1 grant of license atomic');
     expect(_words('Our Vision:\nCapturing'), _words('Our Vision Capturing'));
+  });
+
+  // Review R27: the privacy copy follows the copy proposal on the visible
+  // surfaces, and the old blanket promises are gone.
+  group('privacy copy (R27)', () {
+    const gone = [
+      'sealed with AES-256-GCM',
+      'unreadable ciphertext',
+      'stay on this device only',
+      'only you can read them',
+      'neither Google Drive nor our servers can read',
+    ];
+    String visible(WidgetTester tester) => tester
+        .widgetList<Text>(find.byType(Text))
+        .map((t) => t.data ?? t.textSpan?.toPlainText() ?? '')
+        .join('\n');
+
+    testWidgets(
+        'App info explains Drive storage, server processing and sync off',
+        (tester) async {
+      await _pump(tester, const AppInfo(), height: 20000);
+      final text = visible(tester);
+      for (final phrase in gone) {
+        expect(text.contains(phrase), isFalse, reason: phrase);
+      }
+      expect(text, contains('Your Google Drive stores the synced note files.'));
+      expect(
+          text,
+          contains(
+              'readable note content passes through the server during sync'));
+      expect(text, contains('encrypts protected note content before upload'));
+      expect(text, contains("copies already in Google Drive aren't removed"));
+    });
+
+    testWidgets('Terms describe the same storage and processing',
+        (tester) async {
+      await _pump(tester, const TCPage(), height: 20000);
+      final text = visible(tester);
+      for (final phrase in gone) {
+        expect(text.contains(phrase), isFalse, reason: phrase);
+      }
+      expect(
+          text,
+          contains(
+              'Synced note files are stored in your own Google Drive account.'));
+      expect(text,
+          contains('readable note content passes through it during sync'));
+      expect(
+          text, contains("copies already in your Google Drive aren't removed"));
+    });
   });
 
   group('App info', () {

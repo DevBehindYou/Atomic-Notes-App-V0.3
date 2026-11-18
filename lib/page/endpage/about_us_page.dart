@@ -38,14 +38,14 @@ const String _intro =
     "Welcome to Atomic Notes. It keeps note-taking simple and keeps your data yours. Notes live on your device first and sync to the cloud only when you choose. There are no trackers, no ads, and no AI reading your notes.";
 
 const String _vision =
-    "Capturing your thoughts should be effortless and private. Turn on end-to-end encryption and every note is sealed with AES-256-GCM using a recovery phrase that never leaves your device, so only you can read them.";
+    "Capturing your thoughts should be effortless and private. Your notes are saved on your device. With cloud sync on, Atomic Notes uses its server to sync them with your Google Drive.";
 
 const List<_Clause> _features = [
   _Clause('Offline First', [
     "Create, edit, and open your notes with no internet connection. Every change saves to your device instantly.",
   ]),
   _Clause('Optional End-to-End Encryption', [
-    "Turn it on and your notes are sealed with AES-256-GCM before they leave your device. The recovery phrase never leaves your device, so the server only ever stores unreadable ciphertext.",
+    "With note encryption enabled, the app encrypts protected note content before upload. The sync service still handles account and file metadata. Keep your recovery phrase safe; you need it to unlock your encrypted notes.",
   ]),
   _Clause('No Tracking', [
     "No analytics, no crash reporters, no ad SDKs, and no third-party trackers.",
@@ -54,7 +54,7 @@ const List<_Clause> _features = [
     "Your notes are never sent to a model and never used as training data.",
   ]),
   _Clause('Your Cloud, Your Choice', [
-    "Cloud sync is optional and fully under your control. Turn it off and your notes stay on this device only.",
+    "Cloud sync is optional. Your Google Drive stores the synced note files. The Atomic Notes server processes sync requests and maintains account, sign-in, cloud-file metadata and Energy records. When encryption is off, readable note content passes through the server during sync. Turn sync off and your notes stay on this device; copies already in Google Drive aren't removed.",
   ]),
 ];
 
