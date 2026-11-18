@@ -20,17 +20,53 @@ import 'support/fake_notes_source.dart';
 
 final DateTime _now = DateTime(2026, 11, 17, 12);
 
+/// A deleted note. By default its deletion has reached the cloud (it was
+/// uploaded, version 4, and has nothing left to send).
 Note _binned(String id,
     {String title = '',
     String body = '',
     NoteKind kind = NoteKind.text,
     List<TodoItem>? items,
+    int serverVersion = 4,
+    bool dirty = false,
     required DateTime deletedAt}) {
   final n = syncedNote(id, title: title, body: body, kind: kind, items: items)
-    ..deleted = true;
+    ..deleted = true
+    ..serverVersion = serverVersion
+    ..dirty = dirty;
   n.updatedAt = deletedAt;
   return n;
 }
+
+/// Never uploaded: no cloud copy exists.
+Note _localOnly(String id, {String title = '', required DateTime deletedAt}) =>
+    _binned(id, title: title, serverVersion: 0, deletedAt: deletedAt);
+
+/// Uploaded before, and its deletion still has to reach the cloud.
+Note _pending(String id, {String title = '', required DateTime deletedAt}) =>
+    _binned(id, title: title, dirty: true, deletedAt: deletedAt);
+
+/// One note of each kind, newest deletion first: pending, local-only, synced.
+FakeNotesSource _mixed() => FakeNotesSource(notes: [
+      syncedNote('live', title: 'Still here'),
+      _binned('synced', title: 'Old receipt', deletedAt: DateTime(2026, 11, 1)),
+      _localOnly('local',
+          title: 'Only on this device', deletedAt: DateTime(2026, 11, 5)),
+      _pending('pending',
+          title: 'Unsent delete', deletedAt: DateTime(2026, 11, 9)),
+    ]);
+
+const String _localBody = 'This note never synced, so it has no cloud copy. '
+    'It is removed from this device and cannot be recovered.';
+const String _syncedBody = 'It is removed from this device. Its deletion has '
+    'already synced, so its cloud file was moved to Google Drive trash, which '
+    'Google Drive manages.';
+const String _pendingBody = 'Its deletion has not reached the cloud yet. It '
+    'syncs first, and only then is the note removed from this device. Without '
+    'Cloud Sync, or if the sync fails, it stays in the Recycle Bin.';
+
+Finder _dialogDelete() => find.descendant(
+    of: find.byType(AtomicDialog<bool>), matching: find.text('Delete forever'));
 
 FakeNotesSource _withBin({int extra = 0}) => FakeNotesSource(notes: [
       syncedNote('live', title: 'Still here'),
@@ -201,10 +237,7 @@ void main() {
 
       expect(find.byType(AtomicDialog<bool>), findsOneWidget);
       expect(find.text('Delete "Trip plan" for good?'), findsOneWidget);
-      expect(
-          find.text('It is removed from this device. Its cloud copy stays in '
-              'your Google Drive trash until Drive empties it.'),
-          findsOneWidget);
+      expect(find.text(_syncedBody), findsOneWidget);
       final dialog =
           tester.widget<AtomicDialog<bool>>(find.byType(AtomicDialog<bool>));
       expect(dialog.destructive, isTrue);
@@ -330,6 +363,285 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(SlideToConfirm), findsNothing);
       expect(find.byType(EmptyState), findsOneWidget);
+    });
+  });
+
+  group('cloud copy', () {
+    test('each note says where its cloud copy stands', () {
+      final at = DateTime(2026, 11, 1);
+      expect(RecycleBinPage.cloudState(_localOnly('a', deletedAt: at)),
+          BinCloudState.localOnly);
+      expect(RecycleBinPage.cloudState(_binned('b', deletedAt: at)),
+          BinCloudState.synced);
+      expect(RecycleBinPage.cloudState(_pending('c', deletedAt: at)),
+          BinCloudState.pendingDeletion);
+      // A never-confirmed upload may still have reached the cloud: the page
+      // cannot tell, so it promises nothing local-only about it.
+      expect(
+          RecycleBinPage.cloudState(
+              _binned('d', serverVersion: 0, dirty: true, deletedAt: at)),
+          BinCloudState.pendingDeletion);
+    });
+
+    test('Empty bin counts each kind and words plurals', () {
+      final at = DateTime(2026, 11, 1);
+      final notes = [
+        _localOnly('l1', deletedAt: at),
+        _localOnly('l2', deletedAt: at),
+        _binned('s1', deletedAt: at),
+        _binned('s2', deletedAt: at),
+        _pending('p1', deletedAt: at),
+        _pending('p2', deletedAt: at),
+      ];
+      expect(RecycleBinPage.emptyBinConsequences(notes), [
+        '6 deleted notes are removed from this device for good.',
+        '2 never synced, so they have no cloud copy.',
+        '2 deletions have already synced, so the cloud files of those notes '
+            'were moved to Google Drive trash, which Google Drive manages.',
+      ]);
+      expect(
+          RecycleBinPage.emptyBinWarning(notes),
+          '2 deletions have not reached the cloud yet. They sync first. '
+          'Without Cloud Sync, or if the sync fails, nothing is removed and '
+          'the bin stays as it is.');
+
+      // Only local-only notes: nothing about Drive, and no warning.
+      final local = [_localOnly('l1', deletedAt: at)];
+      expect(RecycleBinPage.emptyBinConsequences(local), [
+        '1 deleted note is removed from this device for good.',
+        '1 never synced, so it has no cloud copy.',
+      ]);
+      expect(RecycleBinPage.emptyBinWarning(local), isNull);
+    });
+
+    testWidgets('the explanation promises no Drive copy for every note',
+        (tester) async {
+      await _pump(tester, _mixed());
+
+      expect(
+          find.text('Deleted notes wait here. Restore one to put it back, or '
+              'delete it for good to remove it from this device. A deletion '
+              'that has not reached the cloud yet syncs first, and a synced '
+              'deletion moves the cloud file to Google Drive trash. Notes '
+              'that never synced have no cloud copy.'),
+          findsOneWidget);
+      expect(find.textContaining('cloud copies sit in'), findsNothing);
+    });
+
+    testWidgets('a local-only note is removed locally, with no Drive promise',
+        (tester) async {
+      final source = _mixed();
+      await _pump(tester, source);
+
+      await tester.tap(_button('local', 'Delete forever'));
+      await tester.pumpAndSettle();
+      expect(
+          find.text('Delete "Only on this device" for good?'), findsOneWidget);
+      expect(find.text(_localBody), findsOneWidget);
+      expect(
+          find.descendant(
+              of: find.byType(AtomicDialog<bool>),
+              matching: find.textContaining('Drive')),
+          findsNothing);
+
+      await tester.tap(_dialogDelete());
+      await tester.pumpAndSettle();
+      expect(source.byId('local'), isNull);
+      expect(source.byId('pending'), isNotNull);
+      expect(source.byId('synced'), isNotNull);
+      expect(find.text('Deleted for good'), findsOneWidget);
+      await _settleSnackBar(tester);
+    });
+
+    testWidgets('a pending deletion says it must sync first, and stays if not',
+        (tester) async {
+      final source = _mixed()..deleteForeverWorks = false;
+      await _pump(tester, source);
+
+      await tester.tap(_button('pending', 'Delete forever'));
+      await tester.pumpAndSettle();
+      expect(find.text('Delete "Unsent delete" for good?'), findsOneWidget);
+      expect(find.text(_pendingBody), findsOneWidget);
+
+      await tester.tap(_dialogDelete());
+      await tester.pumpAndSettle();
+      expect(source.byId('pending'), isNotNull);
+      expect(find.text('Unsent delete'), findsOneWidget);
+      expect(
+          find.text('Could not delete yet. Turn on Cloud Sync and sync first.'),
+          findsOneWidget);
+      await _settleSnackBar(tester);
+
+      // With an automatic sync coming, the store's answer says when.
+      source.nextAutoSyncAt = DateTime.now().add(const Duration(minutes: 5));
+      await tester.tap(_button('pending', 'Delete forever'));
+      await tester.pumpAndSettle();
+      await tester.tap(_dialogDelete());
+      await tester.pumpAndSettle();
+      expect(source.byId('pending'), isNotNull);
+      expect(
+          find.textContaining('This deletion has not reached the cloud yet.'),
+          findsOneWidget);
+      await _settleSnackBar(tester);
+    });
+
+    testWidgets('a pending deletion that syncs is then removed',
+        (tester) async {
+      final source = _mixed();
+      await _pump(tester, source);
+
+      await tester.tap(_button('pending', 'Delete forever'));
+      await tester.pumpAndSettle();
+      await tester.tap(_dialogDelete());
+      await tester.pumpAndSettle();
+      expect(source.byId('pending'), isNull);
+      expect(find.text('Deleted for good'), findsOneWidget);
+      await _settleSnackBar(tester);
+    });
+
+    testWidgets('Cancel keeps a pending deletion', (tester) async {
+      final source = _mixed();
+      await _pump(tester, source);
+
+      await tester.tap(_button('pending', 'Delete forever'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(find.byType(AtomicDialog<bool>), findsNothing);
+      expect(source.byId('pending'), isNotNull);
+      expect(source.binNotes, hasLength(3));
+    });
+
+    testWidgets('Empty bin on a mixed bin says what happens to each kind',
+        (tester) async {
+      final source = _mixed()..deleteForeverWorks = false;
+      await _pump(tester, source);
+
+      await tester.tap(find.byTooltip('More options'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Empty bin'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(SlideToConfirm), findsOneWidget);
+      expect(
+          find.text('3 deleted notes are removed from this device for good.'),
+          findsOneWidget);
+      expect(find.text('1 never synced, so it has no cloud copy.'),
+          findsOneWidget);
+      expect(
+          find.text('1 deletion has already synced, so the cloud file of that '
+              'note was moved to Google Drive trash, which Google Drive '
+              'manages.'),
+          findsOneWidget);
+      expect(find.text('NOT UPLOADED'), findsOneWidget);
+      expect(
+          find.text('1 deletion has not reached the cloud yet. It syncs '
+              'first. Without Cloud Sync, or if the sync fails, nothing is '
+              'removed and the bin stays as it is.'),
+          findsOneWidget);
+      expect(find.textContaining('Their cloud copies'), findsNothing);
+
+      // The pending deletion cannot sync: nothing is removed.
+      await tester.drag(
+          find.byKey(SlideToConfirm.thumbKey), const Offset(600, 0));
+      await tester.pumpAndSettle();
+      expect(source.binNotes, hasLength(3));
+      expect(
+          find.text('Could not delete yet. Turn on Cloud Sync and sync first.'),
+          findsOneWidget);
+      await _settleSnackBar(tester);
+    });
+
+    testWidgets('Cancel on Empty bin removes nothing', (tester) async {
+      final source = _mixed();
+      await _pump(tester, source);
+
+      await tester.tap(find.byTooltip('More options'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Empty bin'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('CANCEL'));
+      await tester.pumpAndSettle();
+      expect(find.byType(SlideToConfirm), findsNothing);
+      expect(source.binNotes, hasLength(3));
+      expect(find.text('Recycle Bin emptied'), findsNothing);
+    });
+
+    testWidgets('a bin of local-only notes empties with no Drive promise',
+        (tester) async {
+      final source = FakeNotesSource(notes: [
+        _localOnly('a', title: 'Draft A', deletedAt: DateTime(2026, 11, 2)),
+        _localOnly('b', title: 'Draft B', deletedAt: DateTime(2026, 11, 3)),
+      ]);
+      await _pump(tester, source);
+
+      await tester.tap(find.byTooltip('More options'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Empty bin'));
+      await tester.pumpAndSettle();
+      expect(
+          find.text('2 deleted notes are removed from this device for good.'),
+          findsOneWidget);
+      expect(find.text('2 never synced, so they have no cloud copy.'),
+          findsOneWidget);
+      expect(find.text('NOT UPLOADED'), findsNothing);
+      expect(
+          find.descendant(
+              of: find.byType(Dialog), matching: find.textContaining('Drive')),
+          findsNothing);
+
+      await tester.drag(
+          find.byKey(SlideToConfirm.thumbKey), const Offset(600, 0));
+      await tester.pumpAndSettle();
+      expect(source.binNotes, isEmpty);
+      expect(find.text('Recycle Bin emptied'), findsOneWidget);
+      await _settleSnackBar(tester);
+    });
+
+    testWidgets('a local-only note restores, and is refused at the limit',
+        (tester) async {
+      final source = _mixed();
+      await _pump(tester, source);
+
+      source.limit = 1; // the live note fills it
+      await tester.tap(_button('local', 'Restore'));
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('Note limit reached (1). Delete a note to make room.'),
+          findsOneWidget);
+      expect(source.byId('local')!.deleted, isTrue);
+      await _settleSnackBar(tester);
+
+      source.limit = 30;
+      await tester.tap(_button('local', 'Restore'));
+      // The refusal's message makes way for the next one.
+      await tester.pumpAndSettle();
+      expect(find.text('Note restored'), findsOneWidget);
+      expect(source.byId('local')!.deleted, isFalse);
+      expect(find.text('Only on this device'), findsNothing);
+      await _settleSnackBar(tester);
+    });
+
+    testWidgets('the cloud-copy dialogs fit 320 dp at 2.0 text',
+        (tester) async {
+      await _pump(tester, _mixed(), width: 320, height: 640, textScale: 2);
+
+      // The long explanation pushes the first card below the fold.
+      await tester.scrollUntilVisible(_button('pending', 'Delete forever'), 200,
+          scrollable: find.byType(Scrollable).first);
+      await tester.pumpAndSettle();
+      await tester.tap(_button('pending', 'Delete forever'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('More options'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Empty bin'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.text('NOT UPLOADED'), findsOneWidget);
     });
   });
 
