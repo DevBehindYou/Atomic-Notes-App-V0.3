@@ -297,6 +297,13 @@ void main() {
           ),
         );
         await tester.pump();
+        // The title row that used to be the shell's app bar is now part of
+        // Home. Keep the same 700 dp below it that this page had before.
+        final bar =
+            tester.getSize(find.byKey(const ValueKey('home-top-bar'))).height;
+        final viewHeight = 700 + bar;
+        tester.view.physicalSize = Size(960, viewHeight * 3);
+        await tester.pump();
         final welcome = find.byKey(const ValueKey('notes-welcome-section'));
         final usage = find.text('123 / 200 · 123 UNSYNCED');
         final usageText = tester.widget<Text>(usage);
@@ -326,7 +333,7 @@ void main() {
               findsOneWidget);
           final card = tester.getRect(find.byType(NotesBulder).first);
           expect(
-            card.intersect(const Rect.fromLTWH(0, 0, 320, 700)).height,
+            card.intersect(Rect.fromLTWH(0, 0, 320, viewHeight)).height,
             greaterThan(0),
           );
           expect(find.text('NEW NOTE').hitTestable(), findsOneWidget);
@@ -626,6 +633,10 @@ void main() {
     testWidgets('keyboard resizing keeps the search editor and input focus',
         (tester) async {
       await _open(tester, _source());
+      // The 64 dp title row used to be the shell's app bar; keep the same
+      // 900 dp for the rest of the page.
+      tester.view.physicalSize = const Size(1290, 2700 + 64 * 3);
+      await tester.pump();
       await tester.tap(find.byType(TextField));
       await tester.pump();
       final editor = tester.state<EditableTextState>(find.byType(EditableText));
