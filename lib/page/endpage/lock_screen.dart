@@ -2,18 +2,38 @@
 
 import 'package:atomic_notes/security/two_factor.dart';
 import 'package:atomic_notes/security/vault.dart';
-import 'package:atomic_notes/theme/app_tokens.dart';
-import 'package:atomic_notes/theme/editorial.dart';
-import 'package:atomic_notes/utility/component/logo_container.dart';
-import 'package:atomic_notes/utility/component/my_snackbar.dart';
+import 'package:atomic_notes/theme/atomic_colors.dart';
+import 'package:atomic_notes/theme/atomic_icons.dart';
+import 'package:atomic_notes/theme/atomic_tokens.dart';
+import 'package:atomic_notes/theme/atomic_type.dart';
+import 'package:atomic_notes/ui/buttons/atomic_button.dart';
+import 'package:atomic_notes/ui/motion/entrance.dart';
+import 'package:atomic_notes/ui/overlays/atomic_snack_bar.dart';
 import 'package:atomic_notes/utility/splash_route_resolver.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_svg/svg.dart';
 import 'package:local_auth/local_auth.dart';
 
+/// The device lock (screens spec, Lock screen): a fingerprint circle, the
+/// title, the instruction and one Unlock button. It prompts on its own one
+/// second after it opens; success continues the splash gate order.
 class LockScreen extends StatefulWidget {
-  const LockScreen({super.key});
+  const LockScreen({super.key, this.localAuth});
+
+  /// The device authenticator. Null uses the platform's, as the app does;
+  /// tests pass a fake.
+  final LocalAuthentication? localAuth;
+
+  static const String title = 'This device is locked';
+  static const String instruction = 'Unlock with your fingerprint or device '
+      'credential to open your notes.';
+  static const String unlockLabel = 'Unlock';
+  static const String busyLabel = 'Authenticating…';
+
+  /// Shown instead of the platform's raw error text (CA18).
+  static const String failedMessage =
+      'That did not work. Try again, or use your phone PIN.';
 
   @override
   State<LockScreen> createState() => _LockScreenState();
@@ -28,7 +48,7 @@ class _LockScreenState extends State<LockScreen> {
 
   @override
   void initState() {
-    auth = LocalAuthentication();
+    auth = widget.localAuth ?? LocalAuthentication();
     auth.isDeviceSupported().then(
       (bool isSupported) {
         if (!mounted) return;
@@ -87,10 +107,13 @@ class _LockScreenState extends State<LockScreen> {
       }
     } on PlatformException catch (e) {
       if (!_mounted) return;
-      MySnackBar(
-        text: e.toString(),
-        sec: 1000,
-      ).showMySnackBar(context);
+      // The platform's text stays in debug logs only; people see plain copy.
+      if (kDebugMode) debugPrint('LockScreen: $e');
+      const AtomicSnackBar(
+        text: LockScreen.failedMessage,
+        millis: 4000,
+        error: true,
+      ).show(context);
     } finally {
       if (_mounted) {
         setState(() {
@@ -102,88 +125,114 @@ class _LockScreenState extends State<LockScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.colors;
+    final margin = AtomicSpace.screenMargin(MediaQuery.sizeOf(context).width);
     return Scaffold(
-      backgroundColor: AppColors.paper,
+      backgroundColor: c.canvas,
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(AppSpace.screenMargin),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Spacer(flex: 2),
-              const LogoContainer(showTagline: false),
-              const Spacer(flex: 2),
-              const MonoLabel('LOCKED', color: AppColors.signal),
-              const SizedBox(height: AppSpace.sm),
-              const HairRule(color: AppColors.ink),
-              const SizedBox(height: AppSpace.lg),
-              const EditorialHeading(
-                'This device is\nlocked.',
-                style: AppType.displayLg,
-              ),
-              const SizedBox(height: AppSpace.sm),
-              Text(
-                'Unlock with your fingerprint or device credential to open '
-                'your notes.',
-                style: AppType.bodyMd.copyWith(color: AppColors.slateData),
-              ),
-              const SizedBox(height: AppSpace.xl),
-              // Tap target is the whole action block — an Ink slab with a
-              // Paper glyph, rather than a floating coloured square.
-              GestureDetector(
-                onTap: _isLoading ? null : _auth,
-                behavior: HitTestBehavior.opaque,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                      vertical: AppSpace.lg, horizontal: AppSpace.md),
-                  decoration: const BoxDecoration(
-                    color: AppColors.ink,
-                    borderRadius: AppRadius.std,
-                    boxShadow: [
-                      BoxShadow(
-                        color: AppColors.signal,
-                        offset: Offset(AppStroke.offset, AppStroke.offset),
-                        blurRadius: 0,
-                      ),
-                    ],
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      if (_isLoading)
-                        const SizedBox(
-                          height: 22,
-                          width: 22,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            valueColor:
-                                AlwaysStoppedAnimation<Color>(AppColors.paper),
-                          ),
-                        )
-                      else if (_supportState)
-                        const Icon(Icons.fingerprint_rounded,
-                            color: AppColors.paper, size: 26)
-                      else
-                        SizedBox(
-                          height: 22,
-                          width: 22,
-                          child: SvgPicture.asset(
-                            'assets/dots.svg',
-                            colorFilter: const ColorFilter.mode(
-                                AppColors.paper, BlendMode.srcIn),
+        child: EntranceGroup(
+          child: LayoutBuilder(
+            builder: (context, constraints) => SingleChildScrollView(
+              padding: EdgeInsets.symmetric(
+                  horizontal: margin, vertical: AtomicSpace.x8),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  minHeight: (constraints.maxHeight - 2 * AtomicSpace.x8)
+                      .clamp(0, double.infinity),
+                ),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 420),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Entrance(
+                          index: 0,
+                          child: _LockBadge(supported: _supportState),
+                        ),
+                        const SizedBox(height: AtomicSpace.x6),
+                        Entrance(
+                          index: 1,
+                          child: Semantics(
+                            header: true,
+                            child: Text(
+                              LockScreen.title,
+                              textAlign: TextAlign.center,
+                              style: AtomicType.headlineLarge
+                                  .copyWith(color: c.textPrimary),
+                            ),
                           ),
                         ),
-                      const SizedBox(width: AppSpace.md - 4),
-                      Text(
-                        _isLoading ? 'AUTHENTICATING…' : 'UNLOCK',
-                        style: AppType.cta.copyWith(color: AppColors.paper),
-                      ),
-                    ],
+                        const SizedBox(height: AtomicSpace.x3),
+                        Entrance(
+                          index: 2,
+                          child: Text(
+                            LockScreen.instruction,
+                            textAlign: TextAlign.center,
+                            style: AtomicType.bodyLarge
+                                .copyWith(color: c.textSecondary),
+                          ),
+                        ),
+                        const SizedBox(height: AtomicSpace.x8),
+                        Entrance(
+                          index: 3,
+                          child: AtomicButton.primary(
+                            key: const ValueKey('lock-unlock'),
+                            label: _isLoading
+                                ? LockScreen.busyLabel
+                                : LockScreen.unlockLabel,
+                            // While busy the button keeps its accent face
+                            // with a spinner and ignores taps, as the old
+                            // `_isLoading ? null : _auth` did.
+                            busy: _isLoading,
+                            onPressed: _auth,
+                            size: AtomicButtonSize.large,
+                            expand: true,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
-              const Spacer(flex: 3),
-            ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The 96 dp accent circle. It shows a fingerprint once the device says it
+/// can check one, and a lock until then or when it cannot. Decorative: the
+/// title and the button carry the meaning.
+class _LockBadge extends StatelessWidget {
+  const _LockBadge({required this.supported});
+
+  final bool supported;
+
+  static const double size = 96;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return ExcludeSemantics(
+      child: Center(
+        child: Container(
+          key: const ValueKey('lock-badge'),
+          width: size,
+          height: size,
+          decoration: BoxDecoration(color: c.accent, shape: BoxShape.circle),
+          alignment: Alignment.center,
+          child: AnimatedSwitcher(
+            duration: AtomicMotion.fade(context, AtomicMotion.standard),
+            child: Icon(
+              supported ? AtomicIcons.fingerprint : AtomicIcons.lock,
+              key: ValueKey(supported),
+              size: 44,
+              color: c.onAccent,
+            ),
           ),
         ),
       ),
