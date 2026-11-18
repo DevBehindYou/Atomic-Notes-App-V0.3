@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:atomic_notes/api/atomic_notes_api.dart';
 import 'package:atomic_notes/api/user_sessions.dart';
 import 'package:atomic_notes/page/endpage/user_sessions_page.dart';
+import 'package:atomic_notes/ui/overlays/atomic_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -130,10 +131,24 @@ void main() {
     stage('tap_done');
   }
 
+  // The shared dialog's actions carry no keys; the label is scoped to the
+  // dialog because each other sign-in's card also says "End sign-in".
+  Future<void> tapDialog(WidgetTester tester, String label) async {
+    stage('dialog_tap');
+    await tester.tap(
+      find.descendant(
+        of: find.byType(AtomicDialog<bool>),
+        matching: find.text(label),
+      ),
+    );
+    await tester.pump();
+    stage('dialog_done');
+  }
+
   Future<void> confirm(WidgetTester tester) async {
     await tap(tester, 'end-$otherHandle');
     await tester.pump(const Duration(milliseconds: 250));
-    await tap(tester, 'confirm-session-revoke');
+    await tapDialog(tester, 'End sign-in');
     await tester.pump(const Duration(milliseconds: 250));
     await tester.pump();
   }
@@ -200,7 +215,7 @@ void main() {
     (tester) async {
       await show(tester, width: 375, scale: 2);
       stage('render_current');
-      expect(find.text('THIS SIGN-IN'), findsOneWidget);
+      expect(find.text('This sign-in'), findsOneWidget);
       stage('render_deadline');
       expect(
         find.textContaining('Older sign-ins can have earlier deadlines'),
@@ -240,7 +255,7 @@ void main() {
       expect(find.textContaining('Could not load or update'), findsOneWidget);
       await tap(tester, 'retry-sessions');
       await tester.pump();
-      expect(find.text('THIS SIGN-IN'), findsOneWidget);
+      expect(find.text('This sign-in'), findsOneWidget);
       expect(api.isSignedIn, isTrue);
       expect(reads, 2);
     },
@@ -262,7 +277,7 @@ void main() {
     await tap(tester, 'end-$otherHandle');
     await tester.pump(const Duration(milliseconds: 250));
     expect(find.textContaining('Unsynced notes remain'), findsOneWidget);
-    await tap(tester, 'cancel-session-revoke');
+    await tapDialog(tester, 'Cancel');
     await tester.pump(const Duration(milliseconds: 250));
     expect(requests.where((request) => request.method == 'POST'), isEmpty);
   });
@@ -356,7 +371,7 @@ void main() {
         held.complete(response(inventory()));
         await tester.pump();
         await tester.pump();
-        expect(find.text('THIS SIGN-IN'), findsNothing);
+        expect(find.text('This sign-in'), findsNothing);
         expect(find.textContaining('Your sign-in changed'), findsOneWidget);
         expect(api.currentUserId, sameOwner ? 'user-a' : 'user-b');
       },
@@ -392,7 +407,7 @@ void main() {
       await tester.pump();
       expect(api.currentUserId, 'user-b');
       expect(api.isSignedIn, isTrue);
-      expect(find.text('THIS SIGN-IN'), findsNothing);
+      expect(find.text('This sign-in'), findsNothing);
       expect(
         requests.where((request) => request.method == 'GET'),
         hasLength(1),
@@ -407,10 +422,10 @@ void main() {
       await tap(tester, 'end-$otherHandle');
       await tester.pump(const Duration(milliseconds: 250));
       await newerSession();
-      await tap(tester, 'confirm-session-revoke');
+      await tapDialog(tester, 'End sign-in');
       await tester.pump(const Duration(milliseconds: 250));
       expect(requests.where((request) => request.method == 'POST'), isEmpty);
-      expect(find.text('THIS SIGN-IN'), findsNothing);
+      expect(find.text('This sign-in'), findsNothing);
     },
   );
   caseTest(
