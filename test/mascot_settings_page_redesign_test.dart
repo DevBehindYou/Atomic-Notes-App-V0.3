@@ -469,6 +469,83 @@ void main() {
       await leave(tester);
     });
 
+    // At 320 dp and 2.0 text the list drops the hero once it is far away,
+    // and rebuilds it when a jump brings it back.
+    final heroBuilt = find.byWidgetPredicate(
+        (w) => w is MascotView && w.interactive,
+        skipOffstage: false);
+    ScrollPosition list(WidgetTester tester) =>
+        tester.state<ScrollableState>(find.byType(Scrollable).first).position;
+
+    testWidgets('jumping back from beyond the list cache, the mascot plays',
+        (tester) async {
+      await pump(tester, width: 320, height: 640, textScale: 2);
+      // Twice: the second return needs the first one's measurement done.
+      for (var round = 0; round < 2; round++) {
+        list(tester).jumpTo(list(tester).maxScrollExtent);
+        await _settle(tester);
+        expect(heroBuilt, findsNothing, reason: 'round $round: dropped');
+        final reads = frames.reads;
+        await tester.pump(const Duration(seconds: 2));
+        expect(frames.reads, reads, reason: 'round $round: nothing plays');
+        expect(frames.openSessions, 0);
+
+        list(tester).jumpTo(0);
+        await _settle(tester);
+        expect(heroBuilt, findsOneWidget);
+        expect(frames.reads, greaterThan(reads),
+            reason: 'round $round: back in view it plays');
+      }
+      await leave(tester);
+    });
+
+    testWidgets('rebuilt off screen in the list cache, the mascot stays paused',
+        (tester) async {
+      await pump(tester, width: 320, height: 640, textScale: 2);
+      final card = find
+          .ancestor(
+              of: heroBuilt,
+              matching: find.byType(AtomicCard, skipOffstage: false))
+          .first;
+      final listTop = tester.getTopLeft(find.byType(ListView)).dy;
+      final away = tester.getRect(card).bottom - listTop + AtomicSpace.x5;
+      list(tester).jumpTo(list(tester).maxScrollExtent);
+      await _settle(tester);
+      expect(heroBuilt, findsNothing);
+
+      list(tester).jumpTo(away);
+      await _settle(tester);
+      expect(heroBuilt, findsOneWidget, reason: 'built again in the cache');
+      expect(tester.getRect(card).bottom, lessThan(listTop));
+      final reads = frames.reads;
+      await tester.pump(const Duration(seconds: 2));
+      expect(frames.reads, reads, reason: 'off screen it stays paused');
+      expect(frames.openSessions, 0);
+
+      list(tester).jumpTo(0);
+      await _settle(tester);
+      expect(frames.reads, greaterThan(reads));
+      await leave(tester);
+    });
+
+    testWidgets('reduced motion: a rebuilt mascot stays still', (tester) async {
+      await pump(tester,
+          width: 320, height: 640, textScale: 2, disableAnimations: true);
+      list(tester).jumpTo(list(tester).maxScrollExtent);
+      await _settle(tester);
+      expect(heroBuilt, findsNothing);
+      list(tester).jumpTo(0);
+      await tester.pumpAndSettle();
+      expect(heroBuilt, findsOneWidget);
+      expect(tester.hasRunningAnimations, isFalse);
+      final reads = frames.reads;
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pump(const Duration(seconds: 2));
+      expect(frames.reads, reads, reason: 'no new mascot frames');
+      expect(frames.openSessions, 0);
+      await leave(tester);
+    });
+
     testWidgets('a route on top stops the mascot; coming back resumes it',
         (tester) async {
       await pump(tester);

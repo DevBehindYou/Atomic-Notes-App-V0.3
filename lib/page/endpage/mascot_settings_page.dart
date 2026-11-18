@@ -87,15 +87,40 @@ class _MascotSettingsPageState extends State<MascotSettingsPage> {
     _scroll.addListener(_onScroll);
   }
 
+  /// Whether a measurement waits for the next frame's layout.
+  bool _measurePending = false;
+
   void _onScroll() {
     _titleAway.value = _scroll.hasClients && _scroll.offset > AtomicSpace.x10;
+    if (!_measureHero()) _measureAfterLayout();
+  }
+
+  /// Sets [_heroShown] from the hero's laid-out position, and says whether
+  /// it could. It cannot while the list has dropped the hero (nothing plays
+  /// then) or before a rebuilt hero is laid out.
+  bool _measureHero() {
     final box = _heroKey.currentContext?.findRenderObject();
-    if (box is! RenderBox || !box.attached || !_scroll.hasClients) {
-      // Not built: the list has already dropped it, so nothing plays.
-      return;
+    if (box is! RenderBox ||
+        !box.attached ||
+        !box.hasSize ||
+        !_scroll.hasClients) {
+      return false;
     }
     final top = RenderAbstractViewport.of(box).getOffsetToReveal(box, 0).offset;
     _heroShown.value = _scroll.offset < top + box.size.height;
+    return true;
+  }
+
+  /// A scroll that the hero was not built for can rebuild it, for example a
+  /// jump back to the top from beyond the list's cache. The stale value
+  /// would keep it paused, so measure again once that frame is laid out.
+  void _measureAfterLayout() {
+    if (_measurePending) return;
+    _measurePending = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _measurePending = false;
+      if (mounted) _measureHero();
+    });
   }
 
   @override
