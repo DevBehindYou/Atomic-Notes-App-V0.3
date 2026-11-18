@@ -20,10 +20,11 @@ import 'package:local_auth/local_auth.dart';
 /// the box.
 final List<String> _events = [];
 
-/// The 'authBox', with an optional failure on writes.
+/// The 'authBox', with an optional failure or a gate on writes.
 class _AuthBox implements Box<bool> {
   final Map<String, bool> stored = {};
   Object? failure;
+  Completer<void>? gate;
   int puts = 0;
 
   @override
@@ -33,6 +34,7 @@ class _AuthBox implements Box<bool> {
   Future<void> put(dynamic key, bool value) async {
     puts++;
     _events.add('put $key=$value');
+    await gate?.future;
     final failure = this.failure;
     if (failure != null) throw failure;
     stored[key as String] = value;
@@ -92,6 +94,11 @@ void main() {
   late _Auth auth;
   late _Screen screen;
   Completer<void>? screenGate;
+  // Answers for the next screen calls, in order, before falling back to
+  // [screen].
+  late List<_Screen> screenAnswers;
+  // The window flag as the platform last applied it; null before any call.
+  bool? nativeSecure;
 
   setUp(() {
     _events.clear();
@@ -99,6 +106,8 @@ void main() {
     auth = _Auth();
     screen = _Screen.applies;
     screenGate = null;
+    screenAnswers = [];
+    nativeSecure = null;
   });
 
   Future<void> pump(
@@ -119,8 +128,10 @@ void main() {
     messenger.setMockMethodCallHandler(_screenChannel, (call) async {
       _events.add('${call.method} ${call.arguments}');
       await screenGate?.future;
-      switch (screen) {
+      final answer = screenAnswers.isEmpty ? screen : screenAnswers.removeAt(0);
+      switch (answer) {
         case _Screen.applies:
+          nativeSecure = (call.arguments as Map)['secure'] as bool;
           return null;
         case _Screen.fails:
           throw PlatformException(code: 'unavailable');
@@ -336,15 +347,23 @@ void main() {
       });
     }
 
-    testWidgets('a failed write shows what is stored and says so',
-        (tester) async {
+    testWidgets(
+        'a failed write puts the flag back, shows what is stored and '
+        'says so', (tester) async {
       box.failure = StateError('disk full');
       await pump(tester);
 
       await tester.tap(_screenshots);
       await tester.pumpAndSettle();
 
-      expect(_events, ['setSecure {secure: true}', 'put noScreenshot=true']);
+      // The block is lifted again to match the stored "allowed".
+      expect(_events, [
+        'setSecure {secure: true}',
+        'put noScreenshot=true',
+        'setSecure {secure: false}',
+      ]);
+      expect(nativeSecure, isFalse);
+      expect(box.stored[ScreenSecurity.prefKey], isNull);
       expect(_track(tester, _screenshots).value, isFalse);
       expect(find.text("Couldn't save the screenshot setting. Try again."),
           findsOneWidget);
@@ -360,6 +379,8 @@ void main() {
       await tester.tap(_screenshots);
       await tester.pump();
       expect(_track(tester, _screenshots).enabled, isFalse);
+      // Not on until the block is applied and saved.
+      expect(_track(tester, _screenshots).value, isFalse);
       await tester.tap(_screenshots, warnIfMissed: false);
       await tester.pump();
       expect(_events, ['setSecure {secure: true}']);
@@ -369,6 +390,250 @@ void main() {
       expect(_events, ['setSecure {secure: true}', 'put noScreenshot=true']);
       expect(_track(tester, _screenshots).value, isTrue);
       expect(_track(tester, _screenshots).enabled, isTrue);
+      await _settleSnackBar(tester);
+    });
+  });
+
+  group('screenshot flag and stored choice agree', () {
+    const notSaved = "Couldn't save the screenshot setting. Try again.";
+    const notConfirmed = "Couldn't confirm screenshot protection. Try again.";
+    String setSecure(bool v) => 'setSecure {secure: $v}';
+    String put(bool v) => 'put noScreenshot=$v';
+
+    /// Leaves the page: the route and its state are gone.
+    Future<void> leave(WidgetTester tester) =>
+        tester.pumpWidget(const SizedBox.shrink());
+
+    /// Shows the switch is off, says the flag is unconfirmed, and still
+    /// takes taps.
+    void expectUnconfirmed(WidgetTester tester) {
+      expect(_track(tester, _screenshots).value, isFalse);
+      expect(_track(tester, _screenshots).enabled, isTrue);
+      expect(find.text(BiomPage.screenshotUnconfirmed), findsOneWidget);
+      expect(find.text(BiomPage.screenshotCaption), findsNothing);
+      expect(find.text('Screenshots blocked'), findsNothing);
+    }
+
+    testWidgets('a failed write while allowing puts the block back',
+        (tester) async {
+      box.stored[ScreenSecurity.prefKey] = true;
+      box.failure = StateError('disk full');
+      await pump(tester);
+
+      await tester.tap(_screenshots);
+      await tester.pumpAndSettle();
+
+      expect(_events, [setSecure(false), put(false), setSecure(true)]);
+      expect(nativeSecure, isTrue);
+      expect(box.stored[ScreenSecurity.prefKey], isTrue);
+      expect(_track(tester, _screenshots).value, isTrue);
+      expect(_track(tester, _screenshots).enabled, isTrue);
+      expect(find.text(notSaved), findsOneWidget);
+      expect(find.text('Screenshots allowed'), findsNothing);
+      expect(find.text(BiomPage.screenshotCaption), findsOneWidget);
+      await _settleSnackBar(tester);
+    });
+
+    for (final from in [true, false]) {
+      final label = from ? 'from blocked' : 'from allowed';
+
+      testWidgets(
+          'a failed write and a failed put-back say unconfirmed '
+          '($label)', (tester) async {
+        final semantics = tester.ensureSemantics();
+        box.stored[ScreenSecurity.prefKey] = from;
+        box.failure = StateError('disk full');
+        screenAnswers = [_Screen.applies, _Screen.fails];
+        await pump(tester);
+
+        await tester.tap(_screenshots);
+        await tester.pumpAndSettle();
+
+        expect(_events, [setSecure(!from), put(!from), setSecure(from)]);
+        // The flag and the stored choice now differ.
+        expect(nativeSecure, !from);
+        expect(box.stored[ScreenSecurity.prefKey], from);
+        expectUnconfirmed(tester);
+        expect(find.text(notConfirmed), findsOneWidget);
+        expect(find.text(notSaved), findsNothing);
+        const heard =
+            '${BiomPage.screenshotTitle}. ${BiomPage.screenshotUnconfirmed}';
+        expect(
+            tester.getSemantics(find.bySemanticsLabel(heard)),
+            isSemantics(
+                label: heard,
+                isButton: false,
+                hasEnabledState: true,
+                isEnabled: true,
+                hasToggledState: true,
+                isToggled: false,
+                hasTapAction: true));
+        await _settleSnackBar(tester);
+        semantics.dispose();
+      });
+
+      testWidgets(
+          'a tap while unconfirmed applies the stored choice again '
+          '($label)', (tester) async {
+        box.stored[ScreenSecurity.prefKey] = from;
+        box.failure = StateError('disk full');
+        screenAnswers = [_Screen.applies, _Screen.fails];
+        await pump(tester);
+        await tester.tap(_screenshots);
+        await _settleSnackBar(tester);
+        expectUnconfirmed(tester);
+
+        // The first retry fails too, and says so.
+        _events.clear();
+        screen = _Screen.fails;
+        await tester.tap(_screenshots);
+        await tester.pumpAndSettle();
+        expect(_events, [setSecure(from)]);
+        expectUnconfirmed(tester);
+        expect(find.text(notConfirmed), findsOneWidget);
+        await _settleSnackBar(tester);
+
+        // The next one applies it; nothing is written.
+        _events.clear();
+        screen = _Screen.applies;
+        box.failure = null;
+        await tester.tap(_screenshots);
+        await tester.pumpAndSettle();
+        expect(_events, [setSecure(from)]);
+        expect(box.puts, 1);
+        expect(nativeSecure, from);
+        expect(box.stored[ScreenSecurity.prefKey], from);
+        expect(_track(tester, _screenshots).value, from);
+        expect(find.text(BiomPage.screenshotCaption), findsOneWidget);
+        expect(find.text(BiomPage.screenshotUnconfirmed), findsNothing);
+        expect(find.text(from ? 'Screenshots blocked' : 'Screenshots allowed'),
+            findsOneWidget);
+        await _settleSnackBar(tester);
+
+        // And the switch works as usual again.
+        _events.clear();
+        await tester.tap(_screenshots);
+        await tester.pumpAndSettle();
+        expect(_events, [setSecure(!from), put(!from)]);
+        expect(_track(tester, _screenshots).value, !from);
+        await _settleSnackBar(tester);
+      });
+
+      testWidgets('leaving before the platform answers still saves ($label)',
+          (tester) async {
+        box.stored[ScreenSecurity.prefKey] = from;
+        screenGate = Completer<void>();
+        await pump(tester);
+
+        await tester.tap(_screenshots);
+        await tester.pump();
+        expect(_events, [setSecure(!from)]);
+        await leave(tester);
+        screenGate!.complete();
+        await tester.pumpAndSettle();
+
+        expect(_events, [setSecure(!from), put(!from)]);
+        expect(nativeSecure, !from);
+        expect(box.stored[ScreenSecurity.prefKey], !from);
+        expect(tester.takeException(), isNull);
+      });
+
+      testWidgets(
+          'leaving before a failed write still puts the flag back '
+          '($label)', (tester) async {
+        box.stored[ScreenSecurity.prefKey] = from;
+        box.failure = StateError('disk full');
+        screenGate = Completer<void>();
+        await pump(tester);
+
+        await tester.tap(_screenshots);
+        await tester.pump();
+        await leave(tester);
+        screenGate!.complete();
+        await tester.pumpAndSettle();
+
+        expect(_events, [setSecure(!from), put(!from), setSecure(from)]);
+        expect(nativeSecure, from);
+        expect(box.stored[ScreenSecurity.prefKey], from);
+        expect(tester.takeException(), isNull);
+      });
+    }
+
+    testWidgets('after leaving, a failed put-back shows unconfirmed on return',
+        (tester) async {
+      box.stored[ScreenSecurity.prefKey] = true;
+      box.failure = StateError('disk full');
+      screenAnswers = [_Screen.applies, _Screen.fails];
+      screenGate = Completer<void>();
+      await pump(tester);
+
+      await tester.tap(_screenshots);
+      await tester.pump();
+      await leave(tester);
+      screenGate!.complete();
+      await tester.pumpAndSettle();
+      expect(nativeSecure, isFalse);
+      expect(box.stored[ScreenSecurity.prefKey], isTrue);
+
+      // Opened again, the page doesn't say screenshots are blocked.
+      await pump(tester);
+      expectUnconfirmed(tester);
+
+      // A tap applies the stored block again.
+      box.failure = null;
+      await tester.tap(_screenshots);
+      await tester.pumpAndSettle();
+      expect(nativeSecure, isTrue);
+      expect(_track(tester, _screenshots).value, isTrue);
+      expect(find.text(BiomPage.screenshotCaption), findsOneWidget);
+      await _settleSnackBar(tester);
+    });
+
+    testWidgets('a page opened while a change runs waits for it',
+        (tester) async {
+      screenGate = Completer<void>();
+      await pump(tester);
+      await tester.tap(_screenshots);
+      await tester.pump();
+      await leave(tester);
+
+      await pump(tester);
+      expect(_track(tester, _screenshots).enabled, isFalse);
+      expect(_track(tester, _screenshots).value, isFalse);
+      await tester.tap(_screenshots, warnIfMissed: false);
+      await tester.pump();
+      expect(_events, [setSecure(true)]);
+
+      screenGate!.complete();
+      await tester.pumpAndSettle();
+      expect(_events, [setSecure(true), put(true)]);
+      expect(_track(tester, _screenshots).value, isTrue);
+      expect(_track(tester, _screenshots).enabled, isTrue);
+      await _settleSnackBar(tester);
+    });
+
+    testWidgets('while allowing, the switch stops saying blocked and taps wait',
+        (tester) async {
+      box.stored[ScreenSecurity.prefKey] = true;
+      box.gate = Completer<void>();
+      await pump(tester);
+
+      await tester.tap(_screenshots);
+      await tester.pump();
+      expect(_events, [setSecure(false), put(false)]);
+      // The flag is already lifted; the switch must not say blocked.
+      expect(_track(tester, _screenshots).value, isFalse);
+      expect(_track(tester, _screenshots).enabled, isFalse);
+      await tester.tap(_screenshots, warnIfMissed: false);
+      await tester.pump();
+
+      box.gate!.complete();
+      await tester.pumpAndSettle();
+      expect(_events, [setSecure(false), put(false)]);
+      expect(box.stored[ScreenSecurity.prefKey], isFalse);
+      expect(_track(tester, _screenshots).value, isFalse);
+      expect(_track(tester, _screenshots).enabled, isTrue);
+      expect(find.text('Screenshots allowed'), findsOneWidget);
       await _settleSnackBar(tester);
     });
   });

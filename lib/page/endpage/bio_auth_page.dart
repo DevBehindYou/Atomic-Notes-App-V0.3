@@ -19,7 +19,8 @@ import 'package:local_auth/local_auth.dart';
 ///
 /// The choices live in the process-wide 'authBox'. Biometric unlock is only
 /// stored after the device check passes; the screenshot block is only stored
-/// after the platform applies it.
+/// after the platform applies it, and the window flag is kept in agreement
+/// with what is stored (see [_ScreenProtectionSync]).
 class BiomPage extends StatefulWidget {
   const BiomPage({super.key, this.auth, this.openAuthBox});
 
@@ -48,8 +49,127 @@ class BiomPage extends StatefulWidget {
       'Blocks screenshots and screen recording inside Atomic, and hides its '
       'preview in the recent-apps switcher. Takes effect immediately.';
 
+  /// Shown, with the switch off, while Atomic can't confirm the window flag
+  /// matches the saved choice. A tap applies the saved choice again.
+  static const String screenshotUnconfirmed =
+      "Atomic couldn't confirm whether screenshots are blocked. Tap to apply "
+      'your saved choice again.';
+
   @override
   State<BiomPage> createState() => _BiomPageState();
+}
+
+/// How a screenshot change or retry ended.
+enum _ScreenOutcome {
+  /// The window flag and the saved choice agree on the new value.
+  applied,
+
+  /// The platform refused; nothing changed.
+  unsupported,
+
+  /// The save failed and the window flag was put back to the saved choice.
+  notSaved,
+
+  /// The window flag may differ from the saved choice.
+  unconfirmed,
+
+  /// Another change is still running; this one did nothing.
+  busy,
+}
+
+/// Keeps the window's screenshot flag and the saved choice in one 'authBox'
+/// in agreement.
+///
+/// It is not tied to the page: a change started on the page runs to the end,
+/// including putting the flag back after a failed save, even if the page is
+/// closed meanwhile. A page opened later finds the same object through the
+/// box, so it sees a change still running and any unconfirmed result.
+///
+/// The box stays the record of the choice; this only tracks whether a change
+/// is running and whether the flag is unconfirmed.
+class _ScreenProtectionSync extends ChangeNotifier {
+  _ScreenProtectionSync._(this._box);
+
+  static final Expando<_ScreenProtectionSync> _byBox = Expando();
+
+  static _ScreenProtectionSync of(Box<bool> box) =>
+      _byBox[box] ??= _ScreenProtectionSync._(box);
+
+  final Box<bool> _box;
+
+  /// A change or retry is running.
+  bool get busy => _busy;
+  bool _busy = false;
+
+  /// The window flag may not match the saved choice.
+  bool get unconfirmed => _unconfirmed;
+  bool _unconfirmed = false;
+
+  /// The saved choice, or null when the box can't be read.
+  bool? saved() {
+    try {
+      return _box.get(ScreenSecurity.prefKey, defaultValue: false) ?? false;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<bool> _apply(bool secure) async {
+    try {
+      return await ScreenSecurity.set(secure);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Sets the window flag to [value], then saves it. When the save fails the
+  /// flag is put back to the saved choice; when that fails too the result is
+  /// unconfirmed.
+  Future<_ScreenOutcome> change(bool value) => _run(() async {
+        if (!await _apply(value)) {
+          // The platform refused, so the flag is as it was.
+          return (_ScreenOutcome.unsupported, _unconfirmed);
+        }
+        try {
+          await _box.put(ScreenSecurity.prefKey, value);
+          return (_ScreenOutcome.applied, false);
+        } catch (_) {
+          // Fall through and match the flag to what is stored.
+        }
+        final stored = saved();
+        if (stored == value) return (_ScreenOutcome.applied, false);
+        if (stored != null && await _apply(stored)) {
+          return (_ScreenOutcome.notSaved, false);
+        }
+        return (_ScreenOutcome.unconfirmed, true);
+      });
+
+  /// Applies the saved choice to the window flag again.
+  Future<_ScreenOutcome> recover() => _run(() async {
+        final stored = saved();
+        if (stored != null && await _apply(stored)) {
+          return (_ScreenOutcome.applied, false);
+        }
+        return (_ScreenOutcome.unconfirmed, true);
+      });
+
+  Future<_ScreenOutcome> _run(
+      Future<(_ScreenOutcome, bool)> Function() step) async {
+    if (_busy) return _ScreenOutcome.busy;
+    _busy = true;
+    notifyListeners();
+    var result = (_ScreenOutcome.unconfirmed, true);
+    try {
+      result = await step();
+    } catch (_) {
+      // Unexpected: say the flag is unconfirmed rather than guess.
+    } finally {
+      _unconfirmed = result.$2;
+      _busy = false;
+      notifyListeners();
+    }
+    return result.$1;
+  }
 }
 
 class _BiomPageState extends State<BiomPage> {
@@ -62,9 +182,12 @@ class _BiomPageState extends State<BiomPage> {
   bool _noScreenshot = false;
   bool _supportState = false;
 
-  /// True while a change to that switch is in progress; taps wait for it.
+  /// True while a change to biometric unlock is in progress; taps wait for
+  /// it.
   bool _biometricBusy = false;
-  bool _screenshotBusy = false;
+
+  /// The screenshot flag's agreement with the box, once the box is open.
+  _ScreenProtectionSync? _screen;
 
   final ScrollController _scroll = ScrollController();
 
@@ -90,6 +213,8 @@ class _BiomPageState extends State<BiomPage> {
 
   @override
   void dispose() {
+    // A screenshot change still running carries on without the page.
+    _screen?.removeListener(_onScreenChanged);
     _scroll.dispose();
     _titleAway.dispose();
     super.dispose();
@@ -101,12 +226,18 @@ class _BiomPageState extends State<BiomPage> {
         ? await openAuthBox()
         : await Hive.openBox<bool>('authBox');
     if (!mounted) return;
+    final screen = _ScreenProtectionSync.of(box)..addListener(_onScreenChanged);
     setState(() {
       _authBox = box;
+      _screen = screen;
       isAuthOn = box.get('isAuthOn', defaultValue: false) ?? false;
-      _noScreenshot =
-          box.get(ScreenSecurity.prefKey, defaultValue: false) ?? false;
+      _noScreenshot = screen.saved() ?? false;
     });
+  }
+
+  void _onScreenChanged() {
+    if (!mounted) return;
+    setState(() => _noScreenshot = _screen?.saved() ?? false);
   }
 
   Future<void> _setBiometric(bool value) async {
@@ -146,42 +277,40 @@ class _BiomPageState extends State<BiomPage> {
     }
   }
 
-  Future<void> _setNoScreenshot(bool value) async {
-    final box = _authBox;
-    if (box == null) return;
-    if (_screenshotBusy) return;
-    setState(() => _screenshotBusy = true);
-    try {
-      final bool applied = await ScreenSecurity.set(value);
-      if (!mounted) return;
-      if (!applied) {
-        const AtomicSnackBar(
+  /// The switch was tapped: change the block, or, while the flag is
+  /// unconfirmed, apply the saved choice again.
+  Future<void> _onScreenshotSwitch(bool value) async {
+    final screen = _screen;
+    if (screen == null || screen.busy) return;
+    final outcome = screen.unconfirmed
+        ? await screen.recover()
+        : await screen.change(value);
+    // The change has finished either way; only the message needs the page.
+    if (!mounted) return;
+    final AtomicSnackBar? message = switch (outcome) {
+      _ScreenOutcome.applied => AtomicSnackBar(
+          text: (screen.saved() ?? false)
+              ? 'Screenshots blocked'
+              : 'Screenshots allowed',
+          millis: 2000,
+        ),
+      _ScreenOutcome.unsupported => const AtomicSnackBar(
           text: "This device can't block screenshots",
           millis: 2500,
-        ).show(context);
-        return;
-      }
-      try {
-        await box.put(ScreenSecurity.prefKey, value);
-      } catch (_) {
-        // Show what is stored, not what was asked for.
-        if (!mounted) return;
-        const AtomicSnackBar(
+        ),
+      _ScreenOutcome.notSaved => const AtomicSnackBar(
           text: "Couldn't save the screenshot setting. Try again.",
           millis: 3000,
           error: true,
-        ).show(context);
-        return;
-      }
-      if (!mounted) return;
-      setState(() => _noScreenshot = value);
-      AtomicSnackBar(
-        text: value ? 'Screenshots blocked' : 'Screenshots allowed',
-        millis: 2000,
-      ).show(context);
-    } finally {
-      if (mounted) setState(() => _screenshotBusy = false);
-    }
+        ),
+      _ScreenOutcome.unconfirmed => const AtomicSnackBar(
+          text: "Couldn't confirm screenshot protection. Try again.",
+          millis: 3000,
+          error: true,
+        ),
+      _ScreenOutcome.busy => null,
+    };
+    message?.show(context);
   }
 
   Future<bool> _checkCapability() async {
@@ -219,6 +348,9 @@ class _BiomPageState extends State<BiomPage> {
     final c = context.colors;
     final margin = AtomicSpace.screenMargin(MediaQuery.sizeOf(context).width);
     final ready = _authBox != null;
+    final screen = _screen;
+    final screenBusy = screen?.busy ?? false;
+    final screenUnconfirmed = screen?.unconfirmed ?? false;
     return Scaffold(
       backgroundColor: c.canvas,
       body: SafeArea(
@@ -282,10 +414,17 @@ class _BiomPageState extends State<BiomPage> {
                             key: const ValueKey('security-screenshots'),
                             icon: AtomicIcons.eyeOff,
                             title: BiomPage.screenshotTitle,
-                            caption: BiomPage.screenshotCaption,
-                            value: _noScreenshot,
-                            onChanged: ready && !_screenshotBusy
-                                ? _setNoScreenshot
+                            caption: screenUnconfirmed
+                                ? BiomPage.screenshotUnconfirmed
+                                : BiomPage.screenshotCaption,
+                            // On only when the block is saved and confirmed:
+                            // never while a change runs or the flag is
+                            // unconfirmed.
+                            value: _noScreenshot &&
+                                !screenBusy &&
+                                !screenUnconfirmed,
+                            onChanged: ready && screen != null && !screenBusy
+                                ? _onScreenshotSwitch
                                 : null,
                           ),
                         ],
