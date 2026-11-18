@@ -38,11 +38,17 @@ class NotesCreaterPage extends StatefulWidget {
   const NotesCreaterPage(
       {required this.note,
       this.onDelete,
+      this.deletePermanently = false,
       this.onSave,
       this.imageInput,
       this.speechInput,
       super.key});
   final VoidCallback? onDelete;
+
+  /// What [onDelete] does: false (the signed-in notes) moves the note to the
+  /// Recycle Bin, where it can be restored; true (the guest workspace)
+  /// removes it for good. The menu and the confirmation say which.
+  final bool deletePermanently;
   final Future<NoteSaveResult> Function(Note note)? onSave;
   final EditorImageInput? imageInput;
   final EditorSpeechInput? speechInput;
@@ -322,7 +328,8 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
     if (!mounted || !identical(_attempt, attempt)) return;
     setState(() {
       _attempt = null;
-      if (result case NoteSaveRetired(reason: NoteSaveRetirement.contextChanged)) {
+      if (result
+          case NoteSaveRetired(reason: NoteSaveRetirement.contextChanged)) {
         _retired = true;
       }
     });
@@ -572,8 +579,9 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
     }
   }
 
-  /// The "…" menu: Copy note, and Move to Recycle Bin (a saved note) or
-  /// Discard note (a new one). Delete keeps its own confirmation.
+  /// The "…" menu: Copy note, and Move to Recycle Bin or Delete permanently
+  /// (a saved note, per [NotesCreaterPage.deletePermanently]) or Discard
+  /// note (a new one). Delete keeps its own confirmation.
   Future<void> _showActions() async {
     if (_locked) return;
     final canDelete = !_document.isReadOnly && !_picking && !_starting;
@@ -592,7 +600,11 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
           if (canDelete)
             AtomicSheetAction(
               icon: AtomicIcons.trash,
-              label: saved ? 'Move to Recycle Bin' : 'Discard note',
+              label: !saved
+                  ? 'Discard note'
+                  : widget.deletePermanently
+                      ? 'Delete permanently'
+                      : 'Move to Recycle Bin',
               destructive: true,
               onTap: () => Navigator.of(sheet).pop(_EditorAction.delete),
             ),
@@ -620,157 +632,180 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
       },
       // While a save is in flight the draft is the submitted snapshot:
       // input waits for its result. A retired draft is not built at all.
-      child: _retired ? const _RetiredDraft() : _PendingSaveLock(
-        locked: _saving,
-        child: LayoutBuilder(builder: (context, constraints) {
-          // The space left for the editor above the keyboard, as before.
-          final keyboard = MediaQuery.viewInsetsOf(context).bottom;
-          final compact = constraints.maxHeight -
-                  keyboard -
-                  MediaQuery.paddingOf(context).vertical <
-              400;
-          final margin = AtomicSpace.screenMargin(
-              constraints.maxWidth.clamp(0.0, _maxWidth).toDouble());
-          return Scaffold(
-            backgroundColor: c.canvas,
-            // The toolbar rides on the keyboard by itself (below), so the
-            // scaffold's floating messages sit above the toolbar, never
-            // over Done.
-            resizeToAvoidBottomInset: false,
-            body: SafeArea(
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: _maxWidth),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      _header(),
-                      Expanded(
-                        child: Scrollbar(
-                          controller: _scroll,
-                          child: ListView(
-                            controller: _scroll,
-                            padding: EdgeInsets.fromLTRB(
-                                margin, AtomicSpace.x2, margin, AtomicSpace.x4),
-                            children: [
-                              _FieldName(
-                                  name: 'Title',
-                                  controller: _title,
-                                  child: TextField(
-                                    key: const ValueKey('note-title'),
-                                    readOnly: _document.isReadOnly || _locked,
-                                    controller: _title,
-                                    focusNode: _titleFocus,
-                                    textCapitalization:
-                                        TextCapitalization.sentences,
-                                    maxLines: null,
-                                    style: AtomicType.headlineLarge
-                                        .copyWith(color: c.textPrimary),
-                                    cursorColor: c.textPrimary,
-                                    decoration: _decoration(
-                                        'Title', AtomicType.headlineLarge),
-                                    onChanged: (_) => _contentRevision.value++,
-                                  )),
-                              _tags(),
-                              const SizedBox(height: AtomicSpace.x3),
-                              ValueListenableBuilder<int>(
-                                valueListenable: _contentRevision,
-                                builder: (context, _, __) => _meta(compact),
+      child: _retired
+          ? const _RetiredDraft()
+          : _PendingSaveLock(
+              locked: _saving,
+              child: LayoutBuilder(builder: (context, constraints) {
+                // The space left for the editor above the keyboard, as before.
+                final keyboard = MediaQuery.viewInsetsOf(context).bottom;
+                final space = constraints.maxHeight -
+                    keyboard -
+                    MediaQuery.paddingOf(context).vertical;
+                final compact = space < 400;
+                // Very little room above the keyboard (a phone in landscape): the
+                // header's actions join the toolbar, so the title and the draft
+                // keep the space and every action stays reachable (review R23).
+                final tight = space < _tightSpace;
+                final margin = AtomicSpace.screenMargin(
+                    constraints.maxWidth.clamp(0.0, _maxWidth).toDouble());
+                return Scaffold(
+                  backgroundColor: c.canvas,
+                  // The toolbar rides on the keyboard by itself (below), so the
+                  // scaffold's floating messages sit above the toolbar, never
+                  // over Done.
+                  resizeToAvoidBottomInset: false,
+                  body: SafeArea(
+                    child: Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: _maxWidth),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            if (!tight) _header(),
+                            Expanded(
+                              child: Scrollbar(
+                                controller: _scroll,
+                                child: ListView(
+                                  controller: _scroll,
+                                  padding: EdgeInsets.fromLTRB(margin,
+                                      AtomicSpace.x2, margin, AtomicSpace.x4),
+                                  children: [
+                                    _FieldName(
+                                        name: 'Title',
+                                        controller: _title,
+                                        child: TextField(
+                                          key: const ValueKey('note-title'),
+                                          readOnly:
+                                              _document.isReadOnly || _locked,
+                                          controller: _title,
+                                          focusNode: _titleFocus,
+                                          textCapitalization:
+                                              TextCapitalization.sentences,
+                                          maxLines: null,
+                                          style: AtomicType.headlineLarge
+                                              .copyWith(color: c.textPrimary),
+                                          cursorColor: c.textPrimary,
+                                          decoration: _decoration('Title',
+                                              AtomicType.headlineLarge),
+                                          onChanged: (_) =>
+                                              _contentRevision.value++,
+                                        )),
+                                    _tags(),
+                                    const SizedBox(height: AtomicSpace.x3),
+                                    ValueListenableBuilder<int>(
+                                      valueListenable: _contentRevision,
+                                      builder: (context, _, __) =>
+                                          _meta(compact),
+                                    ),
+                                    Divider(
+                                        height: AtomicSpace.x6,
+                                        thickness: 1,
+                                        color: c.outline),
+                                    for (var i = 0;
+                                        i < _document.lines.length;
+                                        i++)
+                                      _lineRow(i),
+                                  ],
+                                ),
                               ),
-                              Divider(
-                                  height: AtomicSpace.x6,
-                                  thickness: 1,
-                                  color: c.outline),
-                              for (var i = 0; i < _document.lines.length; i++)
-                                _lineRow(i),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  bottomNavigationBar: Padding(
+                    padding: EdgeInsets.only(bottom: keyboard),
+                    child: SafeArea(
+                      top: false,
+                      child: Center(
+                        heightFactor: 1,
+                        child: ConstrainedBox(
+                          constraints:
+                              const BoxConstraints(maxWidth: _maxWidth),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              if (!compact)
+                                Padding(
+                                  padding: EdgeInsets.fromLTRB(
+                                      margin, AtomicSpace.x2, margin, 0),
+                                  child: ValueListenableBuilder<int>(
+                                    valueListenable: _contentRevision,
+                                    builder: (context, _, __) => _statistics(),
+                                  ),
+                                ),
+                              _toolbar(tight: tight),
                             ],
                           ),
                         ),
                       ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            bottomNavigationBar: Padding(
-              padding: EdgeInsets.only(bottom: keyboard),
-              child: SafeArea(
-                top: false,
-                child: Center(
-                  heightFactor: 1,
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: _maxWidth),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        if (!compact)
-                          Padding(
-                            padding: EdgeInsets.fromLTRB(
-                                margin, AtomicSpace.x2, margin, 0),
-                            child: ValueListenableBuilder<int>(
-                              valueListenable: _contentRevision,
-                              builder: (context, _, __) => _statistics(),
-                            ),
-                          ),
-                        _toolbar(),
-                      ],
                     ),
                   ),
-                ),
-              ),
+                );
+              }),
             ),
-          );
-        }),
-      ),
     );
   }
 
   static const double _maxWidth = 760;
 
+  /// Below this height above the keyboard the layout is [tight].
+  static const double _tightSpace = 240;
+
   /// Back, then the pin and important toggles and the "…" menu. The note's
   /// own title below is the page heading.
-  Widget _header() {
+  Widget _header() => Padding(
+        padding: const EdgeInsets.symmetric(
+            horizontal: AtomicSpace.x2, vertical: AtomicSpace.x1),
+        child: Row(
+          children: [
+            _backButton(),
+            const Spacer(),
+            ..._headerActions(),
+          ],
+        ),
+      );
+
+  Widget _backButton() => _NamedButton(AtomicIconButton(
+        icon: AtomicIcons.arrowLeft,
+        tooltip: 'Back to notes',
+        onPressed: _requestClose,
+      ));
+
+  /// Pin, important and the "…" menu: in the header, or in the toolbar
+  /// when the layout is tight.
+  List<Widget> _headerActions() {
     final editable = !(_document.isReadOnly || _locked);
-    return Padding(
-      padding: const EdgeInsets.symmetric(
-          horizontal: AtomicSpace.x2, vertical: AtomicSpace.x1),
-      child: Row(
-        children: [
-          _NamedButton(AtomicIconButton(
-            icon: AtomicIcons.arrowLeft,
-            tooltip: 'Back to notes',
-            onPressed: _requestClose,
-          )),
-          const Spacer(),
-          _NamedButton(AtomicIconButton(
-            icon: AtomicIcons.pin,
-            toggledIcon: AtomicIcons.pinFilled,
-            toggled: _draft.pinned,
-            tooltip: _draft.pinned ? 'Unpin note' : 'Pin note',
-            onPressed: editable
-                ? () => setState(() => _draft.pinned = !_draft.pinned)
-                : null,
-          )),
-          const SizedBox(width: AtomicSpace.x1),
-          _NamedButton(AtomicIconButton(
-            icon: AtomicIcons.star,
-            toggledIcon: AtomicIcons.starFilled,
-            toggled: _draft.important,
-            tooltip: _draft.important ? 'Unmark important' : 'Mark important',
-            onPressed: editable
-                ? () => setState(() => _draft.important = !_draft.important)
-                : null,
-          )),
-          const SizedBox(width: AtomicSpace.x1),
-          _NamedButton(AtomicIconButton(
-            icon: AtomicIcons.dots,
-            tooltip: 'More actions',
-            onPressed: _showActions,
-          )),
-        ],
-      ),
-    );
+    return [
+      _NamedButton(AtomicIconButton(
+        icon: AtomicIcons.pin,
+        toggledIcon: AtomicIcons.pinFilled,
+        toggled: _draft.pinned,
+        tooltip: _draft.pinned ? 'Unpin note' : 'Pin note',
+        onPressed: editable
+            ? () => setState(() => _draft.pinned = !_draft.pinned)
+            : null,
+      )),
+      const SizedBox(width: AtomicSpace.x1),
+      _NamedButton(AtomicIconButton(
+        icon: AtomicIcons.star,
+        toggledIcon: AtomicIcons.starFilled,
+        toggled: _draft.important,
+        tooltip: _draft.important ? 'Unmark important' : 'Mark important',
+        onPressed: editable
+            ? () => setState(() => _draft.important = !_draft.important)
+            : null,
+      )),
+      const SizedBox(width: AtomicSpace.x1),
+      _NamedButton(AtomicIconButton(
+        icon: AtomicIcons.dots,
+        tooltip: 'More actions',
+        onPressed: _showActions,
+      )),
+    ];
   }
 
   /// "Edited 9 Nov, 19:37 · Unsaved changes · 3000 MAX", wrapping as needed.
@@ -800,7 +835,7 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
 
   /// Text and checklist tools, image and dictation, then Done: one raised
   /// pill above the keyboard. The tools scroll at large text; Done stays.
-  Widget _toolbar() {
+  Widget _toolbar({bool tight = false}) {
     final c = context.colors;
     final tools = [
       _tool('Add text line', AtomicIcons.letterT,
@@ -814,9 +849,17 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
           _dictate,
           active: _listening),
     ];
+    if (tight) {
+      tools
+        ..add(const SizedBox(width: AtomicSpace.x2))
+        ..addAll(_headerActions());
+    }
     return Padding(
-      padding: const EdgeInsets.fromLTRB(
-          AtomicSpace.x4, AtomicSpace.x2, AtomicSpace.x4, AtomicSpace.x4),
+      padding: tight
+          ? const EdgeInsets.fromLTRB(
+              AtomicSpace.x2, AtomicSpace.x1, AtomicSpace.x2, AtomicSpace.x1)
+          : const EdgeInsets.fromLTRB(
+              AtomicSpace.x4, AtomicSpace.x2, AtomicSpace.x4, AtomicSpace.x4),
       child: DecoratedBox(
         decoration: BoxDecoration(
           color: c.surfaceRaised,
@@ -829,11 +872,16 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
           ],
         ),
         child: ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: 64),
+          constraints: BoxConstraints(minHeight: tight ? 56 : 64),
           child: Padding(
-            padding: const EdgeInsets.symmetric(
-                horizontal: AtomicSpace.x2, vertical: AtomicSpace.x1),
+            padding: EdgeInsets.symmetric(
+                horizontal: AtomicSpace.x2,
+                vertical: tight ? 0 : AtomicSpace.x1),
             child: Row(children: [
+              if (tight) ...[
+                _backButton(),
+                const SizedBox(width: AtomicSpace.x1)
+              ],
               Expanded(
                 child: SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
@@ -1367,18 +1415,29 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
     if (_locked) return;
     _cancelSpeech();
     final saved = widget.onDelete != null;
+    final permanent = saved && widget.deletePermanently;
     final accepted = await showAtomicDialog<bool>(
       context: context,
-      title: saved ? 'Move note to Recycle Bin?' : 'Discard this note?',
-      body: saved
-          ? 'The saved note can be restored from the Recycle Bin. Unsaved changes will be discarded.'
-          : 'This unsaved draft will be discarded.',
+      title: !saved
+          ? 'Discard this note?'
+          : permanent
+              ? 'Delete this note permanently?'
+              : 'Move note to Recycle Bin?',
+      body: !saved
+          ? 'This unsaved draft will be discarded.'
+          : permanent
+              ? 'It is removed from this guest workspace and cannot be restored. Unsaved changes will be discarded.'
+              : 'The saved note can be restored from the Recycle Bin. Unsaved changes will be discarded.',
       icon: AtomicIcons.trash,
       destructive: true,
       actions: [
         const AtomicDialogAction(label: 'Cancel', result: false),
         AtomicDialogAction(
-          label: saved ? 'Move to Recycle Bin' : 'Discard',
+          label: !saved
+              ? 'Discard'
+              : permanent
+                  ? 'Delete permanently'
+                  : 'Move to Recycle Bin',
           result: true,
           variant: AtomicButtonVariant.danger,
         ),
@@ -1394,9 +1453,9 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
 
   /// Over the ceiling the count reads in the danger text colour; Done
   /// explains the limit.
-  Widget _wordCountLabel(int words) => _caption(
-      words == 1 ? '1 word' : '$words words',
-      color: words > _wordLimit.ceiling ? context.colors.dangerText : null);
+  Widget _wordCountLabel(int words) =>
+      _caption(words == 1 ? '1 word' : '$words words',
+          color: words > _wordLimit.ceiling ? context.colors.dangerText : null);
 
   /// "12 words · 1 min read · 0/1 done", plus "Listening…" while dictating.
   Widget _statistics() {
@@ -1410,7 +1469,8 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
                   (_draft.body.isEmpty &&
                       _document.lines.isEmpty &&
                       _document.tags.isEmpty))))
-        _caption('${_document.lines.where((line) => line.isChecklist && line.text.trim().isNotEmpty && line.done).length}'
+        _caption(
+            '${_document.lines.where((line) => line.isChecklist && line.text.trim().isNotEmpty && line.done).length}'
             '/${_document.lines.where((line) => line.isChecklist && line.text.trim().isNotEmpty).length} done'),
       if (_listening || _starting)
         Semantics(
@@ -1443,8 +1503,7 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
   static String _stamp(DateTime value) {
     final local = value.toLocal();
     String pad(int number) => number.toString().padLeft(2, '0');
-    final year =
-        local.year == DateTime.now().year ? '' : ' ${local.year}';
+    final year = local.year == DateTime.now().year ? '' : ' ${local.year}';
     return '${local.day} ${_months[local.month - 1]}$year, '
         '${pad(local.hour)}:${pad(local.minute)}';
   }

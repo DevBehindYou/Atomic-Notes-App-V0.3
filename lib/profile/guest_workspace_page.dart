@@ -127,7 +127,10 @@ class _GuestWorkspacePageState extends State<GuestWorkspacePage> {
       context: context,
       barrierDismissible: false,
       builder: (_) => NotesCreaterPage(
-          note: draft, onDelete: existing ? () => deleted = true : null),
+          note: draft,
+          onDelete: existing ? () => deleted = true : null,
+          // A guest note has no Recycle Bin: deleting removes it for good.
+          deletePermanently: true),
     );
     if (!mounted) return;
     if (deleted) {
