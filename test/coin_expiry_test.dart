@@ -99,7 +99,7 @@ void main() {
         builder: (context, child) => MediaQuery(data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(scale)), child: child!),
         home: EnergyPage(store: store, notes: notes)));
       await tester.pumpAndSettle();
-      await tester.scrollUntilVisible(find.text('COIN EXPIRY'), 200, scrollable: find.byType(Scrollable).first);
+      await tester.scrollUntilVisible(find.text('Coin expiry'), 200, scrollable: find.byType(Scrollable).first);
       expect(find.text('40 coins never expire.'), findsOneWidget);
       await tester.scrollUntilVisible(find.text('Credit batches'), 200, scrollable: find.byType(Scrollable).first);
       await tester.pumpAndSettle();
