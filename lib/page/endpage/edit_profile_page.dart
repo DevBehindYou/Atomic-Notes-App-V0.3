@@ -37,9 +37,10 @@ class EditProfilePage extends StatefulWidget {
   /// [AuthServices.getUserInfo]; injectable so tests stay off the network.
   final Future<String> Function()? loadUsername;
 
-  /// Saves a new username and returns the message to show. Defaults to
-  /// [AuthServices.updateUserInfo]; injectable for tests.
-  final Future<String?> Function(String username)? updateUsername;
+  /// Saves a new username and says what happened. Defaults to
+  /// [AuthServices.updateUsername]; injectable for tests.
+  final Future<UsernameUpdateOutcome> Function(String username)?
+      updateUsername;
 
   /// Defaults to `Connectivity().checkConnectivity()`; injectable for tests.
   final Future<List<ConnectivityResult>> Function()? checkConnectivity;
@@ -118,11 +119,13 @@ class _EditProfilePageState extends State<EditProfilePage> {
   /// One save at a time. The admission is claimed before the first await
   /// (the connectivity check), so a second tap during that check does not
   /// start a second update (review R30), and it is released on every exit.
-  /// Editing closes only when the update answered; otherwise the draft stays.
+  /// Editing closes only on a confirmed save (review R32); a rejected or
+  /// failed update keeps the draft for a retry. When the Server took the name
+  /// but this device could not cache it, the refreshed handle decides.
   Future<void> _save() async {
     if (_saving) return;
     setState(() => _saving = true);
-    var answered = false;
+    var saved = false;
     try {
       final List<ConnectivityResult> link = await (widget.checkConnectivity ??
           () => Connectivity().checkConnectivity())();
@@ -139,12 +142,21 @@ class _EditProfilePageState extends State<EditProfilePage> {
       }
 
       try {
-        final String? response = await (widget.updateUsername ??
-            (n) => _serve.updateUserInfo(username: n))(name);
+        final UsernameUpdateOutcome outcome =
+            await (widget.updateUsername ?? _serve.updateUsername)(name);
         if (!mounted) return;
-        answered = true;
-        _say(response.toString(), 1500);
-        await _loadUsername();
+        switch (outcome) {
+          case UsernameUpdateOutcome.saved:
+            saved = true;
+            _say('Username updated wait for refresh', 1500);
+            await _loadUsername();
+          case UsernameUpdateOutcome.savedUncached:
+            _say('Username updated wait for refresh', 1500);
+            await _loadUsername();
+            saved = mounted && _username == name;
+          case UsernameUpdateOutcome.rejected:
+            _say('Error updating username', 1500);
+        }
       } catch (_) {
         if (!mounted) return;
         _say('Error occurred while updating user info');
@@ -153,7 +165,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
       if (mounted) {
         setState(() {
           _saving = false;
-          if (answered) _editing = false;
+          if (saved) _editing = false;
         });
       }
     }

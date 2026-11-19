@@ -5,6 +5,7 @@
 
 import 'dart:async';
 
+import 'package:atomic_notes/authentication/auth_services/auth_service.dart';
 import 'package:atomic_notes/page/endpage/edit_profile_page.dart';
 import 'package:atomic_notes/profile/profile_source.dart';
 import 'package:atomic_notes/profile/profile_store.dart';
@@ -38,7 +39,7 @@ class _Account {
   int loads = 0;
   final List<String> updates = [];
   Completer<String>? loadGate;
-  Completer<String?>? updateGate;
+  Completer<UsernameUpdateOutcome>? updateGate;
   Object? updateError;
   List<ConnectivityResult> link = const [ConnectivityResult.wifi];
   Completer<List<ConnectivityResult>>? linkGate;
@@ -50,12 +51,12 @@ class _Account {
     return handle;
   }
 
-  Future<String?> update(String name) async {
+  Future<UsernameUpdateOutcome> update(String name) async {
     updates.add(name);
     if (updateError != null) throw updateError!;
     if (updateGate != null) return updateGate!.future;
     handle = '@$name';
-    return 'Username updated wait for refresh';
+    return UsernameUpdateOutcome.saved;
   }
 
   Future<List<ConnectivityResult>> connectivity() async {
@@ -192,7 +193,7 @@ void main() {
     testWidgets('a save in flight is busy and ignores a second tap',
         (tester) async {
       final a = await _open(tester);
-      a.updateGate = Completer<String?>();
+      a.updateGate = Completer<UsernameUpdateOutcome>();
       await _startEditing(tester);
       await _type(tester, 'grace');
       await tester.tap(_save);
@@ -201,7 +202,7 @@ void main() {
       await tester.tap(_save, warnIfMissed: false);
       await tester.pump();
       expect(a.updates, ['grace']);
-      a.updateGate!.complete('Username updated wait for refresh');
+      a.updateGate!.complete(UsernameUpdateOutcome.saved);
       await tester.pumpAndSettle();
       expect(_save, findsNothing);
     });
@@ -365,6 +366,147 @@ void main() {
       await tester.pumpAndSettle();
       expect(a.updates, ['grace']);
     });
+  });
+
+  // Review R32: only a confirmed save ends editing. The outcome is typed, so
+  // the page never reads success from the message it shows.
+  group('save outcome (R32)', () {
+    String draft(WidgetTester tester) => tester
+        .widget<EditableText>(
+            find.descendant(of: _field, matching: find.byType(EditableText)))
+        .controller
+        .text;
+
+    testWidgets('a returned rejection shows the existing error, keeps the '
+        'draft and releases the button', (tester) async {
+      final a = await _open(tester);
+      a.updateGate = Completer<UsernameUpdateOutcome>();
+      await _startEditing(tester);
+      await _type(tester, 'grace');
+      await tester.tap(_save);
+      await tester.pump();
+      a.updateGate!.complete(UsernameUpdateOutcome.rejected);
+      await tester.pumpAndSettle();
+      expect(find.text('Error updating username'), findsOneWidget);
+      expect(_field, findsOneWidget);
+      expect(draft(tester), 'grace');
+      expect(tester.widget<AtomicButton>(_save).busy, isFalse);
+      expect(a.loads, 1, reason: 'a rejected update has nothing to refresh');
+      expect(find.text('@ada'), findsWidgets);
+    });
+
+    testWidgets('after a rejection a retry sends one update and then closes',
+        (tester) async {
+      final a = await _open(tester);
+      a.updateGate = Completer<UsernameUpdateOutcome>();
+      await _startEditing(tester);
+      await _type(tester, 'grace');
+      await tester.tap(_save);
+      await tester.pump();
+      a.updateGate!.complete(UsernameUpdateOutcome.rejected);
+      await tester.pumpAndSettle();
+
+      a.updateGate = null;
+      // Let the message leave; it floats over the pinned Save button.
+      await tester.pump(const Duration(seconds: 4));
+      await tester.pumpAndSettle();
+      await tester.tap(_save);
+      await tester.pumpAndSettle();
+      expect(a.updates, ['grace', 'grace']);
+      expect(_field, findsNothing);
+      expect(find.text('@grace'), findsWidgets);
+    });
+
+    testWidgets('two taps during a slow rejected update send one update',
+        (tester) async {
+      final a = await _open(tester);
+      a.linkGate = Completer<List<ConnectivityResult>>();
+      a.updateGate = Completer<UsernameUpdateOutcome>();
+      await _startEditing(tester);
+      await _type(tester, 'grace');
+      await tester.tap(_save);
+      await tester.pump();
+      await tester.tap(_save, warnIfMissed: false);
+      await tester.pump();
+      expect(a.checks, 1);
+      a.linkGate!.complete(const [ConnectivityResult.wifi]);
+      await tester.pump();
+      await tester.tap(_save, warnIfMissed: false);
+      await tester.pump();
+      expect(a.updates, ['grace']);
+      a.updateGate!.complete(UsernameUpdateOutcome.rejected);
+      await tester.pumpAndSettle();
+      expect(a.updates, ['grace']);
+      expect(_field, findsOneWidget);
+      expect(tester.widget<AtomicButton>(_save).busy, isFalse);
+    });
+
+    testWidgets('saved on the Server but not cached: no failure is claimed, '
+        'and a refresh that shows the name ends editing', (tester) async {
+      final a = await _open(tester);
+      a.updateGate = Completer<UsernameUpdateOutcome>();
+      await _startEditing(tester);
+      await _type(tester, 'grace');
+      await tester.tap(_save);
+      await tester.pump();
+      a.handle = '@grace';
+      a.updateGate!.complete(UsernameUpdateOutcome.savedUncached);
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('Username updated wait for refresh'), findsOneWidget);
+      expect(find.text('Error updating username'), findsNothing);
+      expect(a.loads, 2, reason: 'the handle is refreshed to reconcile');
+      await tester.pumpAndSettle();
+      expect(_field, findsNothing);
+      expect(find.text('@grace'), findsWidgets);
+    });
+
+    testWidgets('saved on the Server but not cached: a refresh that still '
+        'shows the old name keeps the draft for a retry', (tester) async {
+      final a = await _open(tester);
+      a.updateGate = Completer<UsernameUpdateOutcome>();
+      await _startEditing(tester);
+      await _type(tester, 'grace');
+      await tester.tap(_save);
+      await tester.pump();
+      a.updateGate!.complete(UsernameUpdateOutcome.savedUncached);
+      await tester.pumpAndSettle();
+      expect(find.text('Error updating username'), findsNothing);
+      expect(a.loads, 2);
+      expect(_field, findsOneWidget);
+      expect(draft(tester), 'grace');
+      expect(tester.widget<AtomicButton>(_save).busy, isFalse);
+
+      a.updateGate = null;
+      await tester.pump(const Duration(seconds: 4));
+      await tester.pumpAndSettle();
+      await tester.tap(_save);
+      await tester.pumpAndSettle();
+      expect(a.updates, ['grace', 'grace']);
+      expect(_field, findsNothing);
+    });
+
+    for (final outcome in UsernameUpdateOutcome.values) {
+      testWidgets('leaving while the update is in flight (${outcome.name}) '
+          'is quiet', (tester) async {
+        final a = await _open(tester);
+        a.updateGate = Completer<UsernameUpdateOutcome>();
+        await _startEditing(tester);
+        await _type(tester, 'grace');
+        await tester.tap(_save);
+        await tester.pump();
+        expect(a.updates, ['grace']);
+        await tester.tap(find.byTooltip('Back'));
+        await tester.pumpAndSettle();
+        expect(find.text('stub settings'), findsOneWidget);
+        a.updateGate!.complete(outcome);
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        expect(a.loads, 1, reason: 'nothing refreshes after the page left');
+        expect(find.text('Username updated wait for refresh'), findsNothing);
+        expect(find.text('Error updating username'), findsNothing);
+      });
+    }
   });
 
   group('page', () {
