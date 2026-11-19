@@ -57,13 +57,17 @@ void main() {
         'Protect the morning');
   });
 
-  testWidgets('footer media/delete actions and reading time are available',
+  testWidgets('toolbar media, menu delete action and reading time are available',
       (tester) async {
     await openEditor(tester, Note(id: 'footer', body: 'One two'));
     expect(find.byTooltip('Add image'), findsOneWidget);
     expect(find.byTooltip('Dictate text'), findsOneWidget);
-    expect(find.byTooltip('Delete note'), findsOneWidget);
-    expect(find.text('1 MIN READ'), findsOneWidget);
+    expect(find.text('1 min read'), findsOneWidget);
+    // Delete moved from the toolbar into the "…" menu, away from dictation.
+    await tester.tap(find.byTooltip('More actions'));
+    await tester.pumpAndSettle();
+    expect(find.text('Copy note'), findsOneWidget);
+    expect(find.text('Discard note'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -76,7 +80,7 @@ void main() {
     final before = note.contentSig;
     await openEditor(tester, note);
     expect(find.textContaining('opaque'), findsNothing);
-    expect(find.textContaining('READ-ONLY'), findsOneWidget);
+    expect(find.textContaining('read-only'), findsOneWidget);
     expect(tester.widget<TextField>(field('note-title')).readOnly, isTrue);
     await tester.tap(find.byTooltip('Back to notes'));
     await tester.pumpAndSettle();

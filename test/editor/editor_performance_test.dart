@@ -51,8 +51,8 @@ void main() {
     expect(parentRebuilds, 0);
     expect(controller.selection, const TextSelection.collapsed(offset: 24));
     expect(controller.value.composing, const TextRange(start: 0, end: 24));
-    expect(find.text('ON DEVICE'), findsOneWidget);
-    expect(find.text('SAVE WITH DONE'), findsNothing);
+    expect(find.text('Saved on this device'), findsOneWidget);
+    expect(find.text('Unsaved changes'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -73,9 +73,9 @@ void main() {
       composing: TextRange(start: 15, end: 21),
     );
     await tester.pump();
-    expect(find.text('6 WORDS'), findsOneWidget);
-    expect(find.text('1 / 2 DONE'), findsOneWidget);
-    expect(find.text('SAVE WITH DONE'), findsOneWidget);
+    expect(find.text('6 words'), findsOneWidget);
+    expect(find.text('1/2 done'), findsOneWidget);
+    expect(find.text('Unsaved changes'), findsOneWidget);
     expect(tester.widget<Scaffold>(_editorScaffold), same(scaffold));
     expect(tester.widget<TextField>(field('note-item-1')), same(otherField));
     expect(controller.value.composing, const TextRange(start: 15, end: 21));
@@ -100,7 +100,7 @@ void main() {
     controller.toggleStyle(NoteTextStyle.bold);
     controller.toggleStyle(NoteTextStyle.italic);
     await tester.pump();
-    expect(find.text('SAVE WITH DONE'), findsOneWidget);
+    expect(find.text('Unsaved changes'), findsOneWidget);
     expect(tester.widget<Scaffold>(_editorScaffold), same(scaffold));
     expect(controller.selection,
         const TextSelection(baseOffset: 0, extentOffset: 5));
@@ -122,13 +122,13 @@ void main() {
           text: text, selection: TextSelection.collapsed(offset: text.length));
       await tester.pump();
       expect(
-          find.text(text == 'Original body' ? 'ON DEVICE' : 'SAVE WITH DONE'),
+          find.text(text == 'Original body' ? 'Saved on this device' : 'Unsaved changes'),
           findsOneWidget);
     }
     for (final title in ['Changed title', 'Title']) {
       await tester.enterText(field('note-title'), title);
       await tester.pump();
-      expect(find.text(title == 'Title' ? 'ON DEVICE' : 'SAVE WITH DONE'),
+      expect(find.text(title == 'Title' ? 'Saved on this device' : 'Unsaved changes'),
           findsOneWidget);
     }
     body.selection = const TextSelection(baseOffset: 0, extentOffset: 8);
@@ -136,20 +136,20 @@ void main() {
       body.toggleStyle(NoteTextStyle.underline);
       await tester.pump();
       expect(
-          find.text(i == 1 ? 'ON DEVICE' : 'SAVE WITH DONE'), findsOneWidget);
+          find.text(i == 1 ? 'Saved on this device' : 'Unsaved changes'), findsOneWidget);
     }
     for (var i = 0; i < 2; i++) {
       await tester.tap(find.byTooltip(i == 0 ? 'Pin note' : 'Unpin note'));
       await tester.pump();
       expect(
-          find.text(i == 1 ? 'ON DEVICE' : 'SAVE WITH DONE'), findsOneWidget);
+          find.text(i == 1 ? 'Saved on this device' : 'Unsaved changes'), findsOneWidget);
     }
     for (var i = 0; i < 2; i++) {
       await tester
           .tap(find.byTooltip(i == 0 ? 'Mark important' : 'Unmark important'));
       await tester.pump();
       expect(
-          find.text(i == 1 ? 'ON DEVICE' : 'SAVE WITH DONE'), findsOneWidget);
+          find.text(i == 1 ? 'Saved on this device' : 'Unsaved changes'), findsOneWidget);
     }
     // ignore: avoid_print
     print(
@@ -178,15 +178,15 @@ void main() {
     ]) {
       final before = note.toMap();
       await openEditor(tester, note);
-      expect(find.text('ON DEVICE'), findsOneWidget);
+      expect(find.text('Saved on this device'), findsOneWidget);
       final body = tester.widget<TextField>(field('note-body')).controller!;
       final initial = body.text;
       body.text = 'Changed';
       await tester.pump();
-      expect(find.text('SAVE WITH DONE'), findsOneWidget);
+      expect(find.text('Unsaved changes'), findsOneWidget);
       body.text = initial;
       await tester.pump();
-      expect(find.text('ON DEVICE'), findsOneWidget);
+      expect(find.text('Saved on this device'), findsOneWidget);
       await tester.tap(find.byTooltip('Back to notes'));
       await tester.pumpAndSettle();
       expect(find.text('Save your changes?'), findsNothing);
@@ -205,10 +205,10 @@ void main() {
             items: [TodoItem(text: 'Task')]));
     await tester.tap(find.byTooltip('Remove item 1'));
     await tester.pump();
-    expect(find.text('0 / 0 DONE'), findsOneWidget);
+    expect(find.text('0/0 done'), findsOneWidget);
     await tester.tap(find.byTooltip('Add text line'));
     await tester.pumpAndSettle();
-    expect(find.text('0 / 0 DONE'), findsNothing);
+    expect(find.text('0/0 done'), findsNothing);
   });
 
   Map<TextEditingController, EditableTextState> editableStates(

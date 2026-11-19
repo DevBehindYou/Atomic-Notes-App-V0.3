@@ -1,6 +1,8 @@
 import 'package:atomic_notes/database/note.dart';
 import 'package:atomic_notes/database/note_document.dart';
 import 'package:atomic_notes/page/notes_editor_page.dart';
+import 'package:atomic_notes/ui/buttons/atomic_icon_button.dart';
+import 'package:atomic_notes/ui/controls/atomic_checkbox.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -54,6 +56,14 @@ Finder field(String name) => _lineName.hasMatch(name)
 
 final _lineName = RegExp(r'^note-(body|text-\d+|item-\d+)$');
 
+/// Opens the editor's "…" menu and chooses [item].
+Future<void> chooseMenuItem(WidgetTester tester, String item) async {
+  await tester.tap(find.byTooltip('More actions'));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text(item));
+  await tester.pumpAndSettle();
+}
+
 void main() {
   testWidgets('editor_text_save', (tester) async {
     final note = Note.create();
@@ -64,9 +74,9 @@ void main() {
     await tester.pump();
     expect(note.title, isEmpty);
     expect(note.pinned, isFalse);
-    expect(find.text('5 WORDS'), findsOneWidget);
-    expect(find.text('SAVE WITH DONE'), findsOneWidget);
-    expect(find.text('Saved on device'), findsNothing);
+    expect(find.text('5 words'), findsOneWidget);
+    expect(find.text('Unsaved changes'), findsOneWidget);
+    expect(find.text('Saved on this device'), findsNothing);
     await tester.tap(find.text('Done'));
     await tester.pumpAndSettle();
     expect(note.title, 'Morning');
@@ -123,14 +133,14 @@ void main() {
     expect(tester.widget<TextField>(field('note-text-2')).controller!.text,
         'Second');
     await tester.enterText(field('note-item-1'), 'Task');
-    await tester.tap(find.byType(Checkbox).first);
+    await tester.tap(find.byType(AtomicCheckbox).first);
     await tester.tap(find.text('Done'));
     await tester.pumpAndSettle();
     expect(note.kind, NoteKind.text);
     expect(NoteDocument.isEncoded(note), isTrue);
     expect(note.body, 'First\n- [x] Task\nSecond');
     await openEditor(tester, note);
-    expect(tester.widget<Checkbox>(find.byType(Checkbox).first).value, isTrue);
+    expect(tester.widget<AtomicCheckbox>(find.byType(AtomicCheckbox).first).checked, isTrue);
     expect(
         tester.widget<TextField>(field('note-body')).controller!.text, 'First');
     expect(tester.widget<TextField>(field('note-text-2')).controller!.text,
@@ -183,8 +193,7 @@ void main() {
       ),
     );
     await openEditor(tester, note);
-    await tester.tap(find.byTooltip('Copy note'));
-    await tester.pump();
+    await chooseMenuItem(tester, 'Copy note');
     expect(copied, '[ ] First\n[ ] \n[x] Last');
     expect(note.items, hasLength(3));
     await tester.enterText(field('note-item-2'), 'Edited last');
@@ -215,8 +224,7 @@ void main() {
     await tester.tap(find.byTooltip('Add checklist line'));
     await tester.pumpAndSettle();
     await tester.enterText(field('note-item-1'), 'Task');
-    await tester.tap(find.byTooltip('Copy note'));
-    await tester.pump();
+    await chooseMenuItem(tester, 'Copy note');
     expect(copied, 'Intro\n- [ ] Task');
     await tester.tap(find.byTooltip('Back to notes'));
     await tester.pumpAndSettle();
@@ -256,13 +264,13 @@ void main() {
       await tester.pumpAndSettle();
     }
     await tester.enterText(field('note-text-4'), 'After four toolbar taps');
-    expect(find.byType(Checkbox), findsNWidgets(2));
+    expect(find.byType(AtomicCheckbox), findsNWidgets(2));
     await tester.tap(find.text('Done'));
     await tester.pumpAndSettle();
     expect(note.body, 'Opening context\nAfter four toolbar taps');
     expect(note.items, isEmpty);
     await openEditor(tester, note);
-    expect(find.byType(Checkbox), findsNothing);
+    expect(find.byType(AtomicCheckbox), findsNothing);
     expect(find.byType(TextField), findsNWidgets(2));
   });
 
@@ -275,7 +283,7 @@ void main() {
     await tester.tap(find.byTooltip('Add checklist line'));
     await tester.pumpAndSettle();
     await tester.enterText(field('note-item-1'), ' \t ');
-    await tester.tap(find.byType(Checkbox));
+    await tester.tap(find.byType(AtomicCheckbox));
     await tester.tap(find.byTooltip('Add text line'));
     await tester.pumpAndSettle();
     await tester.enterText(field('note-text-2'), '  ');
@@ -319,8 +327,11 @@ void main() {
     await openEditor(tester, note);
     await tester.enterText(field('note-body'), 'A draft');
     // Deliver both commands before a new frame, as two queued back actions.
-    final back = tester.widget<IconButton>(
-      find.widgetWithIcon(IconButton, Icons.arrow_back),
+    final back = tester.widget<AtomicIconButton>(
+      find.ancestor(
+        of: find.byTooltip('Back to notes'),
+        matching: find.byType(AtomicIconButton),
+      ),
     );
     back.onPressed!();
     back.onPressed!();

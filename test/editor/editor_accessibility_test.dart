@@ -6,6 +6,8 @@ import 'package:atomic_notes/editor/note_image_viewer.dart';
 import 'package:atomic_notes/editor/rich_selection_toolbar.dart';
 import 'package:atomic_notes/editor/rich_text_controller.dart';
 import 'package:atomic_notes/page/notes_editor_page.dart';
+import 'package:atomic_notes/ui/controls/atomic_checkbox.dart';
+import 'package:atomic_notes/ui/motion/atomic_pressable.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -105,8 +107,8 @@ String _describe(FocusNode? node) {
   }
   final tip = context.findAncestorWidgetOfExactType<Tooltip>();
   if (tip != null) return tip.message!;
-  final box = context.findAncestorWidgetOfExactType<Checkbox>();
-  if (box != null) return box.semanticLabel!;
+  final box = context.findAncestorWidgetOfExactType<AtomicCheckbox>();
+  if (box != null) return box.semanticsLabel;
   String? text;
   void visit(Element element) {
     final widget = element.widget;
@@ -177,7 +179,7 @@ void main() {
             hasTapAction: true));
     // No second, inert "Note image" stop inside the button.
     expect(find.bySemanticsLabel('Note image'), findsNothing);
-    expect(tester.getSemantics(find.widgetWithText(TextButton, 'Remove image')),
+    expect(tester.getSemantics(find.byTooltip('Remove image')),
         isSemantics(label: 'Remove image', isButton: true, hasTapAction: true));
     semantics.dispose();
   });
@@ -185,12 +187,15 @@ void main() {
   testWidgets('add tag control announces its action', (tester) async {
     final semantics = tester.ensureSemantics();
     await _open(tester, _mixed());
-    expect(tester.getSemantics(find.widgetWithText(TextButton, 'Tag')),
+    expect(tester.getSemantics(find.byTooltip('Add tag')),
         isSemantics(label: 'Add tag', isButton: true, hasTapAction: true));
+    // The shared tag chip names its remove button by label, not tooltip.
     expect(
-        tester.getSemantics(find.byTooltip('Remove tag keep')),
+        tester.getSemantics(find.descendant(
+            of: find.byTooltip('Remove tag keep'),
+            matching: find.byType(AtomicPressable))),
         isSemantics(
-            tooltip: 'Remove tag keep', isButton: true, hasTapAction: true));
+            label: 'Remove tag keep', isButton: true, hasTapAction: true));
     semantics.dispose();
   });
 
@@ -206,7 +211,7 @@ void main() {
     expect(tester.getSemantics(field('note-item-1')),
         isSemantics(label: 'List item', value: 'Item', isTextField: true));
     expect(
-        tester.getSemantics(find.byType(Checkbox)),
+        tester.getSemantics(find.byType(AtomicCheckbox)),
         isSemantics(
             label: 'Complete item 2', hasCheckedState: true, isChecked: false));
 
@@ -237,8 +242,8 @@ void main() {
     expect(find.text('Done').hitTestable(), findsOneWidget);
     await _expectGuidelines(tester);
 
-    await _reveal(tester, find.text('Tag'));
-    await tester.tap(find.text('Tag'));
+    await _reveal(tester, find.byTooltip('Add tag'));
+    await tester.tap(find.byTooltip('Add tag'));
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
     expect(find.text('Add').hitTestable(), findsOneWidget);
@@ -312,7 +317,7 @@ void main() {
       (tester) async {
     await _open(tester, _mixed());
     final order = <String>[];
-    for (var step = 0; step < 19; step++) {
+    for (var step = 0; step < 18; step++) {
       await tester.sendKeyEvent(LogicalKeyboardKey.tab);
       await tester.pump();
       order.add(_describe(FocusManager.instance.primaryFocus));
@@ -321,7 +326,7 @@ void main() {
       'Back to notes',
       'Pin note',
       'Mark important',
-      'Copy note',
+      'More actions',
       "field [<'note-title'>]",
       'Remove tag keep',
       'Add tag',
@@ -335,8 +340,7 @@ void main() {
       'Add checklist line',
       'Add image',
       'Dictate text',
-      'Delete note',
-      'Done',
+      'Save note',
     ]);
     // Focus wraps back to the first header control.
     await tester.sendKeyEvent(LogicalKeyboardKey.tab);

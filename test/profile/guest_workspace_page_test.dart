@@ -5,6 +5,7 @@ import 'package:atomic_notes/authentication/auth_pages/login_page.dart';
 import 'package:atomic_notes/database/note.dart';
 import 'package:atomic_notes/profile/guest_profile_store.dart';
 import 'package:atomic_notes/profile/guest_workspace_page.dart';
+import 'package:atomic_notes/ui/controls/atomic_checkbox.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive_ce.dart';
@@ -177,7 +178,7 @@ void main() {
     await openWorkspace(tester, notes);
     await tester.tap(find.text('Chores'));
     await tester.pumpAndSettle();
-    await tester.tap(find.byType(Checkbox).first);
+    await tester.tap(find.byType(AtomicCheckbox).first);
     await tester.pump();
     await tester.tap(find.text('Done'));
     await tester.pumpAndSettle();

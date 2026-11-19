@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:atomic_notes/editor/editor_media.dart';
-import 'package:atomic_notes/editor/editor_popup.dart';
 import 'package:atomic_notes/editor/note_image_decode.dart';
 import 'package:atomic_notes/editor/note_image_viewer.dart';
 import 'package:atomic_notes/editor/rich_selection_toolbar.dart';
@@ -11,9 +10,19 @@ import 'package:atomic_notes/database/note_document.dart';
 import 'package:atomic_notes/database/note_word_limit.dart';
 import 'package:atomic_notes/database/notes_source.dart';
 import 'package:atomic_notes/state/notes/notes_bloc.dart';
-import 'package:atomic_notes/theme/app_tokens.dart';
-import 'package:atomic_notes/theme/editorial.dart';
-import 'package:atomic_notes/utility/component/my_snackbar.dart';
+import 'package:atomic_notes/theme/atomic_colors.dart';
+import 'package:atomic_notes/theme/atomic_icons.dart';
+import 'package:atomic_notes/theme/atomic_tokens.dart';
+import 'package:atomic_notes/theme/atomic_type.dart';
+import 'package:atomic_notes/ui/buttons/atomic_button.dart';
+import 'package:atomic_notes/ui/buttons/atomic_icon_button.dart';
+import 'package:atomic_notes/ui/chips/tag_chip.dart';
+import 'package:atomic_notes/ui/controls/atomic_checkbox.dart';
+import 'package:atomic_notes/ui/fields/atomic_text_field.dart';
+import 'package:atomic_notes/ui/motion/atomic_pressable.dart';
+import 'package:atomic_notes/ui/overlays/atomic_dialog.dart';
+import 'package:atomic_notes/ui/overlays/atomic_sheet.dart';
+import 'package:atomic_notes/ui/overlays/atomic_snack_bar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -29,11 +38,17 @@ class NotesCreaterPage extends StatefulWidget {
   const NotesCreaterPage(
       {required this.note,
       this.onDelete,
+      this.deletePermanently = false,
       this.onSave,
       this.imageInput,
       this.speechInput,
       super.key});
   final VoidCallback? onDelete;
+
+  /// What [onDelete] does: false (the signed-in notes) moves the note to the
+  /// Recycle Bin, where it can be restored; true (the guest workspace)
+  /// removes it for good. The menu and the confirmation say which.
+  final bool deletePermanently;
   final Future<NoteSaveResult> Function(Note note)? onSave;
   final EditorImageInput? imageInput;
   final EditorSpeechInput? speechInput;
@@ -313,7 +328,8 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
     if (!mounted || !identical(_attempt, attempt)) return;
     setState(() {
       _attempt = null;
-      if (result case NoteSaveRetired(reason: NoteSaveRetirement.contextChanged)) {
+      if (result
+          case NoteSaveRetired(reason: NoteSaveRetirement.contextChanged)) {
         _retired = true;
       }
     });
@@ -350,19 +366,17 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
   Future<void> _tellAndClose(String message) async {
     if (!mounted || _closing) return;
     _confirmingClose = true;
-    await showDialog<void>(
+    await showAtomicDialog<void>(
       context: context,
-      builder: (context) => EditorPopup(
-        title: 'Not saved',
-        content: Text(message),
-        actions: [
-          EditorPopupButton(
-            label: 'Close',
-            tone: EditorPopupActionTone.primary,
-            onPressed: () => Navigator.pop(context),
-          ),
-        ],
-      ),
+      title: 'Not saved',
+      body: message,
+      actions: const [
+        AtomicDialogAction(
+          label: 'Close',
+          result: null,
+          variant: AtomicButtonVariant.primary,
+        ),
+      ],
     );
     _confirmingClose = false;
     if (mounted) _close(false);
@@ -373,28 +387,23 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
   Future<void> _offerRetry(String message, [FocusNode? focusBefore]) async {
     if (!mounted || _closing) return;
     _confirmingClose = true;
-    final action = await showDialog<String>(
+    final action = await showAtomicDialog<String>(
       context: context,
-      builder: (context) => EditorPopup(
-        title: 'Not saved',
-        content: Text(message),
-        actions: [
-          EditorPopupButton(
-            label: 'Discard',
-            tone: EditorPopupActionTone.destructive,
-            onPressed: () => Navigator.pop(context, 'discard'),
-          ),
-          EditorPopupButton(
-            label: 'Edit',
-            onPressed: () => Navigator.pop(context, 'edit'),
-          ),
-          EditorPopupButton(
-            label: 'Retry',
-            tone: EditorPopupActionTone.primary,
-            onPressed: () => Navigator.pop(context, 'retry'),
-          ),
-        ],
-      ),
+      title: 'Not saved',
+      body: message,
+      actions: const [
+        AtomicDialogAction(
+          label: 'Discard',
+          result: 'discard',
+          variant: AtomicButtonVariant.danger,
+        ),
+        AtomicDialogAction(label: 'Edit', result: 'edit'),
+        AtomicDialogAction(
+          label: 'Retry',
+          result: 'retry',
+          variant: AtomicButtonVariant.primary,
+        ),
+      ],
     );
     _confirmingClose = false;
     if (!mounted) return;
@@ -417,28 +426,23 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
       return;
     }
     _confirmingClose = true;
-    final action = await showDialog<String>(
+    final action = await showAtomicDialog<String>(
       context: context,
-      builder: (context) => EditorPopup(
-        title: 'Save your changes?',
-        content: const Text('Choose Save to keep this draft, or keep editing.'),
-        actions: [
-          EditorPopupButton(
-            label: 'Keep editing',
-            onPressed: () => Navigator.pop(context, 'keep'),
-          ),
-          EditorPopupButton(
-            label: 'Discard',
-            tone: EditorPopupActionTone.destructive,
-            onPressed: () => Navigator.pop(context, 'discard'),
-          ),
-          EditorPopupButton(
-            label: 'Save',
-            tone: EditorPopupActionTone.primary,
-            onPressed: () => Navigator.pop(context, 'save'),
-          ),
-        ],
-      ),
+      title: 'Save your changes?',
+      body: 'Choose Save to keep this draft, or keep editing.',
+      actions: const [
+        AtomicDialogAction(label: 'Keep editing', result: 'keep'),
+        AtomicDialogAction(
+          label: 'Discard',
+          result: 'discard',
+          variant: AtomicButtonVariant.danger,
+        ),
+        AtomicDialogAction(
+          label: 'Save',
+          result: 'save',
+          variant: AtomicButtonVariant.primary,
+        ),
+      ],
     );
     _confirmingClose = false;
     if (!mounted) return;
@@ -513,24 +517,21 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
     _cancelSpeech();
     bool? remove;
     try {
-      remove = await showDialog<bool>(
+      remove = await showAtomicDialog<bool>(
         context: context,
-        builder: (context) => EditorPopup(
-          title: 'Remove image?',
-          content: const Text(
-              'Remove this image from the draft? Choose Done to save the change.'),
-          actions: [
-            EditorPopupButton(
-              label: 'Keep image',
-              onPressed: () => Navigator.pop(context, false),
-            ),
-            EditorPopupButton(
-              label: 'Remove image',
-              tone: EditorPopupActionTone.destructive,
-              onPressed: () => Navigator.pop(context, true),
-            ),
-          ],
-        ),
+        title: 'Remove image?',
+        body:
+            'Remove this image from the draft? Choose Done to save the change.',
+        icon: AtomicIcons.trash,
+        destructive: true,
+        actions: const [
+          AtomicDialogAction(label: 'Keep image', result: false),
+          AtomicDialogAction(
+            label: 'Remove image',
+            result: true,
+            variant: AtomicButtonVariant.danger,
+          ),
+        ],
       );
     } finally {
       _confirmingImageRemoval = false;
@@ -564,21 +565,66 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
         ),
       );
       if (!mounted) return;
-      const MySnackBar(
+      const AtomicSnackBar(
         text: 'Copied to clipboard',
-        sec: 1200,
-      ).showMySnackBar(context);
+        millis: 1200,
+      ).show(context);
     } on PlatformException {
       if (!mounted) return;
-      const MySnackBar(
-        text: 'Could not copy. Your draft is still here.',
-        sec: 2000,
-      ).showMySnackBar(context);
+      const AtomicSnackBar(
+        text: "Couldn't copy. Your draft is still here.",
+        millis: 2000,
+        error: true,
+      ).show(context);
+    }
+  }
+
+  /// The "…" menu: Copy note, and Move to Recycle Bin or Delete permanently
+  /// (a saved note, per [NotesCreaterPage.deletePermanently]) or Discard
+  /// note (a new one). Delete keeps its own confirmation.
+  Future<void> _showActions() async {
+    if (_locked) return;
+    final canDelete = !_document.isReadOnly && !_picking && !_starting;
+    final saved = widget.onDelete != null;
+    final action = await showAtomicSheet<_EditorAction>(
+      context: context,
+      builder: (sheet) => Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          AtomicSheetAction(
+            icon: AtomicIcons.copy,
+            label: 'Copy note',
+            onTap: () => Navigator.of(sheet).pop(_EditorAction.copy),
+          ),
+          if (canDelete)
+            AtomicSheetAction(
+              icon: AtomicIcons.trash,
+              label: !saved
+                  ? 'Discard note'
+                  : widget.deletePermanently
+                      ? 'Delete permanently'
+                      : 'Move to Recycle Bin',
+              destructive: true,
+              onTap: () => Navigator.of(sheet).pop(_EditorAction.delete),
+            ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    switch (action) {
+      case _EditorAction.copy:
+        await _copy();
+      case _EditorAction.delete:
+        await _delete();
+      case null:
+        break;
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final c = context.colors;
     return PopScope<bool>(
       canPop: _allowPop,
       onPopInvokedWithResult: (didPop, _) {
@@ -586,275 +632,391 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
       },
       // While a save is in flight the draft is the submitted snapshot:
       // input waits for its result. A retired draft is not built at all.
-      child: _retired ? const _RetiredDraft() : _PendingSaveLock(
-        locked: _saving,
-        child: Scaffold(
-          backgroundColor: AppColors.paper,
-          body: SafeArea(
-            child: Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 760),
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final compact = constraints.maxHeight < 400;
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: AppSpace.sm,
-                            vertical: AppSpace.sm,
-                          ),
-                          child: Row(
-                            children: [
-                              IconButton.filled(
-                                onPressed: _requestClose,
-                                tooltip: 'Back to notes',
-                                style: IconButton.styleFrom(
-                                  backgroundColor: AppColors.ink,
-                                  foregroundColor: AppColors.paper,
-                                ),
-                                icon: const Icon(Icons.arrow_back),
-                              ),
-                              const SizedBox(width: AppSpace.sm),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
+      child: _retired
+          ? const _RetiredDraft()
+          : _PendingSaveLock(
+              locked: _saving,
+              child: LayoutBuilder(builder: (context, constraints) {
+                // The space left for the editor above the keyboard, as before.
+                final keyboard = MediaQuery.viewInsetsOf(context).bottom;
+                final space = constraints.maxHeight -
+                    keyboard -
+                    MediaQuery.paddingOf(context).vertical;
+                final compact = space < 400;
+                // Very little room above the keyboard (a phone in landscape): the
+                // header's actions join the toolbar, so the title and the draft
+                // keep the space and every action stays reachable (review R23).
+                final tight = space < _tightSpace;
+                final margin = AtomicSpace.screenMargin(
+                    constraints.maxWidth.clamp(0.0, _maxWidth).toDouble());
+                return Scaffold(
+                  backgroundColor: c.canvas,
+                  // The toolbar rides on the keyboard by itself (below), so the
+                  // scaffold's floating messages sit above the toolbar, never
+                  // over Done.
+                  resizeToAvoidBottomInset: false,
+                  body: SafeArea(
+                    child: Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: _maxWidth),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            if (!tight) _header(),
+                            Expanded(
+                              child: Scrollbar(
+                                controller: _scroll,
+                                child: ListView(
+                                  controller: _scroll,
+                                  padding: EdgeInsets.fromLTRB(margin,
+                                      AtomicSpace.x2, margin, AtomicSpace.x4),
                                   children: [
-                                    if (!compact)
-                                      const MonoLabel('NOTES / EDITOR'),
-                                    const EditorialHeading(
-                                      'Edit note',
-                                      style: AppType.headlineSm,
-                                      maxLines: 1,
+                                    _FieldName(
+                                        name: 'Title',
+                                        controller: _title,
+                                        child: TextField(
+                                          key: const ValueKey('note-title'),
+                                          readOnly:
+                                              _document.isReadOnly || _locked,
+                                          controller: _title,
+                                          focusNode: _titleFocus,
+                                          textCapitalization:
+                                              TextCapitalization.sentences,
+                                          maxLines: null,
+                                          style: AtomicType.headlineLarge
+                                              .copyWith(color: c.textPrimary),
+                                          cursorColor: c.textPrimary,
+                                          decoration: _decoration('Title',
+                                              AtomicType.headlineLarge),
+                                          onChanged: (_) =>
+                                              _contentRevision.value++,
+                                        )),
+                                    _tags(),
+                                    const SizedBox(height: AtomicSpace.x3),
+                                    ValueListenableBuilder<int>(
+                                      valueListenable: _contentRevision,
+                                      builder: (context, _, __) =>
+                                          _meta(compact),
                                     ),
+                                    Divider(
+                                        height: AtomicSpace.x6,
+                                        thickness: 1,
+                                        color: c.outline),
+                                    for (var i = 0;
+                                        i < _document.lines.length;
+                                        i++)
+                                      _lineRow(i),
                                   ],
                                 ),
                               ),
-                              IconButton(
-                                onPressed: _document.isReadOnly || _locked
-                                    ? null
-                                    : () => setState(
-                                          () => _draft.pinned = !_draft.pinned,
-                                        ),
-                                tooltip:
-                                    _draft.pinned ? 'Unpin note' : 'Pin note',
-                                isSelected: _draft.pinned,
-                                color: AppColors.signal,
-                                icon: const Icon(Icons.push_pin_outlined),
-                                selectedIcon: const Icon(Icons.push_pin),
-                              ),
-                              IconButton(
-                                onPressed: _document.isReadOnly || _locked
-                                    ? null
-                                    : () => setState(
-                                          () => _draft.important =
-                                              !_draft.important,
-                                        ),
-                                tooltip: _draft.important
-                                    ? 'Unmark important'
-                                    : 'Mark important',
-                                isSelected: _draft.important,
-                                color: AppColors.signal,
-                                icon: const Icon(Icons.label_important_outline),
-                                selectedIcon: const Icon(Icons.label_important),
-                              ),
-                              IconButton(
-                                onPressed: _copy,
-                                tooltip: 'Copy note',
-                                icon: const Icon(Icons.copy_outlined),
-                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  bottomNavigationBar: Padding(
+                    padding: EdgeInsets.only(bottom: keyboard),
+                    child: SafeArea(
+                      top: false,
+                      child: Center(
+                        heightFactor: 1,
+                        child: ConstrainedBox(
+                          constraints:
+                              const BoxConstraints(maxWidth: _maxWidth),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              if (!compact)
+                                Padding(
+                                  padding: EdgeInsets.fromLTRB(
+                                      margin, AtomicSpace.x2, margin, 0),
+                                  child: ValueListenableBuilder<int>(
+                                    valueListenable: _contentRevision,
+                                    builder: (context, _, __) => _statistics(),
+                                  ),
+                                ),
+                              _toolbar(tight: tight),
                             ],
                           ),
                         ),
-                        const HairRule(color: AppColors.ink),
-                        Expanded(
-                          child: Scrollbar(
-                            controller: _scroll,
-                            child: ListView(
-                              controller: _scroll,
-                              padding: const EdgeInsets.all(
-                                AppSpace.screenMargin,
-                              ),
-                              children: [
-                                Wrap(
-                                  spacing: AppSpace.md,
-                                  runSpacing: AppSpace.xs,
-                                  children: [
-                                    MonoLabel(
-                                      'EDITED ${_stamp(widget.note.updatedAt)}',
-                                      small: true,
-                                    ),
-                                    ValueListenableBuilder<int>(
-                                      valueListenable: _contentRevision,
-                                      builder: (context, _, __) => MonoLabel(
-                                        _document.isReadOnly
-                                            ? 'Unsupported format · read-only'
-                                            : _changed
-                                                ? 'SAVE WITH DONE'
-                                                : widget.note.isEmpty
-                                                    ? 'UNSAVED DRAFT'
-                                                    : 'ON DEVICE',
-                                        small: true,
-                                        color: AppColors.signal,
-                                      ),
-                                    ),
-                                    if (compact)
-                                      ValueListenableBuilder<int>(
-                                        valueListenable: _contentRevision,
-                                        builder: (context, _, __) => Wrap(
-                                          spacing: AppSpace.md,
-                                          children: [
-                                            _wordCountLabel(_wordCount),
-                                            _wordLimitLabel(),
-                                          ],
-                                        ),
-                                      )
-                                    else
-                                      _wordLimitLabel(),
-                                  ],
-                                ),
-                                const SizedBox(height: AppSpace.md),
-                                _FieldName(
-                                    name: 'Title',
-                                    controller: _title,
-                                    child: TextField(
-                                      key: const ValueKey('note-title'),
-                                      readOnly: _document.isReadOnly || _locked,
-                                      controller: _title,
-                                      focusNode: _titleFocus,
-                                      textCapitalization:
-                                          TextCapitalization.sentences,
-                                      maxLines: null,
-                                      style: AppType.displayLg.copyWith(
-                                        fontSize:
-                                            AppType.displayLg.fontSize! * 2 / 3,
-                                      ),
-                                      cursorColor: AppColors.signal,
-                                      decoration: _decoration('Title'),
-                                      onChanged: (_) =>
-                                          _contentRevision.value++,
-                                    )),
-                                _tags(),
-                                const SizedBox(height: AppSpace.md),
-                                for (var i = 0; i < _document.lines.length; i++)
-                                  _lineRow(i),
-                              ],
-                            ),
-                          ),
-                        ),
-                        if (!compact)
-                          Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: AppSpace.screenMargin,
-                              vertical: AppSpace.sm,
-                            ),
-                            child: ValueListenableBuilder<int>(
-                              valueListenable: _contentRevision,
-                              builder: (context, _, __) => _statistics(),
-                            ),
-                          ),
-                        const HairRule(color: AppColors.ink),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: AppSpace.sm,
-                            vertical: AppSpace.sm,
-                          ),
-                          child: Row(children: [
-                            Expanded(
-                                child: SingleChildScrollView(
-                                    scrollDirection: Axis.horizontal,
-                                    child: Row(children: [
-                                      _round('Add text line', Icons.notes,
-                                          () => _insertLine(checklist: false)),
-                                      _round(
-                                          'Add checklist line',
-                                          Icons.checklist,
-                                          () => _insertLine(checklist: true)),
-                                      _round('Add image', Icons.image_outlined,
-                                          _pickImage),
-                                      _round(
-                                          _listening
-                                              ? 'Stop dictation'
-                                              : 'Dictate text',
-                                          _listening
-                                              ? Icons.stop
-                                              : Icons.mic_none,
-                                          _dictate,
-                                          active: _listening),
-                                      _round('Delete note',
-                                          Icons.delete_outline, _delete,
-                                          destructive: true),
-                                    ]))),
-                            const SizedBox(width: 8),
-                            FilledButton(
-                                onPressed: _document.isReadOnly ||
-                                        _picking ||
-                                        _starting ||
-                                        _saving
-                                    ? null
-                                    : () => _finish(true),
-                                style: FilledButton.styleFrom(
-                                    backgroundColor: AppColors.signal,
-                                    foregroundColor: AppColors.paper,
-                                    minimumSize: const Size(76, 48),
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 16),
-                                    shape: const RoundedRectangleBorder(
-                                        borderRadius: AppRadius.std)),
-                                child: Text(_saving ? 'Saving…' : 'Done')),
-                          ]),
-                        ),
-                      ],
-                    );
-                  },
+                      ),
+                    ),
+                  ),
+                );
+              }),
+            ),
+    );
+  }
+
+  static const double _maxWidth = 760;
+
+  /// Below this height above the keyboard the layout is [tight].
+  static const double _tightSpace = 240;
+
+  /// Back, then the pin and important toggles and the "…" menu. The note's
+  /// own title below is the page heading.
+  Widget _header() => Padding(
+        padding: const EdgeInsets.symmetric(
+            horizontal: AtomicSpace.x2, vertical: AtomicSpace.x1),
+        child: Row(
+          children: [
+            _backButton(),
+            const Spacer(),
+            ..._headerActions(),
+          ],
+        ),
+      );
+
+  Widget _backButton() => _NamedButton(AtomicIconButton(
+        icon: AtomicIcons.arrowLeft,
+        tooltip: 'Back to notes',
+        onPressed: _requestClose,
+      ));
+
+  /// Pin, important and the "…" menu: in the header, or in the toolbar
+  /// when the layout is tight.
+  List<Widget> _headerActions() {
+    final editable = !(_document.isReadOnly || _locked);
+    return [
+      _NamedButton(AtomicIconButton(
+        icon: AtomicIcons.pin,
+        toggledIcon: AtomicIcons.pinFilled,
+        toggled: _draft.pinned,
+        tooltip: _draft.pinned ? 'Unpin note' : 'Pin note',
+        onPressed: editable
+            ? () => setState(() => _draft.pinned = !_draft.pinned)
+            : null,
+      )),
+      const SizedBox(width: AtomicSpace.x1),
+      _NamedButton(AtomicIconButton(
+        icon: AtomicIcons.star,
+        toggledIcon: AtomicIcons.starFilled,
+        toggled: _draft.important,
+        tooltip: _draft.important ? 'Unmark important' : 'Mark important',
+        onPressed: editable
+            ? () => setState(() => _draft.important = !_draft.important)
+            : null,
+      )),
+      const SizedBox(width: AtomicSpace.x1),
+      _NamedButton(AtomicIconButton(
+        icon: AtomicIcons.dots,
+        tooltip: 'More actions',
+        onPressed: _showActions,
+      )),
+    ];
+  }
+
+  /// "Edited 9 Nov, 19:37 · Unsaved changes · 3000 MAX", wrapping as needed.
+  Widget _meta(bool compact) {
+    final c = context.colors;
+    final changed = _changed;
+    return _Dotted([
+      _caption('Edited ${_stamp(widget.note.updatedAt)}'),
+      _caption(
+        _document.isReadOnly
+            ? 'Unsupported format · read-only'
+            : changed
+                ? 'Unsaved changes'
+                : widget.note.isEmpty
+                    ? 'New note'
+                    : 'Saved on this device',
+        color: changed ? c.accentText : null,
+      ),
+      if (compact) _wordCountLabel(_wordCount),
+      _caption(_wordLimit.label),
+    ]);
+  }
+
+  Widget _caption(String text, {Color? color}) => Text(text,
+      style: AtomicType.bodySmall
+          .copyWith(color: color ?? context.colors.textSecondary));
+
+  /// Text and checklist tools, image and dictation, then Done: one raised
+  /// pill above the keyboard. The tools scroll at large text; Done stays.
+  Widget _toolbar({bool tight = false}) {
+    final c = context.colors;
+    final tools = [
+      _tool('Add text line', AtomicIcons.letterT,
+          () => _insertLine(checklist: false)),
+      _tool('Add checklist line', AtomicIcons.listCheck,
+          () => _insertLine(checklist: true)),
+      _tool('Add image', AtomicIcons.photoPlus, _pickImage),
+      _tool(
+          _listening ? 'Stop dictation' : 'Dictate text',
+          _listening ? AtomicIcons.playerStop : AtomicIcons.microphone,
+          _dictate,
+          active: _listening),
+    ];
+    if (tight) {
+      tools
+        ..add(const SizedBox(width: AtomicSpace.x2))
+        ..addAll(_headerActions());
+    }
+    return Padding(
+      padding: tight
+          ? const EdgeInsets.fromLTRB(
+              AtomicSpace.x2, AtomicSpace.x1, AtomicSpace.x2, AtomicSpace.x1)
+          : const EdgeInsets.fromLTRB(
+              AtomicSpace.x4, AtomicSpace.x2, AtomicSpace.x4, AtomicSpace.x4),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: c.surfaceRaised,
+          borderRadius: AtomicRadius.pill,
+          boxShadow: [
+            BoxShadow(
+                color: c.floatingShadow,
+                blurRadius: 16,
+                offset: const Offset(0, 4)),
+          ],
+        ),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: tight ? 56 : 64),
+          child: Padding(
+            padding: EdgeInsets.symmetric(
+                horizontal: AtomicSpace.x2,
+                vertical: tight ? 0 : AtomicSpace.x1),
+            child: Row(children: [
+              if (tight) ...[
+                _backButton(),
+                const SizedBox(width: AtomicSpace.x1)
+              ],
+              Expanded(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(children: [
+                    for (var i = 0; i < tools.length; i++) ...[
+                      if (i > 0) const SizedBox(width: AtomicSpace.x2),
+                      tools[i],
+                    ],
+                  ]),
                 ),
               ),
-            ),
+              const SizedBox(width: AtomicSpace.x2),
+              _doneButton(),
+            ]),
           ),
         ),
       ),
     );
   }
 
+  Widget _tool(String tooltip, IconData icon, VoidCallback action,
+          {bool active = false}) =>
+      _NamedButton(AtomicIconButton(
+        icon: icon,
+        tooltip: tooltip,
+        onCard: true,
+        toggled: active ? true : null,
+        onPressed:
+            _document.isReadOnly || _picking || _starting ? null : action,
+      ));
+
+  /// Done: an accent pill with a check and its visible label, which is what
+  /// a screen reader announces; the tooltip says what it does. While the
+  /// save is pending it reads "Saving…" and takes no input.
+  Widget _doneButton() {
+    final c = context.colors;
+    final busy = _saving;
+    return Tooltip(
+      message: 'Save note',
+      excludeFromSemantics: true,
+      child: FilledButton(
+        onPressed: _document.isReadOnly || _picking || _starting || _saving
+            ? null
+            : () => _finish(true),
+        style: FilledButton.styleFrom(
+          backgroundColor: c.accent,
+          foregroundColor: c.onAccent,
+          disabledBackgroundColor: busy ? c.accent : c.surfaceInset,
+          disabledForegroundColor: busy ? c.onAccent : c.textDisabled,
+          minimumSize: const Size(56, 56),
+          padding: const EdgeInsets.symmetric(horizontal: AtomicSpace.x5),
+          shape: const StadiumBorder(),
+          textStyle: AtomicType.labelLarge,
+          elevation: 0,
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(busy ? AtomicIcons.clock : AtomicIcons.check, size: 20),
+          const SizedBox(width: AtomicSpace.x2),
+          Flexible(child: Text(busy ? 'Saving…' : 'Done')),
+        ]),
+      ),
+    );
+  }
+
   Widget _lineRow(int index) {
+    final c = context.colors;
     final line = _document.lines[index];
     if (line.isImage) {
       final data = line.imageBase64!;
       final bytes = _images.putIfAbsent(data, () => base64Decode(data));
       final thumbnail = _thumbnailFor(data, bytes);
-      return Column(key: ObjectKey(_lines[index]), children: [
-        Semantics(
-          button: true,
-          label: 'View note image',
-          // One stop named once: the Semantics label above, without the
-          // tooltip or the image repeating it inside the button.
-          child: Tooltip(
-            message: 'View note image',
-            excludeFromSemantics: true,
-            child: InkWell(
-              onTap: () => _viewImage(bytes),
-              borderRadius: AppRadius.std,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-                child: Image(
-                    image: thumbnail,
-                    height: _thumbnailHeight,
-                    fit: BoxFit.contain,
-                    // Kept for finders; the button above is the only name.
-                    semanticLabel: 'Note image',
-                    excludeFromSemantics: true,
-                    errorBuilder: (_, __, ___) =>
-                        const Text('Image could not be displayed')),
+      return Padding(
+        key: ObjectKey(_lines[index]),
+        padding: const EdgeInsets.symmetric(vertical: AtomicSpace.x2),
+        child: Align(
+          alignment: AlignmentDirectional.centerStart,
+          child: Stack(children: [
+            Semantics(
+              button: true,
+              label: 'View note image',
+              // One stop named once: the Semantics label above, without the
+              // tooltip or the image repeating it inside the button.
+              child: Tooltip(
+                message: 'View note image',
+                excludeFromSemantics: true,
+                child: InkWell(
+                  onTap: () => _viewImage(bytes),
+                  borderRadius: AtomicRadius.mediumAll,
+                  child: ClipRRect(
+                    borderRadius: AtomicRadius.mediumAll,
+                    child: ConstrainedBox(
+                      constraints:
+                          const BoxConstraints(minWidth: 120, minHeight: 48),
+                      child: Image(
+                          image: thumbnail,
+                          height: _thumbnailHeight,
+                          fit: BoxFit.contain,
+                          // Kept for finders; the button above is the only
+                          // name.
+                          semanticLabel: 'Note image',
+                          excludeFromSemantics: true,
+                          errorBuilder: (_, __, ___) => Text(
+                              'Image could not be displayed',
+                              style: AtomicType.bodyMedium
+                                  .copyWith(color: c.textSecondary))),
+                    ),
+                  ),
+                ),
               ),
             ),
-          ),
+            // The remove circle sits on the thumbnail's top-right corner and
+            // keeps the confirmation.
+            PositionedDirectional(
+              top: 0,
+              end: 0,
+              child: _NamedButton(Tooltip(
+                message: 'Remove image',
+                excludeFromSemantics: true,
+                child: AtomicPressable(
+                  onTap: () => _confirmRemoveImage(index),
+                  semanticsLabel: 'Remove image',
+                  excludeSemantics: true,
+                  child: Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                        color: c.inverseSurface, shape: BoxShape.circle),
+                    child: Icon(AtomicIcons.x, size: 20, color: c.onInverse),
+                  ),
+                ),
+              )),
+            ),
+          ]),
         ),
-        TextButton.icon(
-            onPressed: () => _confirmRemoveImage(index),
-            icon: const Icon(Icons.close),
-            label: const Text('Remove image')),
-      ]);
+      );
     }
     if (!line.isChecklist) {
       return _FieldName(
@@ -873,54 +1035,76 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
               textCapitalization: TextCapitalization.sentences,
               maxLines: null,
               minLines: _document.lines.length == 1 ? 5 : null,
-              style: AppType.bodyLg,
-              cursorColor: AppColors.signal,
-              decoration: _decoration('Start writing…'),
+              style: AtomicType.bodyLarge.copyWith(color: c.textPrimary),
+              cursorColor: c.textPrimary,
+              decoration: _decoration('Start writing…', AtomicType.bodyLarge),
             ),
           ));
     }
-    return Row(
+    // The checklist pill: round checkbox, the item's field, a remove button.
+    return Padding(
       key: ObjectKey(_lines[index]),
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Checkbox(
-          value: line.done,
-          activeColor: AppColors.signal,
-          semanticLabel: 'Complete item ${index + 1}',
-          onChanged: _locked
-              ? null
-              : (value) => setState(() => _document.setDone(index, value!)),
-        ),
-        Expanded(
-          child: _FieldName(
-              name: 'List item',
-              controller: _lines[index],
-              child: NoteFieldLocator(
-                name: 'note-item-$index',
-                child: TextField(
-                  readOnly: _document.isReadOnly || _locked,
-                  contextMenuBuilder: (context, state) =>
-                      _selectionMenu(state, index),
-                  controller: _lines[index],
-                  focusNode: _focus[index],
-                  textCapitalization: TextCapitalization.sentences,
-                  textInputAction: TextInputAction.next,
-                  maxLines: null,
-                  onSubmitted: (_) =>
-                      _insertLine(checklist: true, after: index),
-                  style: AppType.bodyMd.copyWith(
-                    decoration: line.done ? TextDecoration.lineThrough : null,
-                  ),
-                  decoration: _decoration('List item'),
+      padding: const EdgeInsets.symmetric(vertical: AtomicSpace.x1),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+            color: c.surfaceInset, borderRadius: AtomicRadius.largeAll),
+        child: Padding(
+          padding: const EdgeInsetsDirectional.only(start: AtomicSpace.x1),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              AtomicCheckbox(
+                checked: line.done,
+                semanticsLabel: 'Complete item ${index + 1}',
+                onChanged: _locked
+                    ? null
+                    : (value) =>
+                        setState(() => _document.setDone(index, value)),
+              ),
+              const SizedBox(width: AtomicSpace.x1),
+              Expanded(
+                child: _FieldName(
+                    name: 'List item',
+                    controller: _lines[index],
+                    child: NoteFieldLocator(
+                      name: 'note-item-$index',
+                      child: TextField(
+                        readOnly: _document.isReadOnly || _locked,
+                        contextMenuBuilder: (context, state) =>
+                            _selectionMenu(state, index),
+                        controller: _lines[index],
+                        focusNode: _focus[index],
+                        textCapitalization: TextCapitalization.sentences,
+                        textInputAction: TextInputAction.next,
+                        maxLines: null,
+                        onSubmitted: (_) =>
+                            _insertLine(checklist: true, after: index),
+                        style: AtomicType.bodyLarge.copyWith(
+                          color: line.done ? c.textSecondary : c.textPrimary,
+                          decoration:
+                              line.done ? TextDecoration.lineThrough : null,
+                          decorationColor: c.textSecondary,
+                        ),
+                        cursorColor: c.textPrimary,
+                        decoration:
+                            _decoration('List item', AtomicType.bodyLarge),
+                      ),
+                    )),
+              ),
+              _NamedButton(Tooltip(
+                message: 'Remove item ${index + 1}',
+                excludeFromSemantics: true,
+                child: AtomicPressable(
+                  onTap: () => _removeLine(index),
+                  semanticsLabel: 'Remove item ${index + 1}',
+                  excludeSemantics: true,
+                  child: Icon(AtomicIcons.x, size: 20, color: c.textSecondary),
                 ),
               )),
+            ],
+          ),
         ),
-        IconButton(
-          onPressed: () => _removeLine(index),
-          tooltip: 'Remove item ${index + 1}',
-          icon: const Icon(Icons.close, size: 18),
-        ),
-      ],
+      ),
     );
   }
 
@@ -954,9 +1138,13 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
     FocusManager.instance.primaryFocus?.unfocus();
     await showDialog<void>(
       context: context,
+      // The viewer sits on black in both themes.
+      barrierColor: _viewerBackdrop,
       builder: (_) => NoteImageViewer(bytes: bytes),
     );
   }
+
+  static const Color _viewerBackdrop = Color(0xE6010101); // black at 90%
 
   Widget _selectionMenu(EditableTextState state, int index) =>
       _document.isReadOnly
@@ -964,99 +1152,77 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
           : RichSelectionToolbar(editable: state, controller: _lines[index]);
 
   void _message(String text) {
-    if (mounted) MySnackBar(text: text, sec: 3000).showMySnackBar(context);
+    if (mounted) {
+      AtomicSnackBar(text: text, millis: 3000, error: true).show(context);
+    }
   }
 
-  Widget _round(String tooltip, IconData icon, VoidCallback action,
-          {bool destructive = false, bool active = false}) =>
-      Padding(
-        padding: const EdgeInsets.only(right: 4),
-        child: IconButton.filled(
-            onPressed:
-                _document.isReadOnly || _picking || _starting ? null : action,
-            tooltip: tooltip,
-            style: IconButton.styleFrom(
-                minimumSize: const Size(48, 48),
-                backgroundColor: destructive
-                    ? AppColors.error
-                    : active
-                        ? AppColors.signal
-                        : AppColors.ink,
-                foregroundColor: AppColors.paper),
-            icon: Icon(icon)),
-      );
-
+  /// Tag chips, then "Add tag" until the note has three tags.
   Widget _tags() => _document.isReadOnly
       ? const SizedBox.shrink()
-      : Wrap(
-          spacing: 8,
-          runSpacing: 4,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            for (final tag in _document.tags)
-              InputChip(
-                  label: Text('#$tag', style: AppType.labelMono),
-                  deleteButtonTooltipMessage: 'Remove tag $tag',
-                  onDeleted: () => setState(() => _document
-                      .setTags(_document.tags.where((v) => v != tag).toList())),
-                  side: const BorderSide(color: AppColors.ink),
-                  backgroundColor: AppColors.paper,
-                  shape: const StadiumBorder(),
-                  materialTapTargetSize: MaterialTapTargetSize.padded),
-            Tooltip(
-                message: 'Add tag',
-                excludeFromSemantics: true,
-                child: TextButton.icon(
-                    onPressed:
-                        _document.tags.length < NoteDocument.maxTagsPerNote
-                            ? _addTag
-                            : null,
-                    style:
-                        TextButton.styleFrom(minimumSize: const Size(48, 48)),
-                    icon: const Icon(Icons.add, size: 16),
-                    label: const Text('Tag', semanticsLabel: 'Add tag'))),
-          ],
+      : Padding(
+          padding: const EdgeInsets.only(top: AtomicSpace.x2),
+          child: Wrap(
+            spacing: AtomicSpace.chipGap,
+            runSpacing: AtomicSpace.x2,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              for (final tag in _document.tags)
+                TagChip(
+                    tag: tag,
+                    onRemove: () => setState(() => _document.setTags(
+                        _document.tags.where((v) => v != tag).toList()))),
+              if (_document.tags.length < NoteDocument.maxTagsPerNote)
+                _NamedButton(Tooltip(
+                    message: 'Add tag',
+                    excludeFromSemantics: true,
+                    child: AddTagChip(onPressed: _addTag))),
+            ],
+          ),
         );
 
   Future<void> _addTag() async {
     if (_locked) return;
     final controller = TextEditingController();
-    final tag = await showDialog<String>(
-        context: context,
-        builder: (context) => EditorPopup(
-              title: 'Add tag',
-              content: TextField(
-                  key: const ValueKey('note-tag-input'),
-                  controller: controller,
-                  autofocus: true,
-                  maxLength: NoteDocument.maxTagCharacters,
-                  // Show the count, but never cut pasted text: an over-long
-                  // tag is refused on Add with a message instead.
-                  maxLengthEnforcement: MaxLengthEnforcement.none,
-                  maxLines: 1,
-                  style: AppType.bodyLg,
-                  cursorColor: AppColors.signal,
-                  decoration: const InputDecoration(
-                      hintText: 'For example, morning',
-                      helperText: '15 characters maximum',
-                      border: OutlineInputBorder(),
-                      focusedBorder: OutlineInputBorder(
-                          borderSide: BorderSide(
-                              color: AppColors.signal,
-                              width: AppStroke.hairline))),
-                  onSubmitted: (value) => Navigator.pop(context, value)),
-              actions: [
-                EditorPopupButton(
-                  label: 'Cancel',
-                  onPressed: () => Navigator.pop(context),
-                ),
-                EditorPopupButton(
-                  label: 'Add',
-                  tone: EditorPopupActionTone.primary,
-                  onPressed: () => Navigator.pop(context, controller.text),
-                ),
-              ],
-            ));
+    // Add, or the keyboard's submit action, takes the field's text; Cancel,
+    // Back and the scrim add nothing.
+    final added = await showAtomicDialog<bool>(
+      context: context,
+      title: 'Add tag',
+      content: Builder(builder: (dialog) {
+        final c = dialog.colors;
+        return TextField(
+            key: const ValueKey('note-tag-input'),
+            controller: controller,
+            autofocus: true,
+            maxLength: NoteDocument.maxTagCharacters,
+            // Show the count, but never cut pasted text: an over-long
+            // tag is refused on Add with a message instead.
+            maxLengthEnforcement: MaxLengthEnforcement.none,
+            maxLines: 1,
+            style: AtomicType.bodyLarge.copyWith(color: c.textPrimary),
+            cursorColor: c.textPrimary,
+            decoration: AtomicInputDecoration.of(dialog,
+                    hintText: 'For example, morning')
+                .copyWith(
+                    helperText: '15 characters maximum',
+                    helperStyle:
+                        AtomicType.bodySmall.copyWith(color: c.textSecondary),
+                    helperMaxLines: 3,
+                    counterStyle:
+                        AtomicType.bodySmall.copyWith(color: c.textSecondary)),
+            onSubmitted: (_) => Navigator.of(dialog).pop(true));
+      }),
+      actions: const [
+        AtomicDialogAction(label: 'Cancel', result: false),
+        AtomicDialogAction(
+          label: 'Add',
+          result: true,
+          variant: AtomicButtonVariant.primary,
+        ),
+      ],
+    );
+    final tag = added == true ? controller.text : null;
     // Let the outgoing dialog release its field before disposing its controller.
     await Future<void>.delayed(const Duration(milliseconds: 250));
     controller.dispose();
@@ -1141,24 +1307,23 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
       return;
     }
     if (!_speechExplained) {
-      final accepted = await showDialog<bool>(
-          context: context,
-          builder: (context) => EditorPopup(
-                title: 'Dictate into your note',
-                content: const Text(
-                    'Your device speech service converts speech into text and may send audio to its provider. Atomic Notes does not save an audio recording. Microphone access is requested only when you start.'),
-                actions: [
-                  EditorPopupButton(
-                    label: 'Cancel',
-                    onPressed: () => Navigator.pop(context, false),
-                  ),
-                  EditorPopupButton(
-                    label: 'Start dictation',
-                    tone: EditorPopupActionTone.primary,
-                    onPressed: () => Navigator.pop(context, true),
-                  ),
-                ],
-              ));
+      // Consent copy from the copy proposal (ADR-013); never auto-started.
+      final accepted = await showAtomicDialog<bool>(
+        context: context,
+        title: 'Dictate into your note',
+        body: "Dictation uses your device's speech-recognition service. "
+            'It may send speech to its provider for processing. '
+            'Start dictation?',
+        icon: AtomicIcons.microphone,
+        actions: const [
+          AtomicDialogAction(label: 'Not now', result: false),
+          AtomicDialogAction(
+            label: 'Start dictation',
+            result: true,
+            variant: AtomicButtonVariant.primary,
+          ),
+        ],
+      );
       if (!mounted || accepted != true) return;
       _speechExplained = true;
     }
@@ -1250,25 +1415,34 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
     if (_locked) return;
     _cancelSpeech();
     final saved = widget.onDelete != null;
-    final accepted = await showDialog<bool>(
-        context: context,
-        builder: (context) => EditorPopup(
-              title: saved ? 'Move note to Recycle Bin?' : 'Discard this note?',
-              content: Text(saved
-                  ? 'The saved note can be restored from the Recycle Bin. Unsaved changes will be discarded.'
-                  : 'This unsaved draft will be discarded.'),
-              actions: [
-                EditorPopupButton(
-                  label: 'Cancel',
-                  onPressed: () => Navigator.pop(context, false),
-                ),
-                EditorPopupButton(
-                  label: saved ? 'Move to Recycle Bin' : 'Discard',
-                  tone: EditorPopupActionTone.destructive,
-                  onPressed: () => Navigator.pop(context, true),
-                ),
-              ],
-            ));
+    final permanent = saved && widget.deletePermanently;
+    final accepted = await showAtomicDialog<bool>(
+      context: context,
+      title: !saved
+          ? 'Discard this note?'
+          : permanent
+              ? 'Delete this note permanently?'
+              : 'Move note to Recycle Bin?',
+      body: !saved
+          ? 'This unsaved draft will be discarded.'
+          : permanent
+              ? 'It is removed from this guest workspace and cannot be restored. Unsaved changes will be discarded.'
+              : 'The saved note can be restored from the Recycle Bin. Unsaved changes will be discarded.',
+      icon: AtomicIcons.trash,
+      destructive: true,
+      actions: [
+        const AtomicDialogAction(label: 'Cancel', result: false),
+        AtomicDialogAction(
+          label: !saved
+              ? 'Discard'
+              : permanent
+                  ? 'Delete permanently'
+                  : 'Move to Recycle Bin',
+          result: true,
+          variant: AtomicButtonVariant.danger,
+        ),
+      ],
+    );
     if (!mounted || accepted != true) return;
     widget.onDelete?.call();
     _finish(false);
@@ -1277,49 +1451,102 @@ class _NotesCreaterPageState extends State<NotesCreaterPage>
   int get _wordCount =>
       NoteWordLimit.count(title: _title.text, lines: _document.lines);
 
-  Widget _wordLimitLabel() => MonoLabel(_wordLimit.label, small: true);
+  /// Over the ceiling the count reads in the danger text colour; Done
+  /// explains the limit.
+  Widget _wordCountLabel(int words) =>
+      _caption(words == 1 ? '1 word' : '$words words',
+          color: words > _wordLimit.ceiling ? context.colors.dangerText : null);
 
-  Widget _wordCountLabel(int words) => MonoLabel('$words WORDS',
-      small: true, color: words > _wordLimit.ceiling ? AppColors.error : null);
-
+  /// "12 words · 1 min read · 0/1 done", plus "Listening…" while dictating.
   Widget _statistics() {
     final words = _wordCount;
-    return Wrap(
-      spacing: AppSpace.lg,
-      runSpacing: AppSpace.xs,
-      children: [
-        _wordCountLabel(words),
-        MonoLabel('${(words / 200).ceil().clamp(1, 9999)} MIN READ',
-            small: true),
-        if (_listening || _starting)
-          const MonoLabel('LISTENING…', small: true, color: AppColors.signal),
-        if (_document.hasChecklist ||
-            (_draft.kind == NoteKind.todo &&
-                (!_document.hasChanges ||
-                    (_draft.body.isEmpty &&
-                        _document.lines.isEmpty &&
-                        _document.tags.isEmpty))))
-          MonoLabel(
-            '${_document.lines.where((line) => line.isChecklist && line.text.trim().isNotEmpty && line.done).length} / ${_document.lines.where((line) => line.isChecklist && line.text.trim().isNotEmpty).length} DONE',
-            small: true,
-            color: AppColors.signal,
-          ),
-      ],
-    );
+    return _Dotted([
+      _wordCountLabel(words),
+      _caption('${(words / 200).ceil().clamp(1, 9999)} min read'),
+      if (_document.hasChecklist ||
+          (_draft.kind == NoteKind.todo &&
+              (!_document.hasChanges ||
+                  (_draft.body.isEmpty &&
+                      _document.lines.isEmpty &&
+                      _document.tags.isEmpty))))
+        _caption(
+            '${_document.lines.where((line) => line.isChecklist && line.text.trim().isNotEmpty && line.done).length}'
+            '/${_document.lines.where((line) => line.isChecklist && line.text.trim().isNotEmpty).length} done'),
+      if (_listening || _starting)
+        Semantics(
+            liveRegion: true,
+            child: _caption('Listening…', color: context.colors.accentText)),
+    ]);
   }
 
-  static InputDecoration _decoration(String hint) => InputDecoration(
+  /// A borderless field (the title and the lines): no fill, no outline, the
+  /// hint in the field's own style.
+  InputDecoration _decoration(String hint, TextStyle style) => InputDecoration(
+        filled: false,
         border: InputBorder.none,
         enabledBorder: InputBorder.none,
         focusedBorder: InputBorder.none,
+        disabledBorder: InputBorder.none,
+        errorBorder: InputBorder.none,
+        focusedErrorBorder: InputBorder.none,
         hintText: hint,
-        contentPadding: const EdgeInsets.symmetric(vertical: AppSpace.sm),
+        hintStyle: style.copyWith(color: context.colors.textSecondary),
+        contentPadding: const EdgeInsets.symmetric(vertical: AtomicSpace.x2),
       );
 
+  static const _months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', //
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+
+  /// "9 Nov, 19:37"; another year adds it: "9 Nov 2025, 19:37".
   static String _stamp(DateTime value) {
     final local = value.toLocal();
     String pad(int number) => number.toString().padLeft(2, '0');
-    return '${local.year}-${pad(local.month)}-${pad(local.day)} ${pad(local.hour)}:${pad(local.minute)}';
+    final year = local.year == DateTime.now().year ? '' : ' ${local.year}';
+    return '${local.day} ${_months[local.month - 1]}$year, '
+        '${pad(local.hour)}:${pad(local.minute)}';
+  }
+}
+
+enum _EditorAction { copy, delete }
+
+/// One control, one semantics node, found by its tooltip too: the shared
+/// buttons keep their tooltip outside the pressable's node, so this merges
+/// the two. The node's name, role, state and actions are unchanged.
+class _NamedButton extends StatelessWidget {
+  const _NamedButton(this.child);
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => MergeSemantics(child: child);
+}
+
+/// Short captions in a row, separated by a middle dot that screen readers
+/// skip. Wraps at large text or on narrow screens.
+class _Dotted extends StatelessWidget {
+  const _Dotted(this.children);
+
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    final dot = ExcludeSemantics(
+      child: Text('·',
+          style: AtomicType.bodySmall
+              .copyWith(color: context.colors.textSecondary)),
+    );
+    return Wrap(
+      spacing: AtomicSpace.x2,
+      runSpacing: AtomicSpace.x1,
+      children: [
+        for (var i = 0; i < children.length; i++) ...[
+          if (i > 0) dot,
+          children[i],
+        ],
+      ],
+    );
   }
 }
 
@@ -1375,8 +1602,9 @@ class _RetiredDraft extends StatelessWidget {
   const _RetiredDraft();
 
   @override
-  Widget build(BuildContext context) => const ExcludeSemantics(
-        child: ColoredBox(color: AppColors.paper, child: SizedBox.expand()),
+  Widget build(BuildContext context) => ExcludeSemantics(
+        child: ColoredBox(
+            color: context.colors.canvas, child: const SizedBox.expand()),
       );
 }
 

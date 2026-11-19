@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../database/note_rich_content.dart';
-import '../theme/app_tokens.dart';
+import '../theme/atomic_colors.dart';
+import '../theme/atomic_tokens.dart';
+import '../theme/atomic_type.dart';
 import 'rich_text_controller.dart';
 
 /// One anchored menu: styles stay above the platform's unmodified actions.
@@ -19,6 +21,8 @@ class RichSelectionToolbar extends StatelessWidget {
         ? media.viewInsets.bottom
         : media.padding.bottom;
     final native = editable.contextMenuButtonItems;
+    final c = context.colors;
+    final light = Theme.of(context).brightness == Brightness.light;
     return Padding(
       padding: EdgeInsets.fromLTRB(8, top, 8, bottom + 8),
       child: CustomSingleChildLayout(
@@ -38,9 +42,9 @@ class RichSelectionToolbar extends StatelessWidget {
                 if (native.isNotEmpty) ...[
                   const SizedBox(height: 8),
                   Material(
-                    color: AppColors.paper,
-                    elevation: 2,
-                    borderRadius: BorderRadius.circular(24),
+                    color: c.surfaceRaised,
+                    elevation: light ? 2 : 0,
+                    borderRadius: AtomicRadius.pill,
                     clipBehavior: Clip.antiAlias,
                     child: SingleChildScrollView(
                       scrollDirection: Axis.horizontal,
@@ -64,6 +68,9 @@ class RichSelectionToolbar extends StatelessWidget {
   }
 }
 
+/// B, I, U, S and H as round toggles on an inverse pill (components spec,
+/// Rich selection toolbar). An active style is an accent fill with a black
+/// glyph.
 class NoteFormatBar extends StatelessWidget {
   const NoteFormatBar({super.key, required this.controller});
   final RichNoteController controller;
@@ -76,67 +83,77 @@ class NoteFormatBar extends StatelessWidget {
   ];
 
   @override
-  Widget build(BuildContext context) => AnimatedBuilder(
-        animation: controller,
-        builder: (context, _) => Material(
-          key: const ValueKey('note-format-bar'),
-          color: AppColors.ink,
-          borderRadius: BorderRadius.circular(16),
-          clipBehavior: Clip.antiAlias,
-          child: Padding(
-            padding: const EdgeInsets.all(AppSpace.sm),
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  spacing: AppSpace.xs,
-                  children: [
-                    for (final (letter, label, flag) in _styles)
-                      // Merged so the on/off state is on the button itself,
-                      // not on a separate unnamed node around it.
-                      MergeSemantics(
-                          child: Semantics(
-                        toggled: controller.hasStyle(flag),
-                        child: IconButton(
-                          tooltip: label,
-                          isSelected: controller.hasStyle(flag),
-                          onPressed: () => controller.toggleStyle(flag),
-                          style: IconButton.styleFrom(
-                            minimumSize: const Size(48, 48),
-                            foregroundColor: AppColors.paper,
-                            backgroundColor: controller.hasStyle(flag)
-                                ? AppColors.signal
-                                : Colors.transparent,
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12)),
-                          ),
-                          // The tooltip names the style; the glyph is
-                          // visual only, so it is not read as a letter too.
-                          icon: ExcludeSemantics(
-                              child: Text(letter,
-                                  style: TextStyle(
-                                    color: AppColors.paper,
-                                    fontSize: 18,
-                                    fontWeight: letter == 'B' || letter == 'H'
-                                        ? FontWeight.bold
-                                        : FontWeight.normal,
-                                    fontStyle: letter == 'I'
-                                        ? FontStyle.italic
-                                        : FontStyle.normal,
-                                    decorationColor: AppColors.paper,
-                                    decoration: letter == 'U'
-                                        ? TextDecoration.underline
-                                        : letter == 'S'
-                                            ? TextDecoration.lineThrough
-                                            : null,
-                                  ))),
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (context, _) => Material(
+        key: const ValueKey('note-format-bar'),
+        color: c.inverseSurface,
+        borderRadius: AtomicRadius.pill,
+        clipBehavior: Clip.antiAlias,
+        child: Padding(
+          padding: const EdgeInsets.all(AtomicSpace.x2),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+                mainAxisSize: MainAxisSize.min,
+                spacing: AtomicSpace.x1,
+                children: [
+                  for (final (letter, label, flag) in _styles)
+                    // Merged so the on/off state is on the button itself,
+                    // not on a separate unnamed node around it.
+                    MergeSemantics(
+                        child: Semantics(
+                      toggled: controller.hasStyle(flag),
+                      // A round toggle filling its 48 dp target.
+                      child: IconButton(
+                        tooltip: label,
+                        isSelected: controller.hasStyle(flag),
+                        onPressed: () => controller.toggleStyle(flag),
+                        style: IconButton.styleFrom(
+                          minimumSize: const Size(48, 48),
+                          foregroundColor: controller.hasStyle(flag)
+                              ? c.onAccent
+                              : c.onInverse,
+                          backgroundColor: controller.hasStyle(flag)
+                              ? c.accent
+                              : Colors.transparent,
+                          shape: const CircleBorder(),
                         ),
-                      )),
-                  ]),
-            ),
+                        // The tooltip names the style; the glyph is
+                        // visual only, so it is not read as a letter too.
+                        icon: ExcludeSemantics(
+                            child: Text(letter,
+                                style: TextStyle(
+                                  fontFamily: AtomicFonts.sans,
+                                  color: controller.hasStyle(flag)
+                                      ? c.onAccent
+                                      : c.onInverse,
+                                  fontSize: 18,
+                                  fontWeight: letter == 'B' || letter == 'H'
+                                      ? FontWeight.bold
+                                      : FontWeight.normal,
+                                  fontStyle: letter == 'I'
+                                      ? FontStyle.italic
+                                      : FontStyle.normal,
+                                  decorationColor: controller.hasStyle(flag)
+                                      ? c.onAccent
+                                      : c.onInverse,
+                                  decoration: letter == 'U'
+                                      ? TextDecoration.underline
+                                      : letter == 'S'
+                                          ? TextDecoration.lineThrough
+                                          : null,
+                                ))),
+                      ),
+                    )),
+                ]),
           ),
         ),
-      );
+      ),
+    );
+  }
 }
 
 class _MenuPosition extends SingleChildLayoutDelegate {
