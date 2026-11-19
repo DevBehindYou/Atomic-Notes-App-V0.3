@@ -313,7 +313,7 @@ void main() {
         (tester) async {
       final home = _Home();
       await home.open(tester);
-      await tester.tap(find.text('NEW NOTE'));
+      await tester.tap(find.byTooltip('New note'));
       await tester.pumpAndSettle();
       expect(find.byType(NotesCreaterPage), findsOneWidget);
       await tester.tap(find.text('Done'));
