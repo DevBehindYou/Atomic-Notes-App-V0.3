@@ -24,8 +24,9 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 /// device, waiting to be restored or removed for good.
 ///
 /// Deleting a note never destroys it at once: its content stays here until it
-/// is deleted forever. What that does in the cloud depends on the note (see
-/// [BinCloudState]), so the page and both confirmations say which case applies.
+/// is deleted forever. Both confirmations say what that removal does now (see
+/// [BinRemovalStep]), and each confirmed removal covers exactly the notes it
+/// showed (see [BinRemoval]).
 class RecycleBinPage extends StatelessWidget {
   /// [source] and [now] are only given by tests; the app uses the real notes
   /// store and the device clock.
@@ -53,75 +54,61 @@ class RecycleBinPage extends StatelessWidget {
         : 'Deleted $day ${d.year}';
   }
 
-  /// Where the cloud copy of the deleted [note] stands, read from its sync
-  /// fields the way the store's `deleteForever` reads them.
+  /// What deleting [note] for good has to do first. Read from its sync flag
+  /// only: the page never infers the note's past in the cloud.
   @visibleForTesting
-  static BinCloudState cloudState(Note note) {
-    if (note.dirty) return BinCloudState.pendingDeletion;
-    return note.serverVersion > 0
-        ? BinCloudState.synced
-        : BinCloudState.localOnly;
-  }
+  static BinRemovalStep removalStep(Note note) => BinRemovalStep.of(note);
 
   /// The page explanation under the title.
   @visibleForTesting
   static const String explanation =
       'Deleted notes wait here. Restore one to put it back, or delete it for '
-      'good to remove it from this device. A deletion that has not reached '
-      'the cloud yet syncs first, and a synced deletion moves the cloud file '
-      'to Google Drive trash. Notes that never synced have no cloud copy.';
+      'good to remove it from this device. A note with changes still waiting '
+      'to sync is synced first, and stays here if that sync cannot finish. '
+      'Deleting here does not promise to remove every copy kept elsewhere.';
 
-  /// The body of the "Delete forever" confirmation for [note].
+  /// The body of the "Delete forever" confirmation for [note]: what this
+  /// removal does now, not what happened to the note before.
   @visibleForTesting
-  static String deleteForeverBody(Note note) => switch (cloudState(note)) {
-        BinCloudState.localOnly =>
-          'This note never synced, so it has no cloud copy. It is removed '
-              'from this device and cannot be recovered.',
-        BinCloudState.synced =>
-          'It is removed from this device. Its deletion has already synced, '
-              'so its cloud file was moved to Google Drive trash, which '
-              'Google Drive manages.',
-        BinCloudState.pendingDeletion =>
-          'Its deletion has not reached the cloud yet. It syncs first, and '
-              'only then is the note removed from this device. Without Cloud '
-              'Sync, or if the sync fails, it stays in the Recycle Bin.',
+  static String deleteForeverBody(Note note) => switch (removalStep(note)) {
+        BinRemovalStep.removeNow =>
+          'It is removed from this device now and cannot be brought back from '
+              'the Recycle Bin. It has no changes waiting to sync, so this '
+              'sends nothing to the cloud.',
+        BinRemovalStep.syncFirst =>
+          'It has changes that have not finished syncing. They sync first, '
+              'and only then is the note removed from this device. Without '
+              'Cloud Sync, or if the sync fails, it stays in the Recycle Bin.',
       };
 
-  /// What "Empty bin" does to [notes], one line per kind of note present.
+  /// What "Empty bin" does to [notes]: how many it removes, and how many of
+  /// them need no sync.
   @visibleForTesting
   static List<String> emptyBinConsequences(List<Note> notes) {
     final count = notes.length;
-    int kind(BinCloudState s) => notes.where((n) => cloudState(n) == s).length;
-    final local = kind(BinCloudState.localOnly);
-    final synced = kind(BinCloudState.synced);
+    final now =
+        notes.where((n) => removalStep(n) == BinRemovalStep.removeNow).length;
     return [
       count == 1
           ? '1 deleted note is removed from this device for good.'
           : '$count deleted notes are removed from this device for good.',
-      if (local == 1) '1 never synced, so it has no cloud copy.',
-      if (local > 1) '$local never synced, so they have no cloud copy.',
-      if (synced == 1)
-        '1 deletion has already synced, so the cloud file of that note was '
-            'moved to Google Drive trash, which Google Drive manages.',
-      if (synced > 1)
-        '$synced deletions have already synced, so the cloud files of those '
-            'notes were moved to Google Drive trash, which Google Drive '
-            'manages.',
+      if (now == 1)
+        '1 has no changes waiting to sync, so nothing is sent for it.',
+      if (now > 1)
+        '$now have no changes waiting to sync, so nothing is sent for them.',
     ];
   }
 
-  /// The warning "Empty bin" adds when some deletions must sync first, or
-  /// null when none must.
+  /// The warning "Empty bin" adds when some notes must sync first, or null
+  /// when none must.
   @visibleForTesting
   static String? emptyBinWarning(List<Note> notes) {
-    final pending = notes
-        .where((n) => cloudState(n) == BinCloudState.pendingDeletion)
-        .length;
+    final pending =
+        notes.where((n) => removalStep(n) == BinRemovalStep.syncFirst).length;
     if (pending == 0) return null;
-    return '${pending == 1 ? '1 deletion has' : '$pending deletions have'} '
-        'not reached the cloud yet. ${pending == 1 ? 'It syncs' : 'They sync'} '
-        'first. Without Cloud Sync, or if the sync fails, nothing is removed '
-        'and the bin stays as it is.';
+    return '${pending == 1 ? '1 note has' : '$pending notes have'} changes '
+        'that have not finished syncing. They sync first. Without Cloud Sync, '
+        'or if the sync fails, nothing is deleted for good.';
   }
 
   @override
@@ -132,24 +119,6 @@ class RecycleBinPage extends StatelessWidget {
       child: _RecycleBinView(now: now ?? DateTime.now),
     );
   }
-}
-
-/// What deleting a bin note forever means for its cloud copy. The store
-/// forgets a note that never reached the cloud at once, but sends a deletion
-/// the cloud has not received before it forgets the note, and keeps the note
-/// when that cannot happen (Cloud Sync off, or the sync fails). The cloud
-/// moves a note's Drive file to Google Drive trash when its deletion arrives.
-enum BinCloudState {
-  /// Never uploaded and not waiting to be: there is no cloud copy.
-  localOnly,
-
-  /// Its deletion still has to reach the cloud. This also covers a note
-  /// whose first upload may have been in flight: the page cannot tell, so it
-  /// says the cautious thing.
-  pendingDeletion,
-
-  /// Its deletion has reached the cloud.
-  synced,
 }
 
 /// What a card is waiting for while one of its actions runs.
@@ -211,6 +180,9 @@ class _RecycleBinViewState extends State<_RecycleBinView> {
   Future<void> _deleteForever(Note note) async {
     final cubit = context.read<RecycleBinCubit>();
     final name = note.title.trim();
+    // The words and the confirmed removal come from the same note, now.
+    final body = RecycleBinPage.deleteForeverBody(note);
+    final removal = cubit.confirm([note]);
     final confirmed = await showAtomicDialog<bool>(
       context: context,
       // Destructive: only the buttons close it, as before.
@@ -220,7 +192,7 @@ class _RecycleBinViewState extends State<_RecycleBinView> {
       title: name.isEmpty
           ? 'Delete this note for good?'
           : 'Delete "$name" for good?',
-      body: RecycleBinPage.deleteForeverBody(note),
+      body: body,
       actions: const [
         AtomicDialogAction(label: 'Cancel', result: false),
         AtomicDialogAction(
@@ -231,7 +203,7 @@ class _RecycleBinViewState extends State<_RecycleBinView> {
       ],
     );
     if (confirmed != true || !mounted) return;
-    await _run(note, _Pending.deleteForever, () => cubit.deleteForever(note));
+    await _run(note, _Pending.deleteForever, () => cubit.remove(removal));
   }
 
   Future<void> _openMenu() async {
@@ -253,6 +225,9 @@ class _RecycleBinViewState extends State<_RecycleBinView> {
 
   void _emptyBin(List<Note> notes) {
     final cubit = context.read<RecycleBinCubit>();
+    // Frozen with the words: a note deleted while the slide is open is not
+    // part of it.
+    final removal = cubit.confirm(notes, wholeBin: true);
     showDialog<void>(
       context: context,
       barrierDismissible: false,
@@ -262,7 +237,7 @@ class _RecycleBinViewState extends State<_RecycleBinView> {
         consequences: RecycleBinPage.emptyBinConsequences(notes),
         warning: RecycleBinPage.emptyBinWarning(notes),
         onConfirmed: () async {
-          final message = await cubit.emptyBin();
+          final message = await cubit.remove(removal);
           if (dialogContext.mounted) Navigator.pop(dialogContext);
           if (mounted) _show(message);
         },
