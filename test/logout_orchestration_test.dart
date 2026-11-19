@@ -11,8 +11,8 @@ import 'package:atomic_notes/page/settings_page.dart';
 import 'package:atomic_notes/profile/profile_store.dart';
 import 'package:atomic_notes/state/notes/notes_bloc.dart';
 import 'package:atomic_notes/state/profile/profile_cubit.dart';
-import 'package:atomic_notes/theme/editorial.dart';
-import 'package:atomic_notes/utility/component/logout_dialogbox.dart';
+import 'package:atomic_notes/ui/buttons/atomic_button.dart';
+import 'package:atomic_notes/ui/overlays/atomic_dialog.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -522,15 +522,16 @@ void main() {
                   finished++;
                   done.complete();
                 }))));
-    await tester.tap(find.text('LOG OUT'));
+    await tester.scrollUntilVisible(find.text('Log out'), 300);
+    await tester.tap(find.text('Log out'));
     await tester.pumpAndSettle();
-    expect(find.byType(DialogBoxLogout), findsOneWidget);
+    expect(find.byType(AtomicDialog<bool>), findsOneWidget);
     // UI state uses a controlled coordinator; actual Hive delivery/restart is
     // exercised by the repository cases above, outside the simulated clock.
-    await tester.tap(find.widgetWithText(InkActionButton, 'CONFIRM'));
+    await tester.tap(find.widgetWithText(AtomicButton, 'Log out'));
     await tester.pump(); expect(entered.isCompleted, isTrue);
     await tester.pump(const Duration(milliseconds: 400));
-    expect(find.byType(DialogBoxLogout), findsNothing);
+    expect(find.byType(AtomicDialog<bool>), findsNothing);
     expect(find.text('Emergency InstaSync for logout — no Energy used…'),
         findsOneWidget);
     expect(tester.widget<PopScope>(find.byType(PopScope)).canPop, isFalse);
