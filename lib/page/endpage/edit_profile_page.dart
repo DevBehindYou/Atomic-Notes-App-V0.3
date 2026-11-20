@@ -1,5 +1,6 @@
 import 'package:atomic_notes/api/atomic_notes_api.dart';
 import 'package:atomic_notes/authentication/auth_services/auth_service.dart';
+import 'package:atomic_notes/profile/profile_store.dart';
 import 'package:atomic_notes/state/profile/profile_cubit.dart';
 import 'package:atomic_notes/state/two_factor/two_factor_armed_cubit.dart';
 import 'package:atomic_notes/theme/atomic_colors.dart';
@@ -21,6 +22,43 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+/// What [ProfileUsernameUpdater.update] established (review R32).
+enum UsernameUpdateOutcome {
+  /// The Server took the name and this device cached it.
+  saved,
+
+  /// The Server did not take the name, or could not be reached.
+  rejected,
+
+  /// The Server took the name, but caching it on this device failed. The
+  /// update is not a failure; refresh the handle to reconcile.
+  savedUncached,
+}
+
+/// The Profile page's username save: the same calls, in the same order, as
+/// [AuthServices.updateUserInfo], with a typed outcome instead of a message so
+/// the page never reads success from visible copy (review R32).
+class ProfileUsernameUpdater {
+  /// [api] defaults to [ApiClient.instance]; tests pass a fixture client.
+  ProfileUsernameUpdater({ApiClient? api}) : _api = api ?? ApiClient.instance;
+
+  final ApiClient _api;
+
+  Future<UsernameUpdateOutcome> update(String username) async {
+    try {
+      await _api.setUsername(username);
+    } catch (_) {
+      return UsernameUpdateOutcome.rejected;
+    }
+    try {
+      await ProfileStore.instance.cacheUsername(username);
+    } catch (_) {
+      return UsernameUpdateOutcome.savedUncached;
+    }
+    return UsernameUpdateOutcome.saved;
+  }
+}
+
 /// Profile (screens spec, Profile): the picture, the username, and the
 /// privacy and security choices.
 class EditProfilePage extends StatefulWidget {
@@ -38,7 +76,7 @@ class EditProfilePage extends StatefulWidget {
   final Future<String> Function()? loadUsername;
 
   /// Saves a new username and says what happened. Defaults to
-  /// [AuthServices.updateUsername]; injectable for tests.
+  /// [ProfileUsernameUpdater.update]; injectable for tests.
   final Future<UsernameUpdateOutcome> Function(String username)?
       updateUsername;
 
@@ -53,6 +91,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
   final String _email = ApiClient.instance.currentUserEmail ?? '';
   final TextEditingController _usernameController = TextEditingController();
   final AuthServices _serve = AuthServices();
+  final ProfileUsernameUpdater _updater = ProfileUsernameUpdater();
 
   /// The username without the leading "@", or null until it has loaded.
   String? _username;
@@ -143,7 +182,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
 
       try {
         final UsernameUpdateOutcome outcome =
-            await (widget.updateUsername ?? _serve.updateUsername)(name);
+            await (widget.updateUsername ?? _updater.update)(name);
         if (!mounted) return;
         switch (outcome) {
           case UsernameUpdateOutcome.saved:

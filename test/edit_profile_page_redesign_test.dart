@@ -5,7 +5,6 @@
 
 import 'dart:async';
 
-import 'package:atomic_notes/authentication/auth_services/auth_service.dart';
 import 'package:atomic_notes/page/endpage/edit_profile_page.dart';
 import 'package:atomic_notes/profile/profile_source.dart';
 import 'package:atomic_notes/profile/profile_store.dart';

@@ -1,4 +1,4 @@
-// Review R32: the production username adapter reports a typed outcome, and
+// Review R32: the Profile page's username adapter reports a typed outcome, and
 // the Profile page keeps the draft unless the save is confirmed. The Server
 // is a synthetic in-process transport; the local cache is a temporary Hive
 // box. No network, account data or real notes.
@@ -7,7 +7,6 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:atomic_notes/api/atomic_notes_api.dart';
-import 'package:atomic_notes/authentication/auth_services/auth_service.dart';
 import 'package:atomic_notes/page/endpage/edit_profile_page.dart';
 import 'package:atomic_notes/profile/profile_source.dart';
 import 'package:atomic_notes/profile/profile_store.dart';
@@ -39,7 +38,7 @@ class _Server {
     return http.Response('{"error":"unexpected"}', 404);
   });
 
-  AuthServices get auth => AuthServices(
+  ProfileUsernameUpdater get updater => ProfileUsernameUpdater(
         api: ApiClient.forTest(
             client: transport,
             baseUrl: Uri.parse('https://fixture.invalid/api')),
@@ -86,7 +85,7 @@ Future<void> _open(
       theme: AtomicTheme.light,
       home: EditProfilePage(
         loadUsername: () async => handle(),
-        updateUsername: server.auth.updateUsername,
+        updateUsername: server.updater.update,
         checkConnectivity: () async => const [ConnectivityResult.wifi],
       ),
     ),
@@ -108,37 +107,27 @@ Future<void> _saveDraft(WidgetTester tester, String name) async {
 }
 
 void main() {
-  group('AuthServices.updateUsername (real adapter)', () {
+  group('ProfileUsernameUpdater (real adapter)', () {
     test('a Server failure is a rejection, and nothing is cached', () async {
       final server = _Server()..status = 500;
       final before = ProfileStore.instance.cachedUsername;
-      expect(await server.auth.updateUsername('grace'),
-          UsernameUpdateOutcome.rejected);
+      expect(
+          await server.updater.update('grace'), UsernameUpdateOutcome.rejected);
       expect(server.names, ['grace']);
       expect(ProfileStore.instance.cachedUsername, before);
     });
 
     test('an unreachable Server is a rejection', () async {
       final server = _Server()..unreachable = true;
-      expect(await server.auth.updateUsername('grace'),
-          UsernameUpdateOutcome.rejected);
+      expect(
+          await server.updater.update('grace'), UsernameUpdateOutcome.rejected);
     });
 
     test('a Server success is saved and cached', () async {
       final server = _Server();
-      expect(await server.auth.updateUsername('grace'),
-          UsernameUpdateOutcome.saved);
+      expect(await server.updater.update('grace'), UsernameUpdateOutcome.saved);
       expect(server.names, ['grace']);
       expect(ProfileStore.instance.cachedUsername, 'grace');
-    });
-
-    test('updateUserInfo keeps its messages for its callers', () async {
-      final server = _Server();
-      expect(await server.auth.updateUserInfo(username: 'ada'),
-          'Username updated wait for refresh');
-      server.status = 500;
-      expect(await server.auth.updateUserInfo(username: 'grace'),
-          'Error updating username');
     });
   });
 
@@ -185,7 +174,7 @@ void main() {
 
     test('is reported as saved but uncached, not as a rejection', () async {
       final server = _Server();
-      expect(await server.auth.updateUsername('grace'),
+      expect(await server.updater.update('grace'),
           UsernameUpdateOutcome.savedUncached);
       expect(server.names, ['grace']);
     });
