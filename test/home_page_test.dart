@@ -7,8 +7,9 @@ import 'package:atomic_notes/database/note.dart';
 import 'package:atomic_notes/mascot/mascot_view.dart';
 import 'package:atomic_notes/page/home_page.dart';
 import 'package:atomic_notes/state/notes/notes_bloc.dart';
-import 'package:atomic_notes/theme/app_tokens.dart';
-import 'package:atomic_notes/theme/editorial.dart';
+import 'package:atomic_notes/ui/buttons/atomic_fab.dart';
+import 'package:atomic_notes/ui/chips/atomic_filter_chip.dart';
+import 'package:atomic_notes/ui/feedback/status_strip.dart';
 import 'package:atomic_notes/utility/component/notes_builder.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -86,6 +87,16 @@ Future<NotesBloc> _open(
   return bloc;
 }
 
+// UX-03-home: the search field opens from the header's search button.
+Future<void> _openSearch(WidgetTester tester) async {
+  await tester.tap(find.byTooltip('Search notes'));
+  await tester.pump();
+  await tester.pumpAndSettle();
+}
+
+final _newNote = find.byTooltip('New note');
+final _searchButton = find.byTooltip('Search notes');
+
 void main() {
   testWidgets('mascot alone opens status without starting sync',
       (tester) async {
@@ -103,29 +114,29 @@ void main() {
 
   group('welcome', () {
     for (final entry in [
-      (DateTime(2026, 10, 14, 8), 'GOOD MORNING'),
-      (DateTime(2026, 10, 14, 13), 'GOOD AFTERNOON'),
-      (DateTime(2026, 10, 14, 20), 'GOOD EVENING'),
+      (DateTime(2026, 10, 14, 8), 'Good morning'),
+      (DateTime(2026, 10, 14, 13), 'Good afternoon'),
+      (DateTime(2026, 10, 14, 20), 'Good evening'),
     ]) {
       testWidgets('uses local greeting ${entry.$2} and current date', (
         tester,
       ) async {
         await _open(tester, _source(), now: () => entry.$1);
-        expect(find.text('${entry.$2} · 2026-10-14'), findsOneWidget);
-        final heading = tester.widget<Text>(
-          find.byKey(const ValueKey('notes-welcome-heading')),
+        // The status strip greets by the local hour (no date line).
+        expect(find.text(entry.$2), findsOneWidget);
+        final strip = tester.widget<StatusStrip>(
+          find.byKey(const ValueKey('notes-usage')),
         );
-        expect(heading.textSpan!.toPlainText(), 'CLEAR HEAD. WRITE IT DOWN.');
-        expect(
-          (heading.textSpan! as TextSpan).children!.last.style!.color,
-          AppColors.signal,
-        );
-        expect(find.text('3 ON DEVICE'), findsOneWidget);
+        expect(strip.greeting, entry.$2);
+        expect(strip.quotaLevel, QuotaLevel.normal);
+        expect(find.textContaining('3 of 30 notes'), findsOneWidget);
         expect(find.textContaining('IN CLOUD'), findsNothing);
       });
     }
 
-    testWidgets('four-second welcome collapses without removing controls', (
+    // Spec (Home status strip): the greeting no longer collapses on a 4 s
+    // timer; the strip scrolls away with the notes instead.
+    testWidgets('four-second welcome no longer collapses; controls stay', (
       tester,
     ) async {
       // testWidgets owns its enabled semantics handle and disposes it before
@@ -133,7 +144,7 @@ void main() {
       await _open(tester, _source(), now: () => DateTime(2026, 10, 14, 20));
       _stage('mounted');
       final welcome = find.byKey(const ValueKey('notes-welcome-section'));
-      final search = find.byType(TextField);
+      final search = _searchButton;
       final originalHeight = tester.getSize(welcome).height;
       final originalSearchTop = tester.getTopLeft(search).dy;
       await tester.pump(const Duration(milliseconds: 3999));
@@ -142,34 +153,35 @@ void main() {
       await tester.pump(const Duration(milliseconds: 140));
       _stage('mid_animation');
       expect(tester.getSize(welcome).height, greaterThan(0));
-      expect(tester.getSize(welcome).height, lessThan(originalHeight));
+      expect(tester.getSize(welcome).height, originalHeight);
       final opacity = tester.widget<Opacity>(
         find.descendant(of: welcome, matching: find.byType(Opacity)).first,
       );
-      expect(opacity.opacity, allOf(greaterThan(0.0), lessThan(1.0)));
+      expect(opacity.opacity, 1.0);
       await tester.pump(const Duration(milliseconds: 160));
       _stage('collapsed');
-      expect(tester.getSize(welcome).height, 0);
+      expect(tester.getSize(welcome).height, originalHeight);
       expect(
         tester.getTopLeft(search).dy,
-        closeTo(originalSearchTop - originalHeight, 0.01),
+        closeTo(originalSearchTop, 0.01),
       );
-      expect(find.text('3 / 30').hitTestable(), findsOneWidget);
+      expect(
+          find.textContaining('3 of 30 notes').hitTestable(), findsOneWidget);
       _stage('controls');
-      expect(find.text('NEW NOTE').hitTestable(), findsOneWidget);
+      expect(_newNote.hitTestable(), findsOneWidget);
       expect(find.byKey(const ValueKey('mascot-character')).hitTestable(),
           findsOneWidget);
-      expect(find.byType(DataChip).hitTestable(), findsWidgets);
+      expect(find.byType(AtomicFilterChip).hitTestable(), findsWidgets);
       _stage('semantics');
       expect(
-        find.semantics.byLabel('Clear head. Write it down.'),
-        findsNothing,
+        find.semantics.byLabel('Good evening'),
+        findsOneWidget,
       );
       _stage('clean');
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('background pause and resume reset date and welcome interval', (
+    testWidgets('background pause and resume reset the greeting', (
       tester,
     ) async {
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
@@ -195,15 +207,15 @@ void main() {
         tester.binding.handleAppLifecycleStateChanged(state);
       }
       await tester.pump();
-      expect(find.text('GOOD MORNING · 2026-10-15'), findsOneWidget);
+      expect(find.text('Good morning'), findsOneWidget);
       await tester.pump(const Duration(milliseconds: 3999));
       expect(tester.getSize(welcome).height, greaterThan(0));
       await tester.pump(const Duration(milliseconds: 1));
       await tester.pump(const Duration(milliseconds: 300));
-      expect(tester.getSize(welcome).height, 0);
+      expect(tester.getSize(welcome).height, greaterThan(0));
     });
 
-    testWidgets('muted home starts its four-second interval when shown', (
+    testWidgets('muted home reads the greeting clock when shown', (
       tester,
     ) async {
       final source = _source();
@@ -233,10 +245,10 @@ void main() {
       expect(tester.getSize(welcome).height, greaterThan(0));
       await tester.pump(const Duration(milliseconds: 1));
       await tester.pump(const Duration(milliseconds: 300));
-      expect(tester.getSize(welcome).height, 0);
+      expect(tester.getSize(welcome).height, greaterThan(0));
     });
 
-    testWidgets('reduced motion collapses immediately after four seconds', (
+    testWidgets('reduced motion keeps the strip in place after four seconds', (
       tester,
     ) async {
       final bloc = await _open(tester, _source());
@@ -256,7 +268,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 3999));
       expect(tester.getSize(welcome).height, greaterThan(0));
       await tester.pump(const Duration(milliseconds: 1));
-      expect(tester.getSize(welcome).height, 0);
+      expect(tester.getSize(welcome).height, greaterThan(0));
       expect(tester.takeException(), isNull);
     });
 
@@ -305,7 +317,8 @@ void main() {
         tester.view.physicalSize = Size(960, viewHeight * 3);
         await tester.pump();
         final welcome = find.byKey(const ValueKey('notes-welcome-section'));
-        final usage = find.text('123 / 200 · 123 UNSYNCED');
+        final usage =
+            find.text('123 of 200 notes · 123 note changes waiting to sync');
         final usageText = tester.widget<Text>(usage);
         expect(usageText.maxLines, isNull);
         expect(MediaQuery.textScalerOf(tester.element(usage)).scale(11), 22);
@@ -323,12 +336,13 @@ void main() {
         );
         void expectUsable() {
           expect(tester.takeException(), isNull);
-          expect(find.text('123 ON DEVICE').hitTestable(), findsOneWidget);
+          expect(find.textContaining('123 of 200 notes').hitTestable(),
+              findsOneWidget);
           expect(usage.hitTestable(), findsOneWidget);
           final bounds = tester.getRect(usage);
           expect(bounds.left, greaterThanOrEqualTo(0));
           expect(bounds.right, lessThanOrEqualTo(320));
-          expect(find.byType(TextField).hitTestable(), findsOneWidget);
+          expect(_searchButton.hitTestable(), findsOneWidget);
           expect(find.byKey(const ValueKey('mascot-character')).hitTestable(),
               findsOneWidget);
           final card = tester.getRect(find.byType(NotesBulder).first);
@@ -336,7 +350,7 @@ void main() {
             card.intersect(Rect.fromLTWH(0, 0, 320, viewHeight)).height,
             greaterThan(0),
           );
-          expect(find.text('NEW NOTE').hitTestable(), findsOneWidget);
+          expect(_newNote.hitTestable(), findsOneWidget);
           expect(bloc.state.pending, 123);
         }
 
@@ -344,36 +358,46 @@ void main() {
         expect(find.byType(NestedScrollView), findsOneWidget);
         await tester.drag(find.byType(NestedScrollView), const Offset(0, -500));
         await tester.pump();
-        expect(find.byType(NotesBulder).first.hitTestable(), findsOneWidget);
+        expect(find.byType(NotesBulder).hitTestable().first, findsOneWidget);
         await tester.pump(const Duration(seconds: 4));
         await tester.pump(const Duration(milliseconds: 300));
         await tester.drag(find.byType(NestedScrollView), const Offset(0, 500));
         await tester.pumpAndSettle();
-        expect(tester.getSize(welcome).height, 0);
+        // No collapse: scrolled back, the strip is whole again.
+        expect(tester.getSize(welcome).height, initialHeight);
         expectUsable();
-        expect(find.byType(NotesBulder).first.hitTestable(), findsOneWidget);
+        // The taller strip leaves the first card's top in view, not its centre.
+        expect(
+            find
+                .byType(NotesBulder)
+                .hitTestable(at: const Alignment(-0.9, -0.9))
+                .first,
+            findsOneWidget);
       },
     );
 
     testWidgets(
-      'selection and responsive layout do not restart a collapsed welcome',
+      'selection and responsive layout keep the strip, inert while selecting',
       (tester) async {
         await _open(tester, _source());
         await tester.pump(const Duration(seconds: 4));
         await tester.pump(const Duration(milliseconds: 300));
         final welcome = find.byKey(const ValueKey('notes-welcome-section'));
-        expect(tester.getSize(welcome).height, 0);
+        final height = tester.getSize(welcome).height;
+        expect(height, greaterThan(0));
         await tester.longPress(find.byType(NotesBulder).first);
         await tester.pumpAndSettle();
-        expect(find.text('1 SELECTED'), findsOneWidget);
-        expect(welcome, findsNothing);
-        await tester.tap(find.text('CANCEL'));
+        expect(find.text('1 selected'), findsOneWidget);
+        // Spec: the strip stays in selection mode, dimmed and inert.
+        expect(find.byKey(const ValueKey('mascot-character')).hitTestable(),
+            findsNothing);
+        await tester.tap(find.byTooltip('Cancel selection'));
         await tester.pumpAndSettle();
-        expect(tester.getSize(welcome).height, 0);
+        expect(tester.getSize(welcome).height, height);
         tester.view.physicalSize = const Size(2400, 1080);
         await tester.pump();
         expect(find.byType(NestedScrollView), findsOneWidget);
-        expect(tester.getSize(welcome).height, 0);
+        expect(tester.getSize(welcome).height, height);
         expect(tester.takeException(), isNull);
       },
     );
@@ -470,7 +494,7 @@ void main() {
     ) async {
       await _open(tester, _source());
       expect(find.byType(NotesBulder), findsNWidgets(3));
-      expect(find.text('3 / 30'), findsOneWidget);
+      expect(find.text('3 of 30 notes'), findsOneWidget);
       // Card titles are set in capitals by the design system.
       expect(find.text('GROCERIES'), findsOneWidget);
       expect(find.text('0 / 2 DONE'), findsOneWidget);
@@ -558,14 +582,14 @@ void main() {
       await tester.pump();
       expect(find.byType(NestedScrollView), findsOneWidget);
       expect(
-        find.byKey(const ValueKey('notes-welcome-heading')).hitTestable(),
+        find.byKey(const ValueKey('notes-welcome-section')).hitTestable(),
         findsOneWidget,
       );
       await tester.drag(find.byType(NestedScrollView), const Offset(0, -300));
       await tester.pumpAndSettle();
       // The title has scrolled off; the cards now have the screen.
       expect(
-        find.byKey(const ValueKey('notes-welcome-heading')).hitTestable(),
+        find.byKey(const ValueKey('notes-welcome-section')).hitTestable(),
         findsNothing,
       );
       expect(find.byType(NotesBulder).hitTestable(), findsWidgets);
@@ -601,15 +625,18 @@ void main() {
       source.poke();
       await tester.pump();
       await tester.pump();
-      expect(find.text('3 / 30 · 1 UNSYNCED'), findsOneWidget);
+      expect(find.text('3 of 30 notes · 1 note change waiting to sync'),
+          findsOneWidget);
     });
 
     testWidgets('at the limit the header and the add menu say so', (
       tester,
     ) async {
       await _open(tester, _source(limit: 3));
-      expect(find.text('3 / 3'), findsOneWidget);
-      expect(find.text('3 NOTE LIMIT REACHED'), findsOneWidget);
+      expect(find.text('Note limit reached'), findsOneWidget);
+      expect(find.bySemanticsLabel('New note. Note limit reached'),
+          findsOneWidget);
+      expect(tester.widget<AtomicFab>(find.byType(AtomicFab)).atLimit, isTrue);
     });
 
     testWidgets('a bought limit reaches the screen at once', (tester) async {
@@ -618,14 +645,15 @@ void main() {
       source.changeBehindTheScenes(() => source.limit = 30);
       await tester.pump();
       await tester.pump();
-      expect(find.text('3 / 30'), findsOneWidget);
-      expect(find.text('3 NOTE LIMIT REACHED'), findsNothing);
+      expect(find.text('3 of 30 notes'), findsOneWidget);
+      expect(
+          find.bySemanticsLabel('New note. Note limit reached'), findsNothing);
     });
 
     testWidgets('an empty account shows the invitation', (tester) async {
       await _open(tester, _source(empty: true));
       expect(find.byType(NotesBulder), findsNothing);
-      expect(find.text('INDEX / EMPTY'), findsOneWidget);
+      expect(find.text('Write your first note'), findsOneWidget);
     });
   });
 
@@ -637,6 +665,7 @@ void main() {
       // 900 dp for the rest of the page.
       tester.view.physicalSize = const Size(1290, 2700 + 64 * 3);
       await tester.pump();
+      await _openSearch(tester);
       await tester.tap(find.byType(TextField));
       await tester.pump();
       final editor = tester.state<EditableTextState>(find.byType(EditableText));
@@ -667,7 +696,7 @@ void main() {
 
     testWidgets('the to-dos chip keeps only checklists', (tester) async {
       await _open(tester, _source());
-      await tester.tap(find.text('TO-DOS'));
+      await tester.tap(find.text('To-dos'));
       await tester.pump();
       await tester.pump();
       expect(find.byType(NotesBulder), findsOneWidget);
@@ -679,28 +708,29 @@ void main() {
         notes: [syncedNote('x', title: 'Only text')],
       );
       await _open(tester, source);
-      await tester.tap(find.text('TO-DOS'));
+      await tester.tap(find.text('To-dos'));
       await tester.pump();
       await tester.pump();
-      expect(find.text('FILTER / NO MATCH'), findsOneWidget);
+      expect(find.text('No notes match'), findsOneWidget);
     });
 
     testWidgets('typing narrows the list, the cross clears it', (tester) async {
       await _open(tester, _source());
-      expect(find.byIcon(Icons.close), findsNothing);
+      await _openSearch(tester);
+      expect(find.byTooltip('Clear search'), findsNothing);
 
       await tester.enterText(find.byType(TextField), 'rocket');
       await tester.pump();
       await tester.pump();
       expect(find.byType(NotesBulder), findsOneWidget);
       expect(find.text('IDEAS'), findsOneWidget);
-      expect(find.byIcon(Icons.close), findsOneWidget);
+      expect(find.byTooltip('Clear search'), findsOneWidget);
 
-      await tester.tap(find.byIcon(Icons.close));
+      await tester.tap(find.byTooltip('Clear search'));
       await tester.pump();
       await tester.pump();
       expect(find.byType(NotesBulder), findsNWidgets(3));
-      expect(find.byIcon(Icons.close), findsNothing);
+      expect(find.byTooltip('Clear search'), findsNothing);
       expect(
         tester.widget<TextField>(find.byType(TextField)).controller!.text,
         isEmpty,
@@ -713,19 +743,20 @@ void main() {
       'a long press starts selecting: the count, the actions, no chips, no add menu',
       (tester) async {
         await _open(tester, _source());
-        expect(find.text('NEW NOTE'), findsOneWidget);
-        expect(find.byType(TextField), findsOneWidget);
+        expect(_newNote, findsOneWidget);
+        expect(_searchButton, findsOneWidget);
 
         await tester.longPress(find.byType(NotesBulder).first);
         // The add menu slides out with the Scaffold's own animation.
         await tester.pumpAndSettle();
 
-        expect(find.text('1 SELECTED'), findsOneWidget);
-        expect(find.text('ALL'), findsOneWidget);
-        expect(find.text('CANCEL'), findsOneWidget);
-        expect(find.text('DELETE'), findsOneWidget);
+        expect(find.text('1 selected'), findsOneWidget);
+        expect(find.text('Select all'), findsOneWidget);
+        expect(find.byTooltip('Cancel selection'), findsOneWidget);
+        expect(find.text('Delete'), findsOneWidget);
         expect(find.byType(TextField), findsNothing);
-        expect(find.text('NEW NOTE'), findsNothing);
+        expect(_searchButton, findsNothing);
+        expect(_newNote, findsNothing);
       },
     );
 
@@ -735,12 +766,12 @@ void main() {
       await tester.pump();
       await tester.pump();
 
-      await tester.tap(find.text('CANCEL'));
+      await tester.tap(find.byTooltip('Cancel selection'));
       await tester.pumpAndSettle();
 
-      expect(find.text('NEW NOTE'), findsOneWidget);
-      expect(find.byType(TextField), findsOneWidget);
-      expect(find.text('3 / 30'), findsOneWidget);
+      expect(_newNote, findsOneWidget);
+      expect(_searchButton, findsOneWidget);
+      expect(find.text('3 of 30 notes'), findsOneWidget);
     });
 
     testWidgets('delete moves the selection to the bin and says so', (
@@ -752,7 +783,7 @@ void main() {
       await tester.pump();
       await tester.pump();
 
-      await tester.tap(find.text('DELETE'));
+      await tester.tap(find.text('Delete'));
       await tester.pump();
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
@@ -825,27 +856,30 @@ void main() {
       );
       await tester.longPress(featured);
       await tester.pump();
-      expect(find.text('1 SELECTED'), findsOneWidget);
+      expect(find.text('1 selected'), findsOneWidget);
     });
 
-    testWidgets('search and mascot share a row above the filters', (
+    // Spec (Home layout): search moves into the header, above the strip
+    // that holds the mascot; the chips follow the strip.
+    testWidgets('search sits in the header above the mascot and the filters', (
       tester,
     ) async {
       await _open(tester, _source());
-      final search = tester.getRect(find.byType(TextField));
+      await tester.pumpAndSettle();
+      final search = tester.getRect(_searchButton);
       final mascot =
           tester.getRect(find.byKey(const ValueKey('mascot-character')));
-      final filter = tester.getRect(find.byType(DataChip).first);
-      expect((search.center.dy - mascot.center.dy).abs(), lessThan(1));
-      expect(search.right, lessThan(mascot.left));
+      final filter = tester.getRect(find.byType(AtomicFilterChip).first);
+      expect(search.bottom, lessThanOrEqualTo(mascot.top));
+      expect(search.left, greaterThan(mascot.right));
       expect(filter.top, greaterThanOrEqualTo(mascot.bottom));
       expect(find.text('CHECKLIST'), findsNothing);
-      expect(find.text('NEW NOTE'), findsOneWidget);
+      expect(_newNote, findsOneWidget);
     });
 
     testWidgets('one creation button still respects capacity', (tester) async {
       await _open(tester, _source(limit: 3));
-      await tester.tap(find.text('NEW NOTE'));
+      await tester.tap(_newNote);
       await tester.pump();
       expect(find.textContaining("You've reached 3 notes"), findsOneWidget);
       await tester.pump(const Duration(seconds: 4));
@@ -871,12 +905,12 @@ void main() {
           ),
         ),
       );
-      await tester.pump();
+      await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
-      final search = tester.getRect(find.byType(TextField));
+      final search = tester.getRect(_searchButton);
       final mascot =
           tester.getRect(find.byKey(const ValueKey('mascot-character')));
-      expect(search.right, lessThan(mascot.left));
+      expect(search.bottom, lessThanOrEqualTo(mascot.top));
       expect(
         tester.getSize(find.byType(NotesBulder).first).width,
         greaterThan(270),
@@ -940,10 +974,10 @@ void main() {
 
     /// Counts how often each named part of the screen is rebuilt while [act] runs.
     ///
-    /// `_TitleRow`, `_FilterChips`, `_NotesGrid` and `_AddMenu` are built once in
+    /// The strip, chips, grid and new-note button are built once in
     /// [_HomePageState.initState] and never touched again; the Bloc widgets rebuild
     /// *inside* them, so their own elements never go through `rebuild()`. Instead this
-    /// watches the cards, live usage label, filter chips and "NEW NOTE" label.
+    /// watches the cards, the status strip, the filter chips and the new-note button.
     Future<Map<String, int>> rebuilds(
       WidgetTester tester,
       Future<void> Function() act,
@@ -953,12 +987,12 @@ void main() {
       debugOnRebuildDirtyWidget = (element, builtOnce) {
         final widget = element.widget;
         if (widget is NotesBulder) mark('cards');
-        if (widget is MonoLabel &&
+        if (widget is StatusStrip &&
             widget.key == const ValueKey('notes-usage')) {
           mark('usage');
         }
-        if (widget is DataChip) mark('chips');
-        if (widget is MonoLabel && widget.text == 'NEW NOTE') mark('newNote');
+        if (widget is AtomicFilterChip) mark('chips');
+        if (widget is AtomicFab) mark('newNote');
       };
       addTearDown(() => debugOnRebuildDirtyWidget = null);
       await act();
@@ -971,6 +1005,7 @@ void main() {
       tester,
     ) async {
       await _open(tester, _source());
+      await _openSearch(tester);
 
       final counts = await rebuilds(
         tester,
@@ -1007,7 +1042,7 @@ void main() {
 
         final counts = await rebuilds(
           tester,
-          () => tester.tap(find.widgetWithText(DataChip, 'NOTES')),
+          () => tester.tap(find.widgetWithText(AtomicFilterChip, 'Notes')),
         );
 
         expect(counts['chips'], greaterThan(0));

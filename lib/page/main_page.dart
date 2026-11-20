@@ -86,14 +86,24 @@ class _MainPageState extends State<MainPage> {
   // ---- back button: press twice to exit -----------------------------------
 
   DateTime? _lastBackPress;
+  final HomeBack _homeBack = HomeBack();
 
   /// This is the app's root screen, so a back press here used to just drop
   /// the app into the background (Android's default for a screen with
   /// nothing to pop). The second press within the window actually exits.
+  /// Home's selection and search come first; a press that ends one is not an
+  /// exit press, so it neither starts a window nor keeps an older one.
   void _handleBack() {
     final now = DateTime.now();
     final last = _lastBackPress;
-    if (last != null && now.difference(last) < const Duration(seconds: 2)) {
+    final armed =
+        last != null && now.difference(last) < const Duration(seconds: 2);
+    if (_homeBack.handle()) {
+      _lastBackPress = null;
+      if (armed) ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      return;
+    }
+    if (armed) {
       SystemNavigator.pop();
       return;
     }
@@ -122,8 +132,9 @@ class _MainPageState extends State<MainPage> {
           text: state.notice!.text,
           sec: state.notice!.millis,
         ).showMySnackBar(context),
-        child: const HomePage(
-          headerActions: [
+        child: HomePage(
+          back: _homeBack,
+          headerActions: const [
             _SyncButton(),
             _NotificationBell(),
             _SettingsAvatar()

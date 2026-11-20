@@ -43,7 +43,9 @@ void main() {
     final card = find.byWidgetPredicate(
         (widget) => widget is NotesBulder && widget.note.id == note.id);
     expect(card, findsOneWidget);
-    expect(find.textContaining('#Milestone'), findsNothing);
+    expect(
+        find.descendant(of: card, matching: find.textContaining('#Milestone')),
+        findsNothing);
     expect(find.text('Keep the body preview'), findsOneWidget);
     expect(find.text('Ship the release'), findsOneWidget);
     expect(find.descendant(of: card, matching: find.byIcon(Icons.push_pin)),
@@ -58,7 +60,9 @@ void main() {
     expect(bloc.state.notes.map((note) => note.id), ['tagged-card']);
     expect(find.text('UNRELATED'), findsNothing);
     expect(card, findsOneWidget);
-    expect(find.textContaining('#Milestone'), findsNothing);
+    expect(
+        find.descendant(of: card, matching: find.textContaining('#Milestone')),
+        findsNothing);
 
     await tester.tap(find.text('Ship the release'));
     await tester.pump();
@@ -71,7 +75,9 @@ void main() {
     expect(saved.pinned, isTrue);
     expect(saved.important, isTrue);
     expect(find.text('1 / 1 DONE'), findsOneWidget);
-    expect(find.textContaining('#Milestone'), findsNothing);
+    expect(
+        find.descendant(of: card, matching: find.textContaining('#Milestone')),
+        findsNothing);
     expect(tester.takeException(), isNull);
   });
 }

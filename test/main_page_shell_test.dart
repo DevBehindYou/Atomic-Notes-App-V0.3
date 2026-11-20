@@ -16,8 +16,8 @@ import 'package:atomic_notes/profile/profile_source.dart';
 import 'package:atomic_notes/state/notes/notes_bloc.dart';
 import 'package:atomic_notes/state/notifications/notifications_cubit.dart';
 import 'package:atomic_notes/state/profile/profile_cubit.dart';
+import 'package:atomic_notes/theme/atomic_colors.dart';
 import 'package:atomic_notes/theme/atomic_icons.dart';
-import 'package:atomic_notes/theme/app_tokens.dart';
 import 'package:atomic_notes/theme/atomic_theme.dart';
 import 'package:atomic_notes/ui/feedback/progress.dart';
 import 'package:flutter/material.dart';
@@ -194,6 +194,17 @@ Future<_Shell> _pump(
 
 Finder _semantics(String label) => find.bySemanticsLabel(label);
 
+// UX-03-home: the search field opens from the header's search button, and a
+// "Notes" filter chip now shares the title's text.
+Future<void> _openSearch(WidgetTester tester) async {
+  await tester.tap(find.byTooltip('Search notes'));
+  await tester.pump();
+  await tester.pumpAndSettle();
+}
+
+final _titleText = find.byWidgetPredicate((w) =>
+    w is Text && w.key == const ValueKey('home-title') && w.data == 'Notes');
+
 void main() {
   group('shell', () {
     testWidgets('Home is the only child: no app bar, tabs or bottom bar',
@@ -205,7 +216,7 @@ void main() {
       expect(find.byType(BottomNavigationBar), findsNothing);
       expect(find.text('SETTINGS'), findsNothing);
       expect(find.byKey(const ValueKey('home-title')), findsOneWidget);
-      expect(find.text('Notes'), findsOneWidget);
+      expect(_titleText, findsOneWidget);
       expect(tester.takeException(), isNull);
     });
 
@@ -320,7 +331,11 @@ void main() {
     testWidgets('no unread: plain label, no badge', (tester) async {
       await _pump(tester);
       expect(_semantics('Notifications'), findsOneWidget);
-      expect(find.text('0'), findsNothing);
+      // The To-dos chip now shows a 0 count; the bell itself has no badge.
+      expect(
+          find.descendant(
+              of: find.byTooltip('Notifications'), matching: find.text('0')),
+          findsNothing);
     });
 
     testWidgets(
@@ -472,6 +487,7 @@ void main() {
 
     testWidgets('a search survives a visit to Settings', (tester) async {
       await _pump(tester);
+      await _openSearch(tester);
       await tester.tap(find.byType(TextField));
       await tester.pump();
       await tester.enterText(find.byType(TextField), 'rocket');
@@ -493,6 +509,7 @@ void main() {
     testWidgets('opening the keyboard keeps the header and the search focus',
         (tester) async {
       await _pump(tester);
+      await _openSearch(tester);
       await tester.tap(find.byType(TextField));
       await tester.pump();
       final editor = tester.state<EditableTextState>(find.byType(EditableText));
@@ -504,23 +521,29 @@ void main() {
       expect(tester.state<EditableTextState>(find.byType(EditableText)),
           same(editor));
       expect(editor.widget.focusNode.hasFocus, isTrue);
-      expect(find.byKey(const ValueKey('home-title')), findsOneWidget);
+      // The open search field holds the title's place in the header row.
+      expect(find.byKey(const ValueKey('home-title-row')), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
 
     testWidgets(
-        'selection mode keeps the header actions and the current '
-        'selection row', (tester) async {
+        'selection mode: the selection bar replaces the header row, and '
+        'cancelling brings back the title and its actions', (tester) async {
       await _pump(tester);
       await tester.longPress(find.text('IDEAS'));
       await tester.pumpAndSettle();
-      expect(find.text('1 SELECTED'), findsOneWidget);
+      expect(find.text('1 selected'), findsOneWidget);
+      // Spec (Selection bar): it replaces the title row, actions included.
+      expect(find.byKey(const ValueKey('home-selection-bar')), findsOneWidget);
+      expect(find.byKey(const ValueKey('home-title')), findsNothing);
+      expect(_semantics('Settings and profile'), findsNothing);
+      expect(_semantics('Sync now'), findsNothing);
+      await tester.tap(find.byTooltip('Cancel selection'));
+      await tester.pumpAndSettle();
+      expect(find.text('1 selected'), findsNothing);
       expect(find.byKey(const ValueKey('home-title')), findsOneWidget);
       expect(_semantics('Settings and profile'), findsOneWidget);
       expect(_semantics('Sync now'), findsOneWidget);
-      await tester.tap(find.text('CANCEL'));
-      await tester.pumpAndSettle();
-      expect(find.text('1 SELECTED'), findsNothing);
     });
   });
 
@@ -567,18 +590,18 @@ void main() {
 
     testWidgets(
         'R21: in the dark appearance the title keeps its contrast on '
-        'the legacy Home page it is painted on', (tester) async {
+        'the migrated dark Home canvas', (tester) async {
       await _pump(tester, theme: AtomicTheme.dark, size: const Size(480, 860));
       final title =
           tester.widget<Text>(find.byKey(const ValueKey('home-title')));
-      // Home's body is still the legacy light page in every appearance.
+      // UX-03-home: the canvas and the header follow the appearance.
       final page = tester
           .widgetList<Scaffold>(find.ancestor(
               of: find.byKey(const ValueKey('home-title')),
               matching: find.byType(Scaffold)))
           .first
           .backgroundColor!;
-      expect(page, AppColors.paper);
+      expect(page, AtomicColors.dark.canvas);
       expect(contrast(title.style!.color!, page), greaterThanOrEqualTo(4.5));
       expect(tester.takeException(), isNull);
     });
