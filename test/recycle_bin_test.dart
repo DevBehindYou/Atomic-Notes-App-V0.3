@@ -15,8 +15,9 @@ void main() {
 
     await tester.pumpWidget(const MaterialApp(home: RecycleBinPage()));
 
-    expect(find.text('BIN IS EMPTY'), findsOneWidget);
-    expect(find.text('EMPTY BIN'), findsNothing);
-    expect(find.text('DELETE FOREVER'), findsNothing);
+    expect(find.text('Recycle Bin is empty'), findsOneWidget);
+    // No "…" menu (Empty bin) and no card buttons.
+    expect(find.byTooltip('More options'), findsNothing);
+    expect(find.text('Delete forever'), findsNothing);
   });
 }

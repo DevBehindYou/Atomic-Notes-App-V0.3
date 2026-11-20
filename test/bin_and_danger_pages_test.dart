@@ -28,16 +28,17 @@ FakeNotesSource _withBin() {
 
 void main() {
   group('Recycle Bin', () {
-    testWidgets('lists the deleted notes with their count, not the live ones', (tester) async {
+    testWidgets('lists the deleted notes, not the live ones', (tester) async {
       _tall(tester);
       await tester.pumpWidget(MaterialApp(home: RecycleBinPage(source: _withBin())));
 
-      expect(find.text('TRIP PLAN'), findsOneWidget);
-      expect(find.text('OLD SHOPPING LIST'), findsOneWidget);
-      expect(find.text('STILL HERE'), findsNothing);
-      expect(find.text('RESTORE'), findsNWidgets(2));
-      expect(find.text('DELETE FOREVER'), findsNWidgets(2));
-      expect(find.text('EMPTY BIN'), findsOneWidget);
+      expect(find.text('Trip plan'), findsOneWidget);
+      expect(find.text('Old shopping list'), findsOneWidget);
+      expect(find.text('Still here'), findsNothing);
+      expect(find.text('Restore'), findsNWidgets(2));
+      expect(find.text('Delete forever'), findsNWidgets(2));
+      // Empty bin is in the header's "…" menu.
+      expect(find.byTooltip('More options'), findsOneWidget);
     });
 
     testWidgets('restoring a note moves it out of the bin and says so', (tester) async {
@@ -45,12 +46,12 @@ void main() {
       final source = _withBin();
       await tester.pumpWidget(MaterialApp(home: RecycleBinPage(source: source)));
 
-      await tester.tap(find.text('RESTORE').first);
+      await tester.tap(find.text('Restore').first);
       await tester.pump();
       await tester.pump();
 
       expect(find.text('Note restored'), findsOneWidget);
-      expect(find.text('RESTORE'), findsOneWidget);
+      expect(find.text('Restore'), findsOneWidget);
       expect(source.count, 2);
       await tester.pumpAndSettle(const Duration(seconds: 4));
     });
@@ -60,12 +61,12 @@ void main() {
       final source = _withBin()..limit = 1;
       await tester.pumpWidget(MaterialApp(home: RecycleBinPage(source: source)));
 
-      await tester.tap(find.text('RESTORE').first);
+      await tester.tap(find.text('Restore').first);
       await tester.pump();
       await tester.pump();
 
       expect(find.text('Note limit reached (1). Delete a note to make room.'), findsOneWidget);
-      expect(find.text('RESTORE'), findsNWidgets(2));
+      expect(find.text('Restore'), findsNWidgets(2));
       await tester.pumpAndSettle(const Duration(seconds: 4));
     });
 
@@ -74,7 +75,9 @@ void main() {
       final source = _withBin();
       await tester.pumpWidget(MaterialApp(home: RecycleBinPage(source: source)));
 
-      await tester.tap(find.widgetWithText(InkActionButton, 'EMPTY BIN'));
+      await tester.tap(find.byTooltip('More options'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Empty bin'));
       await tester.pumpAndSettle();
       expect(find.byType(SlideToConfirm), findsOneWidget);
       expect(source.binNotes, hasLength(2)); // nothing has run yet
@@ -84,7 +87,7 @@ void main() {
 
       expect(find.byType(SlideToConfirm), findsNothing);
       expect(find.text('Recycle Bin emptied'), findsOneWidget);
-      expect(find.text('BIN IS EMPTY'), findsOneWidget);
+      expect(find.text('Recycle Bin is empty'), findsOneWidget);
       expect(source.byId('live'), isNotNull);
       await tester.pumpAndSettle(const Duration(seconds: 4));
     });
