@@ -9,7 +9,7 @@ import 'package:atomic_notes/state/profile/profile_cubit.dart';
 import 'package:atomic_notes/utility/component/avatar_picker_dialog.dart';
 import 'package:atomic_notes/utility/component/profile_avatar.dart';
 import 'package:atomic_notes/utility/component/settings_card.dart';
-import 'package:flutter/cupertino.dart';
+import 'package:atomic_notes/theme/atomic_icons.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -35,10 +35,7 @@ Future<void> _openPicker(WidgetTester tester) async {
         builder: (context) => Scaffold(
           body: Center(
             child: TextButton(
-              onPressed: () => showDialog<void>(
-                context: context,
-                builder: (_) => const AvatarPickerDialog(),
-              ),
+              onPressed: () => AvatarPickerDialog.show(context),
               child: const Text('open'),
             ),
           ),
@@ -129,7 +126,7 @@ void main() {
         expect(find.byKey(ValueKey(path)), findsOneWidget, reason: path);
       }
       // No default-photo button until something else is chosen.
-      expect(find.text('USE DEFAULT PHOTO'), findsNothing);
+      expect(find.text('Use default photo'), findsNothing);
 
       await tester.tap(find.byKey(ValueKey(Avatars.all[5])));
       await tester.pumpAndSettle();
@@ -144,8 +141,8 @@ void main() {
       await ProfileStore.instance.setAvatar(Avatars.all[2]);
       await _openPicker(tester);
 
-      expect(find.byIcon(Icons.check), findsOneWidget);
-      await tester.tap(find.text('USE DEFAULT PHOTO'));
+      expect(find.byIcon(AtomicIcons.check), findsOneWidget);
+      await tester.tap(find.text('Use default photo'));
       await tester.pumpAndSettle();
 
       expect(ProfileStore.instance.avatarAsset, Avatars.defaultAsset);
@@ -251,20 +248,21 @@ void main() {
     testWidgets('lists account, privacy and security', (tester) async {
       await openPage(tester);
 
-      expect(find.text('ACCOUNT'), findsOneWidget);
-      expect(find.text('PRIVACY & SECURITY'), findsOneWidget);
-      expect(find.text('USERNAME'), findsOneWidget);
-      expect(find.text('EMAIL'), findsOneWidget);
-      expect(find.text('PUBLIC PROFILE'), findsOneWidget);
-      expect(find.text('TWO-FACTOR AUTHENTICATION'), findsOneWidget);
-      expect(find.text('CONNECTED ACCOUNTS'), findsOneWidget);
+      expect(find.text('Account'), findsOneWidget);
+      expect(find.text('Privacy and security'), findsOneWidget);
+      expect(find.text('Username'), findsOneWidget);
+      // No signed-in email in tests: the row says what it is.
+      expect(find.text('Email'), findsOneWidget);
+      expect(find.text('Public profile'), findsOneWidget);
+      expect(find.text('Two-factor authentication'), findsOneWidget);
+      expect(find.text('Connected accounts'), findsOneWidget);
     });
 
     testWidgets('connected accounts shows Google and nothing else',
         (tester) async {
       await openPage(tester);
 
-      expect(find.text('Google'), findsOneWidget);
+      expect(find.text('Google · Connected'), findsOneWidget);
       expect(find.text('GitHub'), findsNothing);
       expect(find.text('Discord'), findsNothing);
     });
@@ -274,8 +272,8 @@ void main() {
       await openPage(tester);
 
       expect(find.text('Off'), findsOneWidget);
-      await tester.ensureVisible(find.text('TWO-FACTOR AUTHENTICATION'));
-      await tester.tap(find.text('TWO-FACTOR AUTHENTICATION'));
+      await tester.ensureVisible(find.text('Two-factor authentication'));
+      await tester.tap(find.text('Two-factor authentication'));
       await tester.pumpAndSettle();
 
       expect(find.text('2FA PAGE'), findsOneWidget);
@@ -284,8 +282,8 @@ void main() {
     testWidgets('the public profile switch is remembered', (tester) async {
       await openPage(tester);
 
-      await tester.ensureVisible(find.byType(CupertinoSwitch));
-      await tester.tap(find.byType(CupertinoSwitch));
+      await tester.ensureVisible(find.byKey(const ValueKey('profile-public')));
+      await tester.tap(find.byKey(const ValueKey('profile-public')));
       await tester.pump();
 
       expect(ProfileStore.instance.publicProfile, isFalse);
@@ -294,7 +292,7 @@ void main() {
     testWidgets('the camera badge opens the avatar popup', (tester) async {
       await openPage(tester);
 
-      await tester.tap(find.byIcon(Icons.photo_camera_outlined));
+      await tester.tap(find.byKey(const ValueKey('profile-photo')));
       await tester.pumpAndSettle();
 
       expect(find.byType(AvatarPickerDialog), findsOneWidget);

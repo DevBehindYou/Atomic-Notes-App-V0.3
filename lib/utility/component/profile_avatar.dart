@@ -1,9 +1,12 @@
 import 'package:atomic_notes/state/profile/profile_cubit.dart';
-import 'package:atomic_notes/theme/app_tokens.dart';
+import 'package:atomic_notes/theme/atomic_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
-/// The user's picture in an Ink frame, matching how the logo mark is framed.
+/// The user's picture in a circle (components spec, Avatar): 40 dp in the
+/// Home header, 88 dp on Profile. [frame] is a ring of `surfaceInset`
+/// around the picture; 0 draws none.
+///
 /// Follows [ProfileCubit], so changing the avatar updates every place at once.
 class ProfileAvatar extends StatelessWidget {
   final double size;
@@ -13,6 +16,7 @@ class ProfileAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.colors;
     return BlocSelector<ProfileCubit, ProfileState, String>(
       selector: (state) => state.avatarAsset,
       builder: (context, avatarAsset) {
@@ -20,18 +24,14 @@ class ProfileAvatar extends StatelessWidget {
           height: size,
           width: size,
           padding: EdgeInsets.all(frame),
-          decoration: const BoxDecoration(
-            color: AppColors.ink,
-            borderRadius: AppRadius.std,
-          ),
-          child: ClipRRect(
-            borderRadius: AppRadius.sm,
+          decoration:
+              BoxDecoration(color: c.surfaceInset, shape: BoxShape.circle),
+          child: ClipOval(
             child: Image.asset(
               avatarAsset,
               fit: BoxFit.cover,
-              // A missing file should leave a blank frame, not a red screen.
-              errorBuilder: (_, __, ___) =>
-                  const ColoredBox(color: AppColors.surfaceHighest),
+              // A missing file leaves the empty circle, not a red screen.
+              errorBuilder: (_, __, ___) => ColoredBox(color: c.surfaceInset),
             ),
           ),
         );
