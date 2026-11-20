@@ -1,9 +1,9 @@
 // A confirmed "delete for good" covers exactly the notes its confirmation
 // showed, and only while they are as it showed them (Codex R33), and its
 // words come from what the removal does now, never from the note's version
-// number (R34). Part one drives the Recycle Bin cubit over the in-memory fake
-// store; part two over the real repository on an isolated Hive box with a
-// fake API. All notes are synthetic.
+// number (R34). Part one drives the Recycle Bin page's BinRemover over the
+// in-memory fake store; part two over the real repository on an isolated
+// Hive box with a fake API. All notes are synthetic.
 
 import 'dart:async';
 import 'dart:io';
@@ -14,7 +14,6 @@ import 'package:atomic_notes/database/notes_repository.dart';
 import 'package:atomic_notes/database/sync_status.dart';
 import 'package:atomic_notes/page/endpage/recycle_bin_page.dart';
 import 'package:atomic_notes/security/vault.dart';
-import 'package:atomic_notes/state/recycle_bin/recycle_bin_cubit.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive_ce.dart';
@@ -114,12 +113,11 @@ void main() {
   group('over the fake store', () {
     test('a tombstone added after confirming is not removed', () async {
       final s = _Store(notes: [_tomb('a'), _tomb('b')]);
-      final cubit = RecycleBinCubit(source: s);
-      addTearDown(cubit.close);
+      final remover = BinRemover(s);
 
-      final removal = cubit.confirm(s.binNotes, wholeBin: true);
+      final removal = remover.confirm(s.binNotes, wholeBin: true);
       s.changeBehindTheScenes(() => s.all.add(_tomb('late')));
-      final message = await cubit.remove(removal);
+      final message = await remover.remove(removal);
 
       expect(s.removals.single.toSet(), {'a', 'b'});
       expect(s.byId('a'), isNull);
@@ -135,12 +133,11 @@ void main() {
         'a tombstone that must sync, added after confirming, is not synced '
         'or removed', () async {
       final s = _Store(notes: [_tomb('a')]);
-      final cubit = RecycleBinCubit(source: s);
-      addTearDown(cubit.close);
+      final remover = BinRemover(s);
 
-      final removal = cubit.confirm(s.binNotes, wholeBin: true);
+      final removal = remover.confirm(s.binNotes, wholeBin: true);
       s.changeBehindTheScenes(() => s.all.add(_tomb('late', dirty: true)));
-      await cubit.remove(removal);
+      await remover.remove(removal);
 
       expect(s.syncCalls, 0);
       expect(s.byId('a'), isNull);
@@ -149,12 +146,11 @@ void main() {
 
     test('a confirmed note that now must sync stops the removal', () async {
       final s = _Store(notes: [_tomb('a'), _tomb('b')]);
-      final cubit = RecycleBinCubit(source: s);
-      addTearDown(cubit.close);
+      final remover = BinRemover(s);
 
-      final removal = cubit.confirm(s.binNotes, wholeBin: true);
+      final removal = remover.confirm(s.binNotes, wholeBin: true);
       s.changeBehindTheScenes(() => s.byId('b')!.dirty = true);
-      final message = await cubit.remove(removal);
+      final message = await remover.remove(removal);
 
       expect(message.text, _changed);
       expect(s.removals, isEmpty);
@@ -164,12 +160,11 @@ void main() {
 
     test('a confirmed note that was restored stops the removal', () async {
       final s = _Store(notes: [_tomb('a'), _tomb('b')]);
-      final cubit = RecycleBinCubit(source: s);
-      addTearDown(cubit.close);
+      final remover = BinRemover(s);
 
-      final removal = cubit.confirm(s.binNotes, wholeBin: true);
+      final removal = remover.confirm(s.binNotes, wholeBin: true);
       await s.restoreNote('a');
-      final message = await cubit.remove(removal);
+      final message = await remover.remove(removal);
 
       expect(message.text, _changed);
       expect(s.removals, isEmpty);
@@ -179,12 +174,11 @@ void main() {
 
     test('a confirmed note that disappeared stops the removal', () async {
       final s = _Store(notes: [_tomb('a'), _tomb('b')]);
-      final cubit = RecycleBinCubit(source: s);
-      addTearDown(cubit.close);
+      final remover = BinRemover(s);
 
-      final removal = cubit.confirm(s.binNotes, wholeBin: true);
+      final removal = remover.confirm(s.binNotes, wholeBin: true);
       s.changeBehindTheScenes(() => s.all.removeWhere((n) => n.id == 'a'));
-      final message = await cubit.remove(removal);
+      final message = await remover.remove(removal);
 
       expect(message.text, _changed);
       expect(s.removals, isEmpty);
@@ -193,12 +187,11 @@ void main() {
 
     test('a confirmed note that was replaced stops the removal', () async {
       final s = _Store(notes: [_tomb('a')]);
-      final cubit = RecycleBinCubit(source: s);
-      addTearDown(cubit.close);
+      final remover = BinRemover(s);
 
-      final removal = cubit.confirm(s.binNotes);
+      final removal = remover.confirm(s.binNotes);
       s.changeBehindTheScenes(() => s.byId('a')!.title = 'Other words');
-      expect((await cubit.remove(removal)).text, _changed);
+      expect((await remover.remove(removal)).text, _changed);
       expect(s.byId('a'), isNotNull);
     });
 
@@ -210,13 +203,12 @@ void main() {
         _tomb('wiped', serverVersion: 0),
         _tomb('pending', dirty: true),
       ]);
-      final cubit = RecycleBinCubit(source: s);
-      addTearDown(cubit.close);
+      final remover = BinRemover(s);
 
-      final removal = cubit.confirm(s.binNotes, wholeBin: true);
+      final removal = remover.confirm(s.binNotes, wholeBin: true);
       expect(removal.count(BinRemovalStep.syncFirst), 1);
       expect(removal.count(BinRemovalStep.removeNow), 2);
-      final message = await cubit.remove(removal);
+      final message = await remover.remove(removal);
 
       expect(s.syncCalls, 1);
       expect(s.removals.single.toSet(), {'clean', 'wiped', 'pending'});
@@ -229,11 +221,10 @@ void main() {
         () async {
       final s = _Store(notes: [_tomb('clean'), _tomb('pending', dirty: true)])
         ..syncResult = false;
-      final cubit = RecycleBinCubit(source: s);
-      addTearDown(cubit.close);
+      final remover = BinRemover(s);
 
       final message =
-          await cubit.remove(cubit.confirm(s.binNotes, wholeBin: true));
+          await remover.remove(remover.confirm(s.binNotes, wholeBin: true));
 
       expect(s.syncCalls, 1);
       expect(s.removals, isEmpty);
@@ -246,10 +237,10 @@ void main() {
     test('a tombstone added during the sync is not removed', () async {
       final s = _Store(notes: [_tomb('pending', dirty: true)])
         ..syncGate = Completer<void>();
-      final cubit = RecycleBinCubit(source: s);
-      addTearDown(cubit.close);
+      final remover = BinRemover(s);
 
-      final running = cubit.remove(cubit.confirm(s.binNotes, wholeBin: true));
+      final running =
+          remover.remove(remover.confirm(s.binNotes, wholeBin: true));
       await Future<void>.delayed(Duration.zero);
       s.changeBehindTheScenes(() => s.all.add(_tomb('late')));
       s.syncGate!.complete();
@@ -263,10 +254,9 @@ void main() {
     test('a confirmed note restored during the sync is kept', () async {
       final s = _Store(notes: [_tomb('pending', dirty: true)])
         ..syncGate = Completer<void>();
-      final cubit = RecycleBinCubit(source: s);
-      addTearDown(cubit.close);
+      final remover = BinRemover(s);
 
-      final running = cubit.remove(cubit.confirm(s.binNotes));
+      final running = remover.remove(remover.confirm(s.binNotes));
       await Future<void>.delayed(Duration.zero);
       await s.restoreNote('pending');
       s.syncGate!.complete();
@@ -280,12 +270,11 @@ void main() {
     test('a second removal while one runs is refused', () async {
       final s = _Store(notes: [_tomb('a'), _tomb('b')])
         ..removeGate = Completer<void>();
-      final cubit = RecycleBinCubit(source: s);
-      addTearDown(cubit.close);
+      final remover = BinRemover(s);
 
-      final first = cubit.remove(cubit.confirm([s.byId('a')!]));
+      final first = remover.remove(remover.confirm([s.byId('a')!]));
       final second =
-          await cubit.remove(cubit.confirm(s.binNotes, wholeBin: true));
+          await remover.remove(remover.confirm(s.binNotes, wholeBin: true));
       expect(second.text,
           'Another removal is still running. Try again when it finishes.');
       s.removeGate!.complete();
@@ -296,30 +285,28 @@ void main() {
       ]);
       expect(s.byId('b'), isNotNull);
       // Released afterwards.
-      expect((await cubit.remove(cubit.confirm([s.byId('b')!]))).text,
+      expect((await remover.remove(remover.confirm([s.byId('b')!]))).text,
           'Deleted for good');
     });
 
     test('a store that throws reports the notes it still holds', () async {
       final s = _ThrowingStore(notes: [_tomb('a'), _tomb('b')]);
-      final cubit = RecycleBinCubit(source: s);
-      addTearDown(cubit.close);
+      final remover = BinRemover(s);
 
       final message =
-          await cubit.remove(cubit.confirm(s.binNotes, wholeBin: true));
+          await remover.remove(remover.confirm(s.binNotes, wholeBin: true));
       expect(message.text,
           "Couldn't finish removing these notes. They remain in the Recycle Bin.");
-      expect((await cubit.remove(cubit.confirm([s.byId('a')!]))).text,
+      expect((await remover.remove(remover.confirm([s.byId('a')!]))).text,
           "Couldn't finish removing this note. It remains in the Recycle Bin.");
     });
 
     test('a removal the store answers only in part says so', () async {
       final s = _PartialStore(notes: [_tomb('a'), _tomb('b'), _tomb('c')]);
-      final cubit = RecycleBinCubit(source: s);
-      addTearDown(cubit.close);
+      final remover = BinRemover(s);
 
       final message =
-          await cubit.remove(cubit.confirm(s.binNotes, wholeBin: true));
+          await remover.remove(remover.confirm(s.binNotes, wholeBin: true));
       expect(message.text,
           'Deleted 1 of 3 notes for good. 2 are still in the Recycle Bin.');
     });
@@ -339,7 +326,7 @@ void main() {
     late Directory directory;
     late _Api api;
     late NotesRepository repository;
-    late RecycleBinCubit cubit;
+    late BinRemover remover;
 
     setUp(() async {
       directory =
@@ -354,11 +341,10 @@ void main() {
           vault: _Vault(),
           checkConnectivity: () async => [ConnectivityResult.wifi]);
       await repository.start();
-      cubit = RecycleBinCubit(source: repository);
+      remover = BinRemover(repository);
     });
 
     tearDown(() async {
-      await cubit.close();
       await repository.stop(waitForSync: true);
       repository.dispose();
       await Hive.close();
@@ -379,11 +365,11 @@ void main() {
       expect(await repository.syncNow(instant: true), isTrue);
       expect(repository.byId(a.id)!.dirty, isFalse);
 
-      final removal = cubit.confirm(repository.binNotes, wholeBin: true);
+      final removal = remover.confirm(repository.binNotes, wholeBin: true);
       await repository.deleteNotes([b.id]);
       expect(await repository.syncNow(instant: true), isTrue);
       final pushes = api.pushCalls;
-      await cubit.remove(removal);
+      await remover.remove(removal);
 
       expect(repository.byId(a.id), isNull);
       expect(repository.byId(b.id)!.deleted, isTrue);
@@ -399,9 +385,9 @@ void main() {
       await repository.deleteNotes([a.id]);
       expect(repository.byId(a.id)!.dirty, isTrue);
 
-      final removal = cubit.confirm(repository.binNotes, wholeBin: true);
+      final removal = remover.confirm(repository.binNotes, wholeBin: true);
       api.beforePush = () => repository.deleteNotes([c.id]);
-      await cubit.remove(removal);
+      await remover.remove(removal);
 
       expect(repository.byId(a.id), isNull);
       expect(repository.byId(c.id)!.deleted, isTrue);
@@ -411,11 +397,11 @@ void main() {
       final a = await synced('Synthetic A');
       await repository.deleteNotes([a.id]);
 
-      final removal = cubit.confirm(repository.binNotes, wholeBin: true);
+      final removal = remover.confirm(repository.binNotes, wholeBin: true);
       api.beforePush = () async {
         expect(await repository.restoreNote(a.id), isTrue);
       };
-      final message = await cubit.remove(removal);
+      final message = await remover.remove(removal);
 
       expect(message.text, _changed);
       expect(repository.byId(a.id), isNotNull);
@@ -426,9 +412,9 @@ void main() {
       final a = await synced('Synthetic A');
       await repository.deleteNotes([a.id]);
 
-      final removal = cubit.confirm(repository.binNotes, wholeBin: true);
+      final removal = remover.confirm(repository.binNotes, wholeBin: true);
       api.beforePush = () async => api.sessionRevision++;
-      final message = await cubit.remove(removal);
+      final message = await remover.remove(removal);
 
       expect(message.text, _changed);
       expect(repository.byId(a.id), isNotNull);
@@ -444,8 +430,8 @@ void main() {
       await SyncStatusHelper.setSyncStatus(false);
       final pushes = api.pushCalls;
 
-      final message = await cubit
-          .remove(cubit.confirm(repository.binNotes, wholeBin: true));
+      final message = await remover
+          .remove(remover.confirm(repository.binNotes, wholeBin: true));
 
       expect(api.pushCalls, pushes);
       expect(repository.byId(a.id)!.deleted, isTrue);
@@ -470,7 +456,7 @@ void main() {
       expect(body, isNot(contains('no cloud copy')));
       expect(body, isNot(contains('Drive')));
       final pushes = api.pushCalls;
-      expect((await cubit.remove(cubit.confirm([retained]))).text,
+      expect((await remover.remove(remover.confirm([retained]))).text,
           'Deleted for good');
       expect(repository.byId(a.id), isNull);
       expect(api.pushCalls, pushes);

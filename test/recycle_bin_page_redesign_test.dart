@@ -7,7 +7,6 @@ import 'dart:async';
 
 import 'package:atomic_notes/database/note.dart';
 import 'package:atomic_notes/page/endpage/recycle_bin_page.dart';
-import 'package:atomic_notes/state/recycle_bin/recycle_bin_cubit.dart';
 import 'package:atomic_notes/theme/atomic_theme.dart';
 import 'package:atomic_notes/ui/buttons/atomic_button.dart';
 import 'package:atomic_notes/ui/feedback/empty_state.dart';
