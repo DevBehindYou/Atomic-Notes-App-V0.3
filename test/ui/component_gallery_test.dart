@@ -35,6 +35,7 @@ import 'package:atomic_notes/ui/rows/checklist_row.dart';
 import 'package:atomic_notes/ui/rows/settings_row.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart' show Ticker;
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -220,6 +221,31 @@ List<double> _ringFrames(WidgetTester tester) => tester
     .map((a) => a.value)
     .toList();
 
+/// The tickers that are running anywhere inside the simulated ring, read
+/// from each ticker-providing state's diagnostics. A still ring must have
+/// none: painting a still arc over a running animation is not stopping it.
+int _activeRingTickers(WidgetTester tester) {
+  final ring = find.byWidgetPredicate(
+      (w) => '${w.runtimeType}' == '_SimulatedLoading',
+      skipOffstage: false);
+  final states = tester.stateList(find.descendant(
+      of: ring,
+      matching: find.byWidgetPredicate((w) => w is StatefulWidget),
+      skipOffstage: false));
+  var active = 0;
+  for (final state in states) {
+    for (final property in state.toDiagnosticsNode().getProperties()) {
+      final Iterable<Ticker> tickers = switch (property.value) {
+        Ticker ticker when property.name == 'ticker' => [ticker],
+        Set<Ticker> set when property.name == 'tickers' => set,
+        _ => const <Ticker>[],
+      };
+      active += tickers.where((t) => t.isActive).length;
+    }
+  }
+  return active;
+}
+
 /// The ring measures where it is after a layout, then rebuilds.
 Future<void> _remeasure(WidgetTester tester) async {
   await tester.pump();
@@ -235,6 +261,7 @@ Future<void> _expectSpinning(WidgetTester tester, String reason) async {
   expect(tester.widget<ProgressRing>(_loading).value, isNull, reason: reason);
   final before = _ringFrames(tester);
   expect(before, isNotEmpty, reason: reason);
+  expect(_activeRingTickers(tester), greaterThan(0), reason: reason);
   await tester.pump(const Duration(milliseconds: 420));
   expect(_ringFrames(tester), isNot(before), reason: '$reason: it moves');
 }
@@ -243,6 +270,7 @@ Future<void> _expectStill(WidgetTester tester, String reason) async {
   for (var i = 0; i < 2; i++) {
     expect(tester.widget<ProgressRing>(_loading).value, 0.25, reason: reason);
     expect(_ringFrames(tester), isEmpty, reason: reason);
+    expect(_activeRingTickers(tester), 0, reason: '$reason: its ticker stops');
     await tester.pump(const Duration(milliseconds: 420));
   }
 }
@@ -804,6 +832,47 @@ void main() {
       await _run(tester, const Duration(seconds: 1));
       await _remeasure(tester);
       await _expectSpinning(tester, 'uncovered');
+    });
+
+    // Review R36: a dialog route is not opaque, so TickerMode stays on for
+    // the gallery below even while a fullscreen dialog hides all of it.
+    testWidgets('stops under a fullscreen dialog and resumes when it closes',
+        (tester) async {
+      final navigator = GlobalKey<NavigatorState>();
+      _screen(tester);
+      await tester.pumpWidget(_app(navigator: navigator));
+      await tester.pump(_frame);
+      await _showRing(tester);
+      await _expectSpinning(tester, 'gallery showing');
+
+      unawaited(showDialog<void>(
+        context: tester.element(find.byType(ComponentGallery)),
+        builder: (_) => const Dialog.fullscreen(
+          child: ColoredBox(
+            color: Colors.white,
+            child: Center(child: Text('Covering dialog')),
+          ),
+        ),
+      ));
+      await _run(tester, const Duration(seconds: 1));
+      expect(find.text('Covering dialog'), findsOneWidget);
+      expect(
+          tester
+              .getRect(find.byType(Dialog))
+              .contains(tester.getRect(_loading).center),
+          isTrue,
+          reason: 'the dialog hides the ring');
+      expect(TickerMode.valuesOf(tester.element(_loading)).enabled, isTrue,
+          reason: 'the route below is not muted');
+      await _expectStill(tester, 'under a fullscreen dialog');
+
+      // Nothing else changed: closing the dialog alone restarts it.
+      navigator.currentState!.pop();
+      await _run(tester, const Duration(seconds: 1));
+      expect(find.text('Covering dialog'), findsNothing);
+      await _remeasure(tester);
+      await _expectSpinning(tester, 'dialog closed');
+      expect(tester.takeException(), isNull);
     });
 
     testWidgets('leaving the gallery ends the ring and its observers',

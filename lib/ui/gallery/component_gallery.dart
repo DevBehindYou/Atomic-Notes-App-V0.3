@@ -585,10 +585,13 @@ class _ComponentGalleryState extends State<ComponentGallery> {
 }
 
 /// The gallery's indeterminate ring. Nothing is loading, so it spins only
-/// while someone could watch it: on screen, with its route showing, the app
-/// in the foreground and reduced motion off (either flag). Otherwise it
-/// holds a still arc (review R26). The spinning ring owns its controller, so
-/// swapping in the still one ends that work, and so does leaving the page.
+/// while someone could watch it: on screen, with its route current (no
+/// page, dialog or sheet above it), the app in the foreground and reduced
+/// motion off (either flag). Otherwise it holds a still arc (reviews R26,
+/// R36). A dialog route is not opaque, so the routes below keep their
+/// tickers; only currentness says one covers the gallery, even in full.
+/// The spinning ring owns its controller, so swapping in the still one
+/// stops that ticker, and leaving the page disposes it.
 class _SimulatedLoading extends StatefulWidget {
   const _SimulatedLoading();
 
@@ -669,6 +672,7 @@ class _SimulatedLoadingState extends State<_SimulatedLoading>
   Widget build(BuildContext context) {
     final spin = _onScreen &&
         _resumed &&
+        (ModalRoute.isCurrentOf(context) ?? true) &&
         TickerMode.valuesOf(context).enabled &&
         !AtomicMotion.reduced(context);
     // Read as "Loading" either way: the still arc is not a percentage.
