@@ -34,6 +34,7 @@ import 'package:atomic_notes/utility/component/atomic_brand.dart';
 import 'package:atomic_notes/utility/component/notes_builder.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -293,7 +294,324 @@ Future<(NotesBloc, _Routes, _Events)> _shell(
   return (bloc, routes, events);
 }
 
+/// Records platform calls, so a test can see whether the shell asked
+/// `SystemNavigator.pop` to leave the app.
+List<String> _platformCalls(WidgetTester tester) {
+  final calls = <String>[];
+  tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+    SystemChannels.platform,
+    (call) async {
+      calls.add(call.method);
+      return null;
+    },
+  );
+  addTearDown(() => tester.binding.defaultBinaryMessenger
+      .setMockMethodCallHandler(SystemChannels.platform, null));
+  return calls;
+}
+
+/// A system Back press that reached Flutter (the platform has already used
+/// any press that only hid the keyboard).
+Future<void> _back(WidgetTester tester) async {
+  await tester.binding.handlePopRoute();
+  await _settle(tester);
+}
+
+const _exitHint = 'Press back again to exit';
+const _exit = 'SystemNavigator.pop';
+
 void main() {
+  // Codex R35: one Back path through the signed-in shell. Selection first,
+  // then an open search, then the shell's two-press exit. A press that ends
+  // a transient mode neither starts nor keeps an exit window.
+  group('Back (Codex R35)', () {
+    testWidgets(
+        'Codex probe: Back clears active Home search after the keyboard is '
+        'dismissed', (tester) async {
+      final calls = _platformCalls(tester);
+      final (bloc, _, _) = await _shell(tester, _three());
+      await _settle(tester);
+      await _openSearch(tester);
+      await tester.enterText(find.byType(TextField), 'one');
+      await _settle(tester);
+      FocusManager.instance.primaryFocus?.unfocus();
+      await _settle(tester);
+      expect(bloc.state.query, 'one');
+      await _back(tester);
+      expect(bloc.state.query, isEmpty);
+      expect(find.byType(TextField), findsNothing);
+      expect(_title, findsOneWidget);
+      expect(find.text(_exitHint), findsNothing);
+      expect(calls, isNot(contains(_exit)));
+    });
+
+    testWidgets(
+        'Codex probe: Back clears the current Home selection without exiting',
+        (tester) async {
+      final calls = _platformCalls(tester);
+      final (bloc, _, _) = await _shell(tester, _three());
+      await _settle(tester);
+      await tester.longPress(find.byKey(const ValueKey('b')));
+      await _settle(tester);
+      expect(bloc.state.selected, {'b'});
+      await _back(tester);
+      expect(bloc.state.selected, isEmpty);
+      expect(find.byType(SelectionBar), findsNothing);
+      expect(_title, findsOneWidget);
+      expect(find.text(_exitHint), findsNothing);
+      expect(calls, isNot(contains(_exit)));
+      // The press that ended the selection did not arm the exit.
+      await _back(tester);
+      expect(find.text(_exitHint), findsOneWidget);
+      expect(calls, isNot(contains(_exit)));
+    });
+
+    testWidgets('with nothing to end, Back twice still exits', (tester) async {
+      final calls = _platformCalls(tester);
+      await _shell(tester, _three());
+      await _settle(tester);
+      await _back(tester);
+      expect(find.text(_exitHint), findsOneWidget);
+      expect(calls, isNot(contains(_exit)));
+      await _back(tester);
+      expect(calls, contains(_exit));
+    });
+
+    testWidgets(
+        'ending a selection inside an armed window disarms it and hides the '
+        'hint', (tester) async {
+      final calls = _platformCalls(tester);
+      final (bloc, _, _) = await _shell(tester, _three());
+      await _settle(tester);
+      await _back(tester);
+      expect(find.text(_exitHint), findsOneWidget);
+      await tester.longPress(find.byKey(const ValueKey('b')));
+      await _settle(tester);
+      expect(bloc.state.selected, {'b'});
+      await _back(tester);
+      expect(bloc.state.selected, isEmpty);
+      expect(calls, isNot(contains(_exit)));
+      expect(find.text(_exitHint), findsNothing);
+      // The old window is gone: the next press only arms a new one.
+      await _back(tester);
+      expect(find.text(_exitHint), findsOneWidget);
+      expect(calls, isNot(contains(_exit)));
+      await _back(tester);
+      expect(calls, contains(_exit));
+    });
+
+    testWidgets(
+        'after an expired window, a press that ends a search does not arm '
+        'the exit', (tester) async {
+      final calls = _platformCalls(tester);
+      final (bloc, _, _) = await _shell(tester, _three());
+      await _settle(tester);
+      await _back(tester);
+      await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 2100)));
+      await tester.pump(const Duration(seconds: 2));
+      await _openSearch(tester);
+      await tester.enterText(find.byType(TextField), 'rocket');
+      await _settle(tester);
+      await _back(tester);
+      expect(bloc.state.query, isEmpty);
+      expect(_title, findsOneWidget);
+      expect(find.text(_exitHint), findsNothing);
+      await _back(tester);
+      expect(find.text(_exitHint), findsOneWidget);
+      expect(calls, isNot(contains(_exit)));
+    });
+
+    testWidgets(
+        'selection over a search: the first Back ends the selection, the '
+        'next closes the search', (tester) async {
+      final calls = _platformCalls(tester);
+      final (bloc, _, _) = await _shell(tester, _three());
+      await _settle(tester);
+      await _openSearch(tester);
+      await tester.enterText(find.byType(TextField), 'rocket');
+      await _settle(tester);
+      FocusManager.instance.primaryFocus?.unfocus();
+      await _settle(tester);
+      await tester.longPress(find.byKey(const ValueKey('b')));
+      await _settle(tester);
+      expect(bloc.state.selected, {'b'});
+      expect(bloc.state.query, 'rocket');
+
+      await _back(tester);
+      expect(bloc.state.selected, isEmpty);
+      expect(bloc.state.query, 'rocket');
+      expect(find.byType(SelectionBar), findsNothing);
+      expect(
+          tester.widget<TextField>(find.byType(TextField)).controller!.text,
+          'rocket');
+      expect(_cardIds(tester), ['b']);
+      expect(find.text(_exitHint), findsNothing);
+
+      await _back(tester);
+      expect(bloc.state.query, isEmpty);
+      expect(find.byType(TextField), findsNothing);
+      expect(_title, findsOneWidget);
+      expect(find.text(_exitHint), findsNothing);
+
+      await _back(tester);
+      expect(find.text(_exitHint), findsOneWidget);
+      expect(calls, isNot(contains(_exit)));
+    });
+
+    testWidgets(
+        'a search still holding focus (keyboard already hidden) closes on '
+        'Back, empty or not', (tester) async {
+      final calls = _platformCalls(tester);
+      final (bloc, _, _) = await _shell(tester, _three());
+      await _settle(tester);
+      await _openSearch(tester);
+      expect(
+          tester
+              .state<EditableTextState>(find.byType(EditableText))
+              .widget
+              .focusNode
+              .hasFocus,
+          isTrue);
+      await _back(tester);
+      expect(find.byType(TextField), findsNothing);
+      expect(_title, findsOneWidget);
+      expect(find.text(_exitHint), findsNothing);
+
+      await _openSearch(tester);
+      await tester.enterText(find.byType(TextField), 'rocket');
+      await _settle(tester);
+      await _back(tester);
+      expect(bloc.state.query, isEmpty);
+      expect(find.byType(TextField), findsNothing);
+      expect(find.byType(NotesBulder), findsNWidgets(3));
+      expect(find.text(_exitHint), findsNothing);
+      expect(calls, isNot(contains(_exit)));
+    });
+
+    testWidgets('Cancel selection hands the next Back to the exit path',
+        (tester) async {
+      final calls = _platformCalls(tester);
+      final (bloc, _, _) = await _shell(tester, _three());
+      await _settle(tester);
+      await tester.longPress(find.byKey(const ValueKey('c')));
+      await _settle(tester);
+      await tester.tap(find.byTooltip('Cancel selection'));
+      await _settle(tester);
+      expect(bloc.state.selecting, isFalse);
+      await _back(tester);
+      expect(find.text(_exitHint), findsOneWidget);
+      expect(calls, isNot(contains(_exit)));
+    });
+
+    testWidgets('search Cancel hands the next Back to the exit path',
+        (tester) async {
+      final calls = _platformCalls(tester);
+      final (bloc, _, _) = await _shell(tester, _three());
+      await _settle(tester);
+      await _openSearch(tester);
+      await tester.enterText(find.byType(TextField), 'rocket');
+      await _settle(tester);
+      await tester.tap(find.text('Cancel'));
+      await _settle(tester);
+      expect(bloc.state.query, isEmpty);
+      expect(_title, findsOneWidget);
+      await _back(tester);
+      expect(find.text(_exitHint), findsOneWidget);
+      expect(calls, isNot(contains(_exit)));
+    });
+
+    testWidgets(
+        'Clear search empties the field but leaves it open; Back closes it',
+        (tester) async {
+      final calls = _platformCalls(tester);
+      final (bloc, _, _) = await _shell(tester, _three());
+      await _settle(tester);
+      await _openSearch(tester);
+      await tester.enterText(find.byType(TextField), 'rocket');
+      await _settle(tester);
+      await tester.tap(find.bySemanticsLabel('Clear search'));
+      await _settle(tester);
+      expect(bloc.state.query, isEmpty);
+      expect(find.byType(TextField), findsOneWidget);
+      await _back(tester);
+      expect(find.byType(TextField), findsNothing);
+      expect(_title, findsOneWidget);
+      expect(find.text(_exitHint), findsNothing);
+      expect(calls, isNot(contains(_exit)));
+    });
+
+    testWidgets(
+        'Back on a pushed route or a dialog is theirs: Home keeps its search '
+        'and selection', (tester) async {
+      final calls = _platformCalls(tester);
+      final (bloc, routes, _) = await _shell(tester, _three());
+      await _settle(tester);
+      await _openSearch(tester);
+      await tester.enterText(find.byType(TextField), 'rocket');
+      await _settle(tester);
+      await tester.tap(find.bySemanticsLabel('Settings and profile'));
+      await tester.pumpAndSettle();
+      expect(routes.pushed.last, '/settingspage');
+      await _back(tester);
+      expect(find.text('stub settings'), findsNothing);
+      expect(bloc.state.query, 'rocket');
+      expect(
+          tester.widget<TextField>(find.byType(TextField)).controller!.text,
+          'rocket');
+      expect(find.text(_exitHint), findsNothing);
+
+      await tester.longPress(find.byKey(const ValueKey('b')));
+      await _settle(tester);
+      unawaited(showDialog<void>(
+        context: tester.element(find.byType(HomePage)),
+        builder: (_) => const AlertDialog(content: Text('probe dialog')),
+      ));
+      await _settle(tester);
+      expect(find.text('probe dialog'), findsOneWidget);
+      await _back(tester);
+      expect(find.text('probe dialog'), findsNothing);
+      expect(bloc.state.selected, {'b'});
+      expect(bloc.state.query, 'rocket');
+      expect(find.text(_exitHint), findsNothing);
+
+      await _back(tester);
+      expect(bloc.state.selected, isEmpty);
+      expect(bloc.state.query, 'rocket');
+      await _back(tester);
+      expect(bloc.state.query, isEmpty);
+      expect(_title, findsOneWidget);
+      expect(find.text(_exitHint), findsNothing);
+      expect(calls, isNot(contains(_exit)));
+    });
+
+    testWidgets(
+        'returning from the editor: its Back closes it, and the search '
+        'waits for the next press', (tester) async {
+      final calls = _platformCalls(tester);
+      final (bloc, _, _) = await _shell(tester, _three());
+      await _settle(tester);
+      await _openSearch(tester);
+      await tester.enterText(find.byType(TextField), 'rocket');
+      await _settle(tester);
+      await tester.tap(find.byKey(const ValueKey('b')));
+      await tester.pumpAndSettle();
+      expect(find.byType(NotesCreaterPage), findsOneWidget);
+      await _back(tester);
+      expect(find.byType(NotesCreaterPage), findsNothing);
+      expect(bloc.state.query, 'rocket');
+      expect(find.text(_exitHint), findsNothing);
+      await _back(tester);
+      expect(bloc.state.query, isEmpty);
+      expect(_title, findsOneWidget);
+      expect(find.text(_exitHint), findsNothing);
+      await _back(tester);
+      expect(find.text(_exitHint), findsOneWidget);
+      expect(calls, isNot(contains(_exit)));
+      expect(tester.takeException(), isNull);
+    });
+  });
+
   group('header and search', () {
     testWidgets(
         'the search button swaps the title for a focused field; Cancel '

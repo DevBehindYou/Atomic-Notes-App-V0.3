@@ -36,10 +36,19 @@ import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 /// tick on one card does not rebuild the header and typing in the search
 /// field does not rebuild the chips or the counts.
 class HomePage extends StatefulWidget {
-  const HomePage({super.key, this.now, this.headerActions = const []});
+  const HomePage({
+    super.key,
+    this.now,
+    this.headerActions = const [],
+    this.back,
+  });
 
   /// Local clock used for the greeting; injectable for date/resume tests.
   final DateTime Function()? now;
+
+  /// The shell's one Back path (Codex R35). Home answers through it instead
+  /// of holding a pop handler of its own, so one press is used once.
+  final HomeBack? back;
 
   /// The app-level actions at the right of the header row (sync,
   /// notifications, the Settings avatar). The shell supplies them, so Home
@@ -49,6 +58,17 @@ class HomePage extends StatefulWidget {
 
   @override
   State<HomePage> createState() => _HomePageState();
+}
+
+/// Lets the signed-in shell offer a system Back to Home before its own
+/// two-press exit (screens spec, Home: Back leaves selection, then search).
+class HomeBack {
+  bool Function()? _handler;
+
+  /// Ends one of Home's transient modes, one per press: the selection first,
+  /// then an open search (the platform has already used any press that only
+  /// hid the keyboard). Returns false when there was nothing to end.
+  bool handle() => _handler?.call() ?? false;
 }
 
 class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
@@ -105,6 +125,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final lifecycle = WidgetsBinding.instance.lifecycleState;
     _foreground = lifecycle == null || lifecycle == AppLifecycleState.resumed;
     WidgetsBinding.instance.addObserver(this);
+    widget.back?._handler = _handleBack;
     // A screen opened afresh starts with the newest filter, an empty search and nothing selected.
     context.read<NotesBloc>().add(const NotesViewReset());
     _controller.addListener(() {
@@ -171,9 +192,33 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   @override
+  void didUpdateWidget(HomePage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.back != widget.back) {
+      if (oldWidget.back?._handler == _handleBack) {
+        oldWidget.back?._handler = null;
+      }
+      widget.back?._handler = _handleBack;
+    }
+  }
+
+  @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _foreground = state == AppLifecycleState.resumed;
     if (_foreground && _visible) _greetingTime.value = _readClock();
+  }
+
+  bool _handleBack() {
+    final bloc = context.read<NotesBloc>();
+    if (bloc.state.selecting) {
+      bloc.add(const NoteSelectionCleared());
+      return true;
+    }
+    if (_searchOpen.value || bloc.state.query.isNotEmpty) {
+      _closeSearch();
+      return true;
+    }
+    return false;
   }
 
   void _openSearch() {
@@ -249,6 +294,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    if (widget.back?._handler == _handleBack) widget.back?._handler = null;
     _greetingTime.dispose();
     _controller.dispose();
     _searchCtrl.dispose();
