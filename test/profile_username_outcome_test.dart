@@ -262,14 +262,15 @@ void main() {
     const uncertain =
         "Couldn't confirm the update. Check your connection and try again.";
 
-    testWidgets('a stale copy is shown as such; Refresh reads, never saves',
+    testWidgets('a stale copy offers a refresh that reads, never saves',
         (tester) async {
       await ProfileStore.instance.cacheUsername('old-ada');
       _live.get = () async => _unavailable();
       await _openDefault(tester);
       expect(_live.calls, ['GET']);
       expect(find.text('@old-ada'), findsWidgets);
-      expect(find.text('Showing the last saved username.'), findsOneWidget);
+      expect(find.byTooltip('Refresh username'), findsOneWidget);
+      expect(_note, findsNothing, reason: 'the page does not move');
       expect(_refresh, findsOneWidget);
 
       _live.get = null;
@@ -511,7 +512,8 @@ void main() {
       _live.get = () async => _unavailable();
       await _openDefault(tester);
       expect(find.text('@atomicuser'), findsWidgets);
-      expect(find.text('Showing the last saved username.'), findsOneWidget);
+      expect(find.byTooltip('Refresh username'), findsOneWidget);
+      expect(_note, findsNothing, reason: 'the page does not move');
       expect(_refresh, findsOneWidget);
 
       await _saveDraft(tester, 'grace');

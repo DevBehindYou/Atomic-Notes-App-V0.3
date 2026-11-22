@@ -213,11 +213,12 @@ class _EditProfilePageState extends State<EditProfilePage> {
   bool _saving = false;
   bool _refreshing = false;
 
-  /// Said under the handle while it may not be the Server's latest, or when
-  /// this device could not keep a copy; null when there is nothing to say.
+  /// Said under the handle after an acknowledged update it could not show
+  /// yet, or when this device could not keep a copy; null otherwise.
   String? _note;
 
-  /// Whether [_note] offers a refresh: the handle could not be read.
+  /// The handle could not be read from the Server: the username row offers
+  /// a read-only refresh beside Copy and Edit, without moving the page.
   bool _canRefresh = false;
 
   /// Only the latest read may change the handle.
@@ -225,7 +226,6 @@ class _EditProfilePageState extends State<EditProfilePage> {
 
   static const String _acknowledgedNote =
       "Username updated. Couldn't refresh it yet.";
-  static const String _staleNote = 'Showing the last saved username.';
   static const String _uncachedNote =
       "This device couldn't keep a copy of your username.";
 
@@ -298,7 +298,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
       } else {
         _username ??= read.username ?? ProfileHandleReader.placeholder;
         _canRefresh = true;
-        _note = afterSave ? _acknowledgedNote : (_note ?? _staleNote);
+        if (afterSave) _note = _acknowledgedNote;
       }
     });
     return read;
@@ -517,26 +517,11 @@ class _EditProfilePageState extends State<EditProfilePage> {
         ),
         if (_note != null) ...[
           const SizedBox(height: AtomicSpace.x2),
-          Wrap(
+          Text(
+            _note!,
             key: const ValueKey('profile-handle-note'),
-            alignment: WrapAlignment.center,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            spacing: AtomicSpace.x2,
-            children: [
-              Text(
-                _note!,
-                textAlign: TextAlign.center,
-                style: AtomicType.bodySmall.copyWith(color: c.textSecondary),
-              ),
-              if (_canRefresh)
-                AtomicButton.text(
-                  key: const ValueKey('profile-handle-refresh'),
-                  label: 'Refresh',
-                  size: AtomicButtonSize.compact,
-                  busy: _refreshing,
-                  onPressed: _retryRefresh,
-                ),
-            ],
+            textAlign: TextAlign.center,
+            style: AtomicType.bodySmall.copyWith(color: c.textSecondary),
           ),
         ],
       ],
@@ -557,6 +542,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
           onCancel: _stopEditing,
           onCopy: _copyUsername,
           onSubmitted: _save,
+          onRefresh: _canRefresh ? _retryRefresh : null,
         ),
         SettingsRow(
           icon: AtomicIcons.mail,
@@ -622,6 +608,7 @@ class _UsernameRow extends StatelessWidget {
     required this.onCancel,
     required this.onCopy,
     required this.onSubmitted,
+    this.onRefresh,
   });
 
   final String? username;
@@ -631,6 +618,10 @@ class _UsernameRow extends StatelessWidget {
   final VoidCallback onCancel;
   final VoidCallback onCopy;
   final VoidCallback onSubmitted;
+
+  /// Shown only while the handle could not be read from the Server: reads it
+  /// again, never resubmits (review R37).
+  final VoidCallback? onRefresh;
 
   @override
   Widget build(BuildContext context) {
@@ -689,6 +680,14 @@ class _UsernameRow extends StatelessWidget {
                 onPressed: onCancel,
               )
             else ...[
+              if (onRefresh != null)
+                AtomicIconButton(
+                  key: const ValueKey('profile-handle-refresh'),
+                  icon: AtomicIcons.refresh,
+                  tooltip: 'Refresh username',
+                  onCard: true,
+                  onPressed: onRefresh,
+                ),
               AtomicIconButton(
                 icon: AtomicIcons.copy,
                 tooltip: 'Copy username',
