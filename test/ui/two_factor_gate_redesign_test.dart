@@ -52,8 +52,52 @@ class _HeldTwoFactor extends TwoFactor {
     return c.future;
   }
 
+  /// When set, every reset waits for the test; otherwise it answers at once,
+  /// failing with [resetError] when that is set.
+  bool holdResets = false;
+  final List<Completer<void>> pendingResets = [];
+  Object? resetError;
+
   @override
-  Future<void> resetOnThisDevice() async => resets++;
+  Future<void> resetOnThisDevice() {
+    resets++;
+    if (holdResets) {
+      final c = Completer<void>();
+      pendingResets.add(c);
+      return c.future;
+    }
+    final Object? error = resetError;
+    if (error != null) return Future<void>.error(error);
+    return Future<void>.value();
+  }
+}
+
+/// Storage whose key is unreadable (no state) for an armed account, and
+/// whose disarm step can fail after the key was deleted: a reset that stops
+/// part-way.
+class _PartialStorage extends FakeTwoFactorStorage {
+  _PartialStorage() {
+    armed.add(testAccount);
+  }
+
+  bool failDisarm = true;
+
+  /// The disarm write reports success but does not stick.
+  bool ignoreDisarm = false;
+  int deletes = 0;
+
+  @override
+  Future<void> deleteState(String account) async {
+    deletes++;
+    await super.deleteState(account);
+  }
+
+  @override
+  Future<void> setArmed(String account, bool value) async {
+    if (!value && failDisarm) throw StateError('synthetic flag write failed');
+    if (!value && ignoreDisarm) return;
+    await super.setArmed(account, value);
+  }
 }
 
 const _ok = TwoFactorCheck(TwoFactorResult.ok);
@@ -67,6 +111,9 @@ final Finder _retry = find.byKey(const ValueKey('tf-gate-retry'));
 final Finder _turnOff = find.byKey(const ValueKey('tf-gate-turn-off'));
 final Finder _locked = find.byKey(const ValueKey('tf-gate-locked'));
 final Finder _unavailable = find.byKey(const ValueKey('tf-gate-unavailable'));
+final Finder _unavailableError =
+    find.byKey(const ValueKey('tf-gate-unavailable-error'));
+final Finder _confirm = find.text(TwoFactorGatePage.turnOffConfirm);
 Finder _cell(int i) => find.byKey(TwoFactorCodeField.cellKey(i));
 
 final List<String> _pushed = [];
@@ -229,7 +276,8 @@ void main() {
   });
 
   group('code field', () {
-    testWidgets('digits only, six long, number keyboard, one-time-code autofill',
+    testWidgets(
+        'digits only, six long, number keyboard, one-time-code autofill',
         (tester) async {
       final tf = _HeldTwoFactor();
       await _pump(tester, tf);
@@ -255,8 +303,7 @@ void main() {
       await tester.pumpAndSettle();
       final focus = AtomicColors.light.focus;
       expect((_cellBox(tester, 2).border! as Border).top.color, focus);
-      expect((_cellBox(tester, 1).border! as Border).top.color,
-          isNot(focus));
+      expect((_cellBox(tester, 1).border! as Border).top.color, isNot(focus));
     });
 
     testWidgets('Done on the keyboard submits a typed code', (tester) async {
@@ -523,6 +570,278 @@ void main() {
       await tester.pumpAndSettle();
       expect(tf.resets, 0);
       expect(_pushed, isEmpty);
+    });
+  });
+
+  group('turn off on this device (R43)', () {
+    Future<void> confirmTurnOff(WidgetTester tester) async {
+      await tester.tap(_turnOff);
+      await tester.pumpAndSettle();
+      await tester.tap(_confirm);
+      await tester.pump();
+    }
+
+    // A running reset shows a spinner that never settles; pump past the
+    // dialog's exit instead.
+    Future<void> settle(WidgetTester tester) async {
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+    }
+
+    void expectUnblocked(WidgetTester tester) {
+      expect(_button(tester, _retry).onPressed, isNotNull);
+      expect(_button(tester, _turnOff).onPressed, isNotNull);
+      expect(_button(tester, _turnOff).busy, isFalse);
+    }
+
+    testWidgets(
+        'review: failed device reset leaves retry available without '
+        'navigation', (tester) async {
+      // Codex packet-1 fixture case, with the throwing reset as a setting.
+      final tf = _HeldTwoFactor()
+        ..readable = false
+        ..resetError = StateError('synthetic storage unavailable');
+      await _pump(tester, tf);
+      await tester.tap(_turnOff);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(TwoFactorGatePage.turnOffConfirm).last);
+      await tester.pumpAndSettle();
+      expect(tf.resets, 1);
+      expect(_pushed, isEmpty);
+      expect(tester.takeException(), isNull);
+      expect(_button(tester, _retry).onPressed, isNotNull);
+    });
+
+    testWidgets('Cancel or the scrim resets nothing and unblocks',
+        (tester) async {
+      final tf = _HeldTwoFactor()..readable = false;
+      await _pump(tester, tf);
+
+      await tester.tap(_turnOff);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(find.byType(AtomicDialog<bool>), findsNothing);
+      expectUnblocked(tester);
+
+      await tester.tap(_turnOff);
+      await tester.pumpAndSettle();
+      await tester.tapAt(const Offset(8, 8));
+      await tester.pumpAndSettle();
+      expect(find.byType(AtomicDialog<bool>), findsNothing);
+      expect(tf.resets, 0);
+      expect(_pushed, isEmpty);
+      expect(_unavailableError, findsNothing);
+      expectUnblocked(tester);
+    });
+
+    testWidgets('a pending reset keeps the page blocked until it answers',
+        (tester) async {
+      final tf = _HeldTwoFactor()
+        ..readable = false
+        ..holdResets = true;
+      await _pump(tester, tf);
+
+      await confirmTurnOff(tester);
+      await settle(tester);
+      expect(find.byType(AtomicDialog<bool>), findsNothing,
+          reason: 'the dialog closes before the reset');
+      expect(tf.resets, 1);
+      expect(_pushed, isEmpty);
+      expect(_button(tester, _retry).onPressed, isNull);
+      expect(_button(tester, _turnOff).onPressed, isNull);
+      expect(_button(tester, _turnOff).busy, isTrue);
+
+      await tester.tap(_retry, warnIfMissed: false);
+      await tester.pump();
+      expect(tf.probeCount, 1, reason: 'no re-read while the reset runs');
+
+      tf.pendingResets.single.complete();
+      await tester.pumpAndSettle();
+      expect(_pushed, ['/mainpage']);
+    });
+
+    testWidgets('a failed reset says so, unblocks, and a retry can finish',
+        (tester) async {
+      final tf = _HeldTwoFactor()
+        ..readable = false
+        ..resetError = StateError('synthetic storage unavailable');
+      await _pump(tester, tf);
+
+      await confirmTurnOff(tester);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(_pushed, isEmpty);
+      expect(_unavailable, findsOneWidget);
+      expect(find.text(TwoFactorGatePage.turnOffFailed), findsOneWidget);
+      expectUnblocked(tester);
+
+      // Try again re-reads and clears the message.
+      await tester.tap(_retry);
+      await tester.pumpAndSettle();
+      expect(tf.probeCount, 2);
+      expect(_unavailableError, findsNothing);
+
+      tf.resetError = null;
+      await confirmTurnOff(tester);
+      await tester.pumpAndSettle();
+      expect(tf.resets, 2);
+      expect(_pushed, ['/mainpage']);
+    });
+
+    testWidgets('a reset that fails part-way does not open the app',
+        (tester) async {
+      final storage = _PartialStorage();
+      final tf = TwoFactor(storage: storage, account: () => testAccount);
+      await _pump(tester, tf);
+      expect(_unavailable, findsOneWidget);
+
+      await confirmTurnOff(tester);
+      await tester.pumpAndSettle();
+      expect(storage.deletes, 1, reason: 'the key step ran');
+      expect(tf.isArmed, isTrue, reason: 'the disarm step failed');
+      expect(tester.takeException(), isNull);
+      expect(_pushed, isEmpty);
+      expect(find.text(TwoFactorGatePage.turnOffFailed), findsOneWidget);
+      expectUnblocked(tester);
+
+      await tester.tap(_retry);
+      await tester.pumpAndSettle();
+      expect(_unavailable, findsOneWidget);
+
+      storage.failDisarm = false;
+      await confirmTurnOff(tester);
+      await tester.pumpAndSettle();
+      expect(tf.isArmed, isFalse);
+      expect(_pushed, ['/mainpage']);
+    });
+
+    testWidgets('a reset that leaves the gate armed does not open the app',
+        (tester) async {
+      final storage = _PartialStorage()
+        ..failDisarm = false
+        ..ignoreDisarm = true;
+      final tf = TwoFactor(storage: storage, account: () => testAccount);
+      await _pump(tester, tf);
+
+      await confirmTurnOff(tester);
+      await tester.pumpAndSettle();
+      expect(tf.isArmed, isTrue);
+      expect(_pushed, isEmpty);
+      expect(find.text(TwoFactorGatePage.turnOffFailed), findsOneWidget);
+      expectUnblocked(tester);
+    });
+
+    testWidgets('repeat taps open one dialog and run one reset',
+        (tester) async {
+      final tf = _HeldTwoFactor()
+        ..readable = false
+        ..holdResets = true;
+      await _pump(tester, tf);
+
+      // Two presses delivered before the button rebuilds as disabled.
+      final VoidCallback press = _button(tester, _turnOff).onPressed!;
+      press();
+      press();
+      await settle(tester);
+      expect(find.byType(AtomicDialog<bool>), findsOneWidget);
+      await tester.tap(_confirm);
+      await settle(tester);
+      // A late press of the old button while the reset runs.
+      press();
+      await settle(tester);
+      expect(find.byType(AtomicDialog<bool>), findsNothing);
+      expect(tf.resets, 1);
+
+      tf.pendingResets.single.complete();
+      await tester.pumpAndSettle();
+      expect(_pushed, ['/mainpage']);
+    });
+
+    testWidgets('a sign-in change during a reset that succeeds never enters',
+        (tester) async {
+      Object? account = 'account-a';
+      final tf = _HeldTwoFactor()
+        ..readable = false
+        ..holdResets = true;
+      await _pump(tester, tf, identity: () => account);
+
+      await confirmTurnOff(tester);
+      await settle(tester);
+      account = 'account-b';
+      tf.pendingResets.single.complete();
+      await tester.pumpAndSettle();
+
+      expect(_pushed, isEmpty);
+      expect(tf.probeCount, 2, reason: 'reads the new account again');
+      expect(find.text(TwoFactorGatePage.signInChanged), findsOneWidget);
+      expect(find.text(TwoFactorGatePage.turnOffFailed), findsNothing);
+      expectUnblocked(tester);
+
+      // The new account's own turn-off works.
+      tf.holdResets = false;
+      await confirmTurnOff(tester);
+      await tester.pumpAndSettle();
+      expect(tf.resets, 2);
+      expect(_pushed, ['/mainpage']);
+    });
+
+    testWidgets('a sign-in change during a reset that fails never enters',
+        (tester) async {
+      Object? account = 'account-a';
+      final tf = _HeldTwoFactor()
+        ..readable = false
+        ..holdResets = true;
+      await _pump(tester, tf, identity: () => account);
+
+      await confirmTurnOff(tester);
+      await settle(tester);
+      account = 'account-b';
+      tf.pendingResets.single.completeError(StateError('synthetic failure'));
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+      expect(_pushed, isEmpty);
+      expect(find.text(TwoFactorGatePage.signInChanged), findsOneWidget);
+      expectUnblocked(tester);
+    });
+
+    testWidgets('a reset that answers after the page has gone does nothing',
+        (tester) async {
+      final tf = _HeldTwoFactor()
+        ..readable = false
+        ..holdResets = true;
+      await _pump(tester, tf);
+
+      await confirmTurnOff(tester);
+      await settle(tester);
+      await tester.pumpWidget(const SizedBox());
+      tf.pendingResets.single.completeError(StateError('synthetic failure'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(_pushed, isEmpty);
+    });
+
+    testWidgets('turning off is offered only while the key is unreadable',
+        (tester) async {
+      final tf = _HeldTwoFactor();
+      await _pump(tester, tf);
+      expect(_turnOff, findsNothing);
+
+      await tester.enterText(_field, '000000');
+      await tester.pump();
+      tf.checks.single.complete(_wrong);
+      await tester.pumpAndSettle();
+      expect(_turnOff, findsNothing);
+      expect(tf.resets, 0);
+
+      await tester.enterText(_field, '111111');
+      await tester.pump();
+      tf.checks.last
+          .complete(const TwoFactorCheck(TwoFactorResult.unavailable));
+      await tester.pumpAndSettle();
+      expect(_turnOff, findsOneWidget);
+      expect(tf.resets, 0);
     });
   });
 }

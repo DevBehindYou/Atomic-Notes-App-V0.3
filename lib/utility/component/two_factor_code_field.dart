@@ -116,8 +116,8 @@ class _TwoFactorCodeFieldState extends State<TwoFactorCodeField> {
         mainAxisSize: MainAxisSize.min,
         children: [
           Padding(
-            padding:
-                const EdgeInsets.only(left: AtomicSpace.x1, bottom: AtomicSpace.x2),
+            padding: const EdgeInsets.only(
+                left: AtomicSpace.x1, bottom: AtomicSpace.x2),
             child: Text(TwoFactorCodeField.digitLabel,
                 style: AtomicType.bodySmall.copyWith(color: c.textSecondary)),
           ),

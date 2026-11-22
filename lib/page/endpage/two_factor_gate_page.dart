@@ -59,6 +59,8 @@ class TwoFactorGatePage extends StatefulWidget {
       'checked. Turn two-factor off on this device? Your device lock and '
       'Google sign-in stay as they are. You can set it up again in Profile.';
   static const String turnOffConfirm = 'Turn off';
+  static const String turnOffFailed =
+      "Two-factor couldn't be turned off on this device. Try again.";
 
   static String lockedMessage(int seconds) =>
       'Too many wrong tries. Try again in $seconds s.';
@@ -70,13 +72,19 @@ class TwoFactorGatePage extends StatefulWidget {
 class _TwoFactorGatePageState extends State<TwoFactorGatePage> {
   late final TwoFactor _tf = widget.twoFactor ?? TwoFactor.instance;
   late final Object? Function() _identity = widget.identity ??
-      () => (ApiClient.instance.currentUserId, ApiClient.instance.sessionRevision);
+      () => (
+            ApiClient.instance.currentUserId,
+            ApiClient.instance.sessionRevision
+          );
   final TextEditingController _controller = TextEditingController();
 
   bool _probing = true;
   bool _unavailable = false;
   bool _recovery = false;
   bool _busy = false;
+
+  /// A confirmed turn-off is waiting for the service.
+  bool _resetting = false;
   bool _left = false;
   String? _error;
 
@@ -101,14 +109,13 @@ class _TwoFactorGatePageState extends State<TwoFactorGatePage> {
     super.dispose();
   }
 
-  /// Whether a result started under [ticket] for [owner] may still act.
-  bool _current(int ticket, Object? owner) =>
-      mounted && !_left && ticket == _ticket && _identity() == owner;
-
   Future<void> _probe() async {
     final int ticket = ++_ticket;
     final Object? owner = _identity();
-    setState(() => _probing = true);
+    setState(() {
+      _probing = true;
+      _error = null;
+    });
     final bool readable = await _tf.hasVerificationData();
     if (!mounted || _left || ticket != _ticket) return;
     if (_identity() != owner) {
@@ -221,11 +228,32 @@ class _TwoFactorGatePageState extends State<TwoFactorGatePage> {
     );
   }
 
+  /// The sign-in changed while a turn-off was asked or running: whatever
+  /// happened was for the old account. Unblock, read the key again for this
+  /// account and say why.
+  Future<void> _restartForNewAccount() async {
+    setState(() {
+      _busy = false;
+      _resetting = false;
+    });
+    await _probe();
+    if (mounted && !_left) {
+      setState(() => _error = TwoFactorGatePage.signInChanged);
+    }
+  }
+
+  /// Turning two-factor off is offered only while this device cannot read
+  /// its key. The page stays blocked from the tap until the service has
+  /// answered for the same account, and it opens the app only when the reset
+  /// finished and the gate is no longer armed.
   Future<void> _turnOffHere() async {
-    if (_busy || _left) return;
+    if (_busy || _left || !_unavailable) return;
     final int ticket = ++_ticket;
     final Object? owner = _identity();
-    setState(() => _busy = true);
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
     final bool? confirmed = await showAtomicDialog<bool>(
       context: context,
       title: TwoFactorGatePage.turnOffTitle,
@@ -241,17 +269,38 @@ class _TwoFactorGatePageState extends State<TwoFactorGatePage> {
         ),
       ],
     );
-    if (!_current(ticket, owner)) {
-      if (mounted && !_left) setState(() => _busy = false);
+    if (!mounted || _left) return;
+    if (_identity() != owner) {
+      await _restartForNewAccount();
       return;
     }
-    if (confirmed != true) {
+    if (ticket != _ticket || confirmed != true) {
       setState(() => _busy = false);
       return;
     }
-    await _tf.resetOnThisDevice();
-    if (!_current(ticket, owner)) {
-      if (mounted && !_left) setState(() => _busy = false);
+
+    // The dialog has closed; the page stays blocked until the reset answers.
+    setState(() => _resetting = true);
+    bool done;
+    try {
+      await _tf.resetOnThisDevice();
+      done = true;
+    } catch (_) {
+      // Storage may have failed part-way: the key could be gone while the
+      // gate is still armed. Say it did not finish and let the user retry.
+      done = false;
+    }
+    if (!mounted || _left) return;
+    if (_identity() != owner) {
+      await _restartForNewAccount();
+      return;
+    }
+    if (ticket != _ticket || !done || _tf.isArmed) {
+      setState(() {
+        _busy = false;
+        _resetting = false;
+        if (ticket == _ticket) _error = TwoFactorGatePage.turnOffFailed;
+      });
       return;
     }
     _enter();
@@ -329,7 +378,9 @@ class _TwoFactorGatePageState extends State<TwoFactorGatePage> {
       Entrance(
         index: 2,
         child: Text(
-          _recovery ? TwoFactorGatePage.recoveryHint : TwoFactorGatePage.codeHint,
+          _recovery
+              ? TwoFactorGatePage.recoveryHint
+              : TwoFactorGatePage.codeHint,
           style: AtomicType.bodyLarge.copyWith(color: c.textSecondary),
         ),
       ),
@@ -397,6 +448,18 @@ class _TwoFactorGatePageState extends State<TwoFactorGatePage> {
           body: TwoFactorGatePage.unavailableBody,
         ),
       ),
+      if (_error case final String error) ...[
+        const SizedBox(height: AtomicSpace.x4),
+        Semantics(
+          liveRegion: true,
+          child: Text(
+            error,
+            key: const ValueKey('tf-gate-unavailable-error'),
+            style: AtomicType.bodyMedium
+                .copyWith(color: context.colors.dangerText),
+          ),
+        ),
+      ],
       const SizedBox(height: AtomicSpace.x6),
       Entrance(
         index: 3,
@@ -414,6 +477,7 @@ class _TwoFactorGatePageState extends State<TwoFactorGatePage> {
         child: AtomicButton.tonal(
           key: const ValueKey('tf-gate-turn-off'),
           label: TwoFactorGatePage.turnOffLabel,
+          busy: _resetting,
           onPressed: _busy ? null : _turnOffHere,
           size: AtomicButtonSize.large,
           expand: true,
