@@ -153,11 +153,10 @@ void main() {
         await tester.pump(const Duration(seconds: 4));
         await tester.pump(const Duration(milliseconds: 300));
         await tester.pumpAndSettle();
+        // No timed collapse any more: the strip is still whole.
         expect(
-          tester
-              .getSize(find.byKey(const ValueKey('notes-welcome-section')))
-              .height,
-          0,
+          find.byKey(const ValueKey('notes-welcome-section')).hitTestable(),
+          findsOneWidget,
         );
       }
       if (scene == 'cloud-busy') {
