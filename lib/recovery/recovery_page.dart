@@ -3,7 +3,9 @@ import 'package:atomic_notes/recovery/export_writer.dart';
 import 'package:atomic_notes/recovery/import_preview_view.dart';
 import 'package:atomic_notes/recovery/import_validator.dart';
 import 'package:atomic_notes/recovery/restore_coordinator.dart';
-import 'package:atomic_notes/theme/app_tokens.dart';
+import 'package:atomic_notes/theme/atomic_colors.dart';
+import 'package:atomic_notes/theme/atomic_tokens.dart';
+import 'package:atomic_notes/theme/atomic_type.dart';
 import 'package:atomic_notes/utility/component/my_appbar.dart';
 import 'package:flutter/material.dart';
 
@@ -235,12 +237,16 @@ class _RecoveryPageState extends State<RecoveryPage> {
     }
   }
 
+  /// Body text in the current theme's primary text colour.
+  TextStyle get _body =>
+      AtomicType.bodyMedium.copyWith(color: context.colors.textPrimary);
+
   @override
   Widget build(BuildContext context) => Scaffold(
         appBar: const MyAppBar(text: 'Backup and restore'),
         body: SafeArea(
           child: ListView(
-            padding: const EdgeInsets.all(AppSpace.md),
+            padding: const EdgeInsets.all(AtomicSpace.x4),
             children: widget.enabled ? _content() : [_unavailable()],
           ),
         ),
@@ -248,10 +254,10 @@ class _RecoveryPageState extends State<RecoveryPage> {
 
   Widget _unavailable() => Semantics(
         liveRegion: true,
-        child: const Text(
+        child: Text(
             'Backup and restore is not available yet. Your notes stay saved on this device and sync as usual.',
-            key: ValueKey('recovery-unavailable'),
-            style: AppType.bodyMd),
+            key: const ValueKey('recovery-unavailable'),
+            style: _body),
       );
 
   List<Widget> _content() {
@@ -261,9 +267,9 @@ class _RecoveryPageState extends State<RecoveryPage> {
     return [
       // Three separate facts, never merged into one "safe" claim.
       Text('${ports.savedLocally} notes saved on this device',
-          key: const ValueKey('recovery-local'), style: AppType.bodyMd),
+          key: const ValueKey('recovery-local'), style: _body),
       Text(ports.cloudStatus ?? 'Cloud sync status unknown',
-          key: const ValueKey('recovery-cloud'), style: AppType.bodyMd),
+          key: const ValueKey('recovery-cloud'), style: _body),
       Text(
           backup == null
               ? 'No backup made on this device yet'
@@ -272,8 +278,8 @@ class _RecoveryPageState extends State<RecoveryPage> {
                   '${backup.encrypted ? ', password protected' : ''}'
                   '${backup.sealed > 0 ? '. ${sealedNotice(backup.sealed)}' : ''}',
           key: const ValueKey('recovery-backup'),
-          style: AppType.bodyMd),
-      const SizedBox(height: AppSpace.md),
+          style: _body),
+      const SizedBox(height: AtomicSpace.x4),
       TextField(
         key: const ValueKey('recovery-password'),
         controller: _password,
@@ -283,9 +289,9 @@ class _RecoveryPageState extends State<RecoveryPage> {
             labelText: 'Backup password',
             helperText:
                 'Protects the backup file. Without it, anyone with the file can read your notes.',
-            border: OutlineInputBorder()),
+            border: OutlineInputBorder(borderRadius: AtomicRadius.mediumAll)),
       ),
-      const SizedBox(height: AppSpace.md),
+      const SizedBox(height: AtomicSpace.x4),
       if (_busy == _Busy.exporting) ...[
         Semantics(
           liveRegion: true,
@@ -294,7 +300,7 @@ class _RecoveryPageState extends State<RecoveryPage> {
                   ? 'Preparing backup…'
                   : 'Saving $_done of $_total notes…',
               key: const ValueKey('recovery-progress'),
-              style: AppType.bodyMd),
+              style: _body),
         ),
         LinearProgressIndicator(value: _total == 0 ? null : _done / _total),
         TextButton(
@@ -305,23 +311,25 @@ class _RecoveryPageState extends State<RecoveryPage> {
         FilledButton(
             key: const ValueKey('recovery-export'),
             onPressed: busy ? null : _export,
-            style: FilledButton.styleFrom(minimumSize: const Size(48, 48)),
+            style: FilledButton.styleFrom(
+                minimumSize: const Size.square(AtomicSpace.minTarget)),
             child: const Text('Back up notes')),
-      const SizedBox(height: AppSpace.sm),
+      const SizedBox(height: AtomicSpace.x2),
       OutlinedButton(
           key: const ValueKey('recovery-open'),
           onPressed: busy ? null : _openArchive,
-          style: OutlinedButton.styleFrom(minimumSize: const Size(48, 48)),
+          style: OutlinedButton.styleFrom(
+              minimumSize: const Size.square(AtomicSpace.minTarget)),
           child: const Text('Restore from a backup')),
       if (_message != null) ...[
-        const SizedBox(height: AppSpace.sm),
+        const SizedBox(height: AtomicSpace.x2),
         Semantics(
           liveRegion: true,
           child: Text(_message!,
               key: const ValueKey('recovery-message'),
               style: _failed
-                  ? AppType.bodyMd.copyWith(color: AppColors.error)
-                  : AppType.bodyMd),
+                  ? _body.copyWith(color: context.colors.dangerText)
+                  : _body),
         ),
       ],
       if (_preview != null) ..._previewSection(_preview!),
@@ -329,7 +337,7 @@ class _RecoveryPageState extends State<RecoveryPage> {
   }
 
   List<Widget> _previewSection(ImportPreview preview) => [
-        const SizedBox(height: AppSpace.md),
+        const SizedBox(height: AtomicSpace.x4),
         ImportPreviewView(
           preview: preview,
           onRestore: preview.conflicts.every(_choices.containsKey) &&
