@@ -269,10 +269,10 @@ void main() {
     source.retire();
     await tester.pumpAndSettle();
     expect(find.text('71'), findsNothing);
-    expect(find.text('NOT CHECKED'), findsOneWidget);
+    expect(find.text('Not checked'), findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsNothing);
     source.answers.add(Future.value(2));
-    final button = find.text('CHECK CLOUD');
+    final button = find.text('Check cloud');
     await tester.ensureVisible(button);
     await tester.tap(button);
     await tester.pumpAndSettle();
@@ -290,18 +290,18 @@ void main() {
     gate.completeError(StateError('fixture count failure'));
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
-    expect(find.text('CHECK FAILED'), findsOneWidget);
+    expect(find.text('Check failed'), findsOneWidget);
     expect(find.textContaining('Your local notes remain on this device.'),
         findsOneWidget);
     expect(find.textContaining('fixture count failure'), findsNothing);
     expect(find.byType(CircularProgressIndicator), findsNothing);
     source.answers.add(Future.value(1));
-    final button = find.text('CHECK CLOUD');
+    final button = find.text('Check cloud');
     await tester.ensureVisible(button);
     await tester.tap(button);
     await tester.pumpAndSettle();
     expect(source.countCalls, 2);
-    expect(find.text('CHECK FAILED'), findsNothing);
+    expect(find.text('Check failed'), findsNothing);
     expect(source.all.single.dirty, isTrue);
   });
 }

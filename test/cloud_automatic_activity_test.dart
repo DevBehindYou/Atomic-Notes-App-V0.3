@@ -114,7 +114,7 @@ void main() {
       await tester.pump();
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
       debugPrint('atomic_cloud_activity_phase:automatic_indicator');
-      for (final label in ['CHECK CLOUD', 'SYNC NOW  ·', 'UPLOAD ALL  ·']) {
+      for (final label in ['Check cloud', 'Sync now ·', 'Upload all ·']) {
         final button = find.textContaining(label);
         await tester.ensureVisible(button);
         await tester.tap(button);
@@ -130,7 +130,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(CircularProgressIndicator), findsNothing);
       debugPrint('atomic_cloud_activity_phase:idle_indicator');
-      final sync = find.textContaining('SYNC NOW  ·');
+      final sync = find.textContaining('Sync now ·');
       await tester.ensureVisible(sync);
       await tester.tap(sync);
       await tester.pumpAndSettle();
