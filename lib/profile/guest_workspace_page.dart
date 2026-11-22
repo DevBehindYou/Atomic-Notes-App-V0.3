@@ -2,7 +2,9 @@ import 'package:atomic_notes/database/note.dart';
 import 'package:atomic_notes/database/note_projection.dart';
 import 'package:atomic_notes/page/notes_editor_page.dart';
 import 'package:atomic_notes/profile/guest_profile_store.dart';
-import 'package:atomic_notes/theme/app_tokens.dart';
+import 'package:atomic_notes/theme/atomic_colors.dart';
+import 'package:atomic_notes/theme/atomic_tokens.dart';
+import 'package:atomic_notes/theme/atomic_type.dart';
 import 'package:atomic_notes/utility/component/my_appbar.dart';
 import 'package:flutter/material.dart';
 
@@ -80,6 +82,10 @@ class _GuestWorkspacePageState extends State<GuestWorkspacePage> {
     _stale = false;
     if (mounted) setState(() => _ready = true);
   }
+
+  /// Body text in the current theme's primary text colour.
+  TextStyle get _body =>
+      AtomicType.bodyMedium.copyWith(color: context.colors.textPrimary);
 
   bool get _canEdit => _ready && !_stale && !_saving && _pending == null;
   bool get _canLeave => _pending == null && !_saving;
@@ -225,15 +231,15 @@ class _GuestWorkspacePageState extends State<GuestWorkspacePage> {
   Widget _pendingPanel(Note pending) => Card(
         key: const ValueKey('guest-pending'),
         child: Padding(
-          padding: const EdgeInsets.all(AppSpace.sm),
+          padding: const EdgeInsets.all(AtomicSpace.x2),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
                   'Unsaved note: '
                   '${pending.title.isEmpty ? 'Untitled' : pending.title}',
-                  style: AppType.bodyMd),
-              Wrap(spacing: AppSpace.sm, children: [
+                  style: _body),
+              Wrap(spacing: AtomicSpace.x2, children: [
                 TextButton(
                     key: const ValueKey('guest-pending-retry'),
                     onPressed: _saving ? null : () => _persist(pending),
@@ -276,44 +282,44 @@ class _GuestWorkspacePageState extends State<GuestWorkspacePage> {
                   !failed && snapshot.connectionState != ConnectionState.done;
               final notes = failed || opening ? const <Note>[] : _visible();
               return ListView(
-                padding: const EdgeInsets.all(AppSpace.md),
+                padding: const EdgeInsets.all(AtomicSpace.x4),
                 children: [
                   Semantics(
                     container: true,
-                    child: const Text(
+                    child: Text(
                         'Guest · saved on this device only. Not backed up and not synced. Sign in with Google to keep notes in your Drive.',
-                        key: ValueKey('guest-status'),
-                        style: AppType.bodyMd),
+                        key: const ValueKey('guest-status'),
+                        style: _body),
                   ),
                   if (failed)
-                    const Text(
+                    Text(
                         'Guest notes on this device could not be opened. Nothing was changed.',
-                        key: ValueKey('guest-open-failed'),
-                        style: AppType.bodyMd),
+                        key: const ValueKey('guest-open-failed'),
+                        style: _body),
                   if (_error != null)
                     Semantics(
                       liveRegion: true,
                       child: Text(_error!,
                           key: const ValueKey('guest-error'),
                           style:
-                              AppType.bodyMd.copyWith(color: AppColors.error)),
+                              _body.copyWith(color: context.colors.dangerText)),
                     ),
                   // Shown whatever the store's state, so the note stays
                   // reachable even when reopening fails.
                   if (_pending != null) _pendingPanel(_pending!),
                   if (opening)
                     const Padding(
-                      padding: EdgeInsets.all(AppSpace.md),
+                      padding: EdgeInsets.all(AtomicSpace.x4),
                       child: Center(
                           child: CircularProgressIndicator(
                               semanticsLabel: 'Opening guest notes')),
                     ),
                   if (!failed && !opening) ...[
                     if (_stale && _pending == null)
-                      const Text(
+                      Text(
                           'This guest workspace was reset. Reopen it to continue.',
-                          key: ValueKey('guest-stale'),
-                          style: AppType.bodyMd),
+                          key: const ValueKey('guest-stale'),
+                          style: _body),
                     if (_stale && _pending == null)
                       TextButton(
                           key: const ValueKey('guest-reopen'),
@@ -321,7 +327,7 @@ class _GuestWorkspacePageState extends State<GuestWorkspacePage> {
                                 _opened = _open();
                               }),
                           child: const Text('Reopen')),
-                    const SizedBox(height: AppSpace.sm),
+                    const SizedBox(height: AtomicSpace.x2),
                     TextField(
                       key: const ValueKey('guest-search'),
                       controller: _search,
@@ -330,15 +336,16 @@ class _GuestWorkspacePageState extends State<GuestWorkspacePage> {
                       decoration: const InputDecoration(
                           labelText: 'Search guest notes',
                           prefixIcon: Icon(Icons.search),
-                          border: OutlineInputBorder()),
+                          border: OutlineInputBorder(
+                              borderRadius: AtomicRadius.mediumAll)),
                     ),
-                    const SizedBox(height: AppSpace.sm),
+                    const SizedBox(height: AtomicSpace.x2),
                     if (notes.isEmpty && !_stale)
-                      const Text('No notes yet', style: AppType.bodyMd),
+                      Text('No notes yet', style: _body),
                     for (final note in notes)
                       ListTile(
                         key: ValueKey('guest-note-${note.id}'),
-                        minVerticalPadding: AppSpace.sm,
+                        minVerticalPadding: AtomicSpace.x2,
                         title:
                             Text(note.title.isEmpty ? 'Untitled' : note.title),
                         subtitle: Text(note.preview,

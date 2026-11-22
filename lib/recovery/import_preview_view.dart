@@ -1,5 +1,7 @@
 import 'package:atomic_notes/recovery/import_validator.dart';
-import 'package:atomic_notes/theme/app_tokens.dart';
+import 'package:atomic_notes/theme/atomic_colors.dart';
+import 'package:atomic_notes/theme/atomic_tokens.dart';
+import 'package:atomic_notes/theme/atomic_type.dart';
 import 'package:flutter/material.dart';
 
 /// Shows what restoring an archive would do. It shows counts and reasons
@@ -13,13 +15,15 @@ class ImportPreviewView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.colors;
+    final body = AtomicType.bodyMedium.copyWith(color: c.textPrimary);
     final p = preview;
     if (p.locked) {
       return Semantics(
         liveRegion: true,
-        child: const Text(
+        child: Text(
             'This archive is protected. Enter its export password to see what it contains.',
-            style: AppType.bodyMd),
+            style: body),
       );
     }
     String plural(int n, String one, [String? many]) =>
@@ -28,8 +32,9 @@ class ImportPreviewView extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text(plural(p.total, 'note'), style: AppType.headlineSm),
-        const SizedBox(height: AppSpace.sm),
+        Text(plural(p.total, 'note'),
+            style: AtomicType.titleLarge.copyWith(color: c.textPrimary)),
+        const SizedBox(height: AtomicSpace.x2),
         Text(
             [
               plural(p.live, 'note in use', 'notes in use'),
@@ -38,8 +43,8 @@ class ImportPreviewView extends StatelessWidget {
               if (p.images > 0) plural(p.images, 'image'),
               if (p.sealed > 0) plural(p.sealed, 'encrypted note'),
             ].join(' · '),
-            style: AppType.bodyMd),
-        const SizedBox(height: AppSpace.sm),
+            style: body),
+        const SizedBox(height: AtomicSpace.x2),
         Text(
             [
               plural(
@@ -49,23 +54,24 @@ class ImportPreviewView extends StatelessWidget {
                 '${plural(p.conflicts.length, 'differs', 'differ')} from this device; you will choose what to keep',
             ].join(' · '),
             key: const ValueKey('import-preview-comparison'),
-            style: AppType.bodyMd),
+            style: body),
         if (p.issues.isNotEmpty) ...[
-          const SizedBox(height: AppSpace.sm),
+          const SizedBox(height: AtomicSpace.x2),
           Semantics(
             liveRegion: true,
             child: Text(
                 '${plural(p.issues.length, 'note')} cannot be restored: '
                 '${{for (final issue in p.issues) issue.message}.join('; ')}.',
                 key: const ValueKey('import-preview-issues'),
-                style: AppType.bodyMd.copyWith(color: AppColors.error)),
+                style: body.copyWith(color: c.dangerText)),
           ),
         ],
-        const SizedBox(height: AppSpace.md),
+        const SizedBox(height: AtomicSpace.x4),
         FilledButton(
           key: const ValueKey('import-preview-restore'),
           onPressed: p.canRestore ? onRestore : null,
-          style: FilledButton.styleFrom(minimumSize: const Size(48, 48)),
+          style: FilledButton.styleFrom(
+              minimumSize: const Size.square(AtomicSpace.minTarget)),
           child: const Text('Review restore'),
         ),
       ],
