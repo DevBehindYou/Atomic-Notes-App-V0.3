@@ -43,13 +43,13 @@ void main() {
       await _settle(tester);
 
       // Off: the explanation and the way in.
-      expect(find.text('OFF'), findsOneWidget);
-      await tester.ensureVisible(find.text('SET UP TWO-FACTOR'));
-      await tester.tap(find.text('SET UP TWO-FACTOR'));
+      expect(find.text('Off'), findsOneWidget);
+      await tester.ensureVisible(find.text('Set up two-factor'));
+      await tester.tap(find.text('Set up two-factor'));
       await _settle(tester);
 
       // Step 1: a QR code and the key to type instead.
-      expect(find.text('STEP 1 · ADD TO YOUR APP'), findsOneWidget);
+      expect(find.text('Add to your authenticator app'), findsOneWidget);
       expect(find.byType(QrImageView), findsOneWidget);
       final String key = tester
           .widget<SelectableText>(find.byType(SelectableText))
@@ -73,28 +73,28 @@ void main() {
       await _settle(tester);
 
       expect(tf.isArmed, isTrue);
-      expect(find.text('SAVE THESE NOW.'), findsOneWidget);
+      expect(find.text('Save these now'), findsOneWidget);
       expect(find.byType(SelectableText), findsNWidgets(8));
 
       // Done stays shut until the codes are marked as saved.
-      await tester.ensureVisible(find.text('DONE'));
-      await tester.tap(find.text('DONE'));
+      await tester.ensureVisible(find.text('Done'));
+      await tester.tap(find.text('Done'));
       await _settle(tester);
-      expect(find.text('SAVE THESE NOW.'), findsOneWidget);
+      expect(find.text('Save these now'), findsOneWidget);
       await tester.ensureVisible(find.text('I saved these codes somewhere safe'));
       await tester.tap(find.text('I saved these codes somewhere safe'));
       await tester.pump();
-      await tester.tap(find.text('DONE'));
+      await tester.tap(find.text('Done'));
       await _settle(tester);
 
       // On: status and the count of codes left.
-      expect(find.text('TWO-FACTOR IS ON'), findsOneWidget);
+      expect(find.text('Two-factor is on'), findsOneWidget);
       expect(find.text('8'), findsOneWidget);
 
       // Turning it off asks for a fresh code.
       clock.advance(const Duration(seconds: 30));
-      await tester.ensureVisible(find.text('TURN OFF TWO-FACTOR'));
-      await tester.tap(find.text('TURN OFF TWO-FACTOR'));
+      await tester.ensureVisible(find.text('Turn off two-factor'));
+      await tester.tap(find.text('Turn off two-factor'));
       await tester.pumpAndSettle();
       final String again =
           (await tester.runAsync(() => codeAt(key, clock.now)))!;
@@ -103,7 +103,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(tf.isArmed, isFalse);
-      expect(find.text('SET UP TWO-FACTOR'), findsOneWidget);
+      expect(find.text('Set up two-factor'), findsOneWidget);
     });
 
     testWidgets('cancelling a setup stores nothing', (tester) async {
@@ -111,14 +111,14 @@ void main() {
       await tester.pumpWidget(MaterialApp(home: TwoFactorPage(twoFactor: tf)));
       await _settle(tester);
 
-      await tester.ensureVisible(find.text('SET UP TWO-FACTOR'));
-      await tester.tap(find.text('SET UP TWO-FACTOR'));
+      await tester.ensureVisible(find.text('Set up two-factor'));
+      await tester.tap(find.text('Set up two-factor'));
       await _settle(tester);
-      await tester.ensureVisible(find.text('CANCEL'));
-      await tester.tap(find.text('CANCEL'));
+      await tester.ensureVisible(find.text('Cancel'));
+      await tester.tap(find.text('Cancel'));
       await _settle(tester);
 
-      expect(find.text('SET UP TWO-FACTOR'), findsOneWidget);
+      expect(find.text('Set up two-factor'), findsOneWidget);
       expect(tf.isArmed, isFalse);
       expect(storage.state, isEmpty);
     });
