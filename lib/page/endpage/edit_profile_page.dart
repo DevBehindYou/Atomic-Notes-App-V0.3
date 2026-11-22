@@ -1,5 +1,6 @@
+import 'dart:async';
+
 import 'package:atomic_notes/api/atomic_notes_api.dart';
-import 'package:atomic_notes/authentication/auth_services/auth_service.dart';
 import 'package:atomic_notes/profile/profile_store.dart';
 import 'package:atomic_notes/state/profile/profile_cubit.dart';
 import 'package:atomic_notes/state/two_factor/two_factor_armed_cubit.dart';
@@ -33,10 +34,19 @@ enum UsernameUpdateOutcome {
   /// The Server took the name, but caching it on this device failed. The
   /// update is not a failure; refresh the handle to reconcile.
   savedUncached,
+
+  /// No answer arrived (a timeout or a broken connection), so the Server may
+  /// or may not have taken the name (review R37). Neither is assumed: the
+  /// draft stays for a retry.
+  uncertain,
+
+  /// The sign-in that sent the update has ended. Its answer belongs to the
+  /// old session: nothing is shown and nothing is cached (review R37).
+  retired,
 }
 
 /// The Profile page's username save: the same calls, in the same order, as
-/// [AuthServices.updateUserInfo], with a typed outcome instead of a message so
+/// `AuthServices.updateUserInfo`, with a typed outcome instead of a message so
 /// the page never reads success from visible copy (review R32).
 class ProfileUsernameUpdater {
   /// [api] defaults to [ApiClient.instance]; tests pass a fixture client.
@@ -45,11 +55,19 @@ class ProfileUsernameUpdater {
   final ApiClient _api;
 
   Future<UsernameUpdateOutcome> update(String username) async {
+    final int session = _api.sessionRevision;
     try {
       await _api.setUsername(username);
-    } catch (_) {
+    } on ApiException catch (error) {
+      if (error.code == 'session_changed') return UsernameUpdateOutcome.retired;
+      // The Server answered, and the answer was no.
       return UsernameUpdateOutcome.rejected;
+    } catch (_) {
+      // A timeout or a lost connection proves neither outcome.
+      return UsernameUpdateOutcome.uncertain;
     }
+    // The cache key is the current account: never write it for a newer one.
+    if (_api.sessionRevision != session) return UsernameUpdateOutcome.retired;
     try {
       await ProfileStore.instance.cacheUsername(username);
     } catch (_) {
@@ -59,21 +77,112 @@ class ProfileUsernameUpdater {
   }
 }
 
+/// Where a [ProfileHandleRead] came from.
+enum ProfileHandleSource {
+  /// The Server's answer: authoritative.
+  server,
+
+  /// The Server could not be read; this is the name this device last cached,
+  /// which may be stale.
+  cache,
+
+  /// Neither the Server nor the cache could be read.
+  unavailable,
+
+  /// The sign-in that asked has ended; the answer must not be shown.
+  retired,
+}
+
+/// One read of the account handle (review R37): the authoritative refresh is
+/// separate from the best-effort cache, so a cache failure can neither hide a
+/// valid Server answer nor turn it into an error.
+class ProfileHandleRead {
+  const ProfileHandleRead(this.source, {this.username, this.cacheFailed = false});
+
+  /// The username without "@"; null when [source] is unavailable or retired.
+  final String? username;
+  final ProfileHandleSource source;
+
+  /// This device could not write (or read) its copy of the handle.
+  final bool cacheFailed;
+
+  bool get authoritative => source == ProfileHandleSource.server;
+}
+
+/// The Profile page's handle reader: the Server's `GET /atomicuser`, then a
+/// best-effort cache write; the cache is read only when the Server cannot be.
+/// It replaces `AuthServices.getUserInfo` on this page, whose cache write sits
+/// between a valid answer and its return (review R37).
+class ProfileHandleReader {
+  /// [api] defaults to [ApiClient.instance]; tests pass a fixture client.
+  ProfileHandleReader({ApiClient? api}) : _api = api ?? ApiClient.instance;
+
+  final ApiClient _api;
+
+  /// Shown when the Server has no name for the account, as before.
+  static const String placeholder = 'atomicuser';
+
+  Future<ProfileHandleRead> read() async {
+    final int session = _api.sessionRevision;
+    String? answer;
+    try {
+      answer = await _api.getUsername();
+    } on ApiException catch (error) {
+      if (error.code == 'session_changed') {
+        return const ProfileHandleRead(ProfileHandleSource.retired);
+      }
+    } catch (_) {
+      // Offline or the Server is down: fall back to the cache below.
+    }
+    if (_api.sessionRevision != session) {
+      return const ProfileHandleRead(ProfileHandleSource.retired);
+    }
+    if (answer != null) {
+      if (answer.isEmpty) {
+        return const ProfileHandleRead(ProfileHandleSource.server,
+            username: placeholder);
+      }
+      var cacheFailed = false;
+      try {
+        await ProfileStore.instance.cacheUsername(answer);
+      } catch (_) {
+        cacheFailed = true;
+      }
+      return ProfileHandleRead(ProfileHandleSource.server,
+          username: answer, cacheFailed: cacheFailed);
+    }
+    try {
+      final String? cached = ProfileStore.instance.cachedUsername;
+      return ProfileHandleRead(ProfileHandleSource.cache,
+          username: cached ?? placeholder);
+    } catch (_) {
+      return const ProfileHandleRead(ProfileHandleSource.unavailable,
+          cacheFailed: true);
+    }
+  }
+}
+
 /// Profile (screens spec, Profile): the picture, the username, and the
 /// privacy and security choices.
 class EditProfilePage extends StatefulWidget {
   const EditProfilePage({
     super.key,
     this.loadUsername,
+    this.readHandle,
     this.updateUsername,
     this.checkConnectivity,
   });
 
   static const String title = 'Profile';
 
-  /// Reads the account handle ("@name"). Defaults to
-  /// [AuthServices.getUserInfo]; injectable so tests stay off the network.
+  /// Reads the account handle ("@name") as a Server answer; a throw counts
+  /// as an unreadable handle. Injectable so tests stay off the network.
+  /// [readHandle] takes precedence.
   final Future<String> Function()? loadUsername;
+
+  /// Reads the account handle with its source. Defaults to
+  /// [ProfileHandleReader.read]; injectable for tests.
+  final Future<ProfileHandleRead> Function()? readHandle;
 
   /// Saves a new username and says what happened. Defaults to
   /// [ProfileUsernameUpdater.update]; injectable for tests.
@@ -90,13 +199,35 @@ class EditProfilePage extends StatefulWidget {
 class _EditProfilePageState extends State<EditProfilePage> {
   final String _email = ApiClient.instance.currentUserEmail ?? '';
   final TextEditingController _usernameController = TextEditingController();
-  final AuthServices _serve = AuthServices();
   final ProfileUsernameUpdater _updater = ProfileUsernameUpdater();
+  final ProfileHandleReader _reader = ProfileHandleReader();
 
-  /// The username without the leading "@", or null until it has loaded.
+  /// The sign-in this page belongs to. An answer that arrives after it has
+  /// ended neither changes this page nor starts anything (review R37).
+  final int _session = ApiClient.instance.sessionRevision;
+
+  /// The username without the leading "@", or null until it has loaded: the
+  /// Server's last answer, or this device's copy until the Server answers.
   String? _username;
   bool _editing = false;
   bool _saving = false;
+  bool _refreshing = false;
+
+  /// Said under the handle while it may not be the Server's latest, or when
+  /// this device could not keep a copy; null when there is nothing to say.
+  String? _note;
+
+  /// Whether [_note] offers a refresh: the handle could not be read.
+  bool _canRefresh = false;
+
+  /// Only the latest read may change the handle.
+  int _reads = 0;
+
+  static const String _acknowledgedNote =
+      "Username updated. Couldn't refresh it yet.";
+  static const String _staleNote = 'Showing the last saved username.';
+  static const String _uncachedNote =
+      "This device couldn't keep a copy of your username.";
 
   final ScrollController _scroll = ScrollController();
 
@@ -109,7 +240,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
     _scroll.addListener(() => _titleAway.value =
         _scroll.hasClients && _scroll.offset > AtomicSpace.x10);
     _usernameController.addListener(_edited);
-    _loadUsername();
+    _refresh(afterSave: false);
   }
 
   @override
@@ -129,10 +260,59 @@ class _EditProfilePageState extends State<EditProfilePage> {
       _editing &&
       _usernameController.text.trim().toLowerCase() != (_username ?? '');
 
-  Future<void> _loadUsername() async {
-    final String name = await (widget.loadUsername ?? _serve.getUserInfo)();
-    if (!mounted) return;
-    setState(() => _username = name.startsWith('@') ? name.substring(1) : name);
+  /// Mounted, and still under the sign-in it was opened with.
+  bool get _current =>
+      mounted && ApiClient.instance.sessionRevision == _session;
+
+  Future<ProfileHandleRead> _readHandle() async {
+    final custom = widget.readHandle;
+    if (custom != null) return custom();
+    final legacy = widget.loadUsername;
+    if (legacy == null) return _reader.read();
+    try {
+      final String name = await legacy();
+      return ProfileHandleRead(ProfileHandleSource.server,
+          username: name.startsWith('@') ? name.substring(1) : name);
+    } catch (_) {
+      return const ProfileHandleRead(ProfileHandleSource.unavailable);
+    }
+  }
+
+  /// Reads the handle and shows what it established. Returns null when the
+  /// answer no longer belongs here: the page left, the sign-in changed, or a
+  /// newer read started. Only a Server answer replaces the shown handle; a
+  /// cached one fills it only before anything has loaded (review R37).
+  Future<ProfileHandleRead?> _refresh({required bool afterSave}) async {
+    final int ticket = ++_reads;
+    final ProfileHandleRead read = await _readHandle();
+    if (!_current ||
+        ticket != _reads ||
+        read.source == ProfileHandleSource.retired) {
+      return null;
+    }
+    setState(() {
+      if (read.authoritative) {
+        _username = read.username;
+        _canRefresh = false;
+        _note = read.cacheFailed ? _uncachedNote : null;
+      } else {
+        _username ??= read.username ?? ProfileHandleReader.placeholder;
+        _canRefresh = true;
+        _note = afterSave ? _acknowledgedNote : (_note ?? _staleNote);
+      }
+    });
+    return read;
+  }
+
+  /// Reads the handle again without sending the update again.
+  Future<void> _retryRefresh() async {
+    if (_refreshing || _saving) return;
+    setState(() => _refreshing = true);
+    try {
+      await _refresh(afterSave: false);
+    } finally {
+      if (mounted) setState(() => _refreshing = false);
+    }
   }
 
   void _say(String text, [int ms = 2000]) =>
@@ -159,16 +339,19 @@ class _EditProfilePageState extends State<EditProfilePage> {
   /// (the connectivity check), so a second tap during that check does not
   /// start a second update (review R30), and it is released on every exit.
   /// Editing closes only on a confirmed save (review R32); a rejected or
-  /// failed update keeps the draft for a retry. When the Server took the name
-  /// but this device could not cache it, the refreshed handle decides.
+  /// failed or unconfirmed update keeps the draft for a retry. When the
+  /// Server took the name but this device could not cache it, a refreshed
+  /// Server handle decides; a refresh that cannot reach the Server leaves the
+  /// acknowledged update standing and offers a read-only retry (review R37).
+  /// Nothing from a sign-in that has ended reaches this page.
   Future<void> _save() async {
-    if (_saving) return;
+    if (_saving || !_current) return;
     setState(() => _saving = true);
     var saved = false;
     try {
       final List<ConnectivityResult> link = await (widget.checkConnectivity ??
           () => Connectivity().checkConnectivity())();
-      if (!mounted) return;
+      if (!_current) return;
       if (link.contains(ConnectivityResult.none)) {
         _say('No Internet Connection!');
         return;
@@ -180,26 +363,36 @@ class _EditProfilePageState extends State<EditProfilePage> {
         return;
       }
 
+      final UsernameUpdateOutcome outcome;
       try {
-        final UsernameUpdateOutcome outcome =
-            await (widget.updateUsername ?? _updater.update)(name);
-        if (!mounted) return;
-        switch (outcome) {
-          case UsernameUpdateOutcome.saved:
-            saved = true;
-            _say('Username updated wait for refresh', 1500);
-            await _loadUsername();
-          case UsernameUpdateOutcome.savedUncached:
-            _say('Username updated wait for refresh', 1500);
-            await _loadUsername();
-            saved = mounted && _username == name;
-          case UsernameUpdateOutcome.rejected:
-            _say('Error updating username', 1500);
-        }
+        outcome = await (widget.updateUsername ?? _updater.update)(name);
       } catch (_) {
-        if (!mounted) return;
+        if (!_current) return;
         _say('Error occurred while updating user info');
+        return;
       }
+      if (!_current) return;
+      switch (outcome) {
+        case UsernameUpdateOutcome.rejected:
+          _say('Error updating username', 1500);
+          return;
+        case UsernameUpdateOutcome.uncertain:
+          _say("Couldn't confirm the update. Check your connection and try "
+              'again.');
+          return;
+        case UsernameUpdateOutcome.retired:
+          return;
+        case UsernameUpdateOutcome.saved:
+        case UsernameUpdateOutcome.savedUncached:
+          _say('Username updated wait for refresh', 1500);
+      }
+      final ProfileHandleRead? read = await _refresh(afterSave: true);
+      if (read == null) return;
+      // A Server handle other than the draft, after an uncached save, keeps
+      // the draft: the Server's answer is the evidence.
+      saved = !(outcome == UsernameUpdateOutcome.savedUncached &&
+          read.authoritative &&
+          read.username != name);
     } finally {
       if (mounted) {
         setState(() {
@@ -322,6 +515,30 @@ class _EditProfilePageState extends State<EditProfilePage> {
           overflow: TextOverflow.ellipsis,
           style: AtomicType.headlineMedium.copyWith(color: c.textPrimary),
         ),
+        if (_note != null) ...[
+          const SizedBox(height: AtomicSpace.x2),
+          Wrap(
+            key: const ValueKey('profile-handle-note'),
+            alignment: WrapAlignment.center,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: AtomicSpace.x2,
+            children: [
+              Text(
+                _note!,
+                textAlign: TextAlign.center,
+                style: AtomicType.bodySmall.copyWith(color: c.textSecondary),
+              ),
+              if (_canRefresh)
+                AtomicButton.text(
+                  key: const ValueKey('profile-handle-refresh'),
+                  label: 'Refresh',
+                  size: AtomicButtonSize.compact,
+                  busy: _refreshing,
+                  onPressed: _retryRefresh,
+                ),
+            ],
+          ),
+        ],
       ],
     );
   }
