@@ -7,6 +7,11 @@
 // against a synthetic `/atomicuser` behind `ApiClient.instance`. A valid
 // Server answer survives a failing cache; an unreadable handle offers a
 // read-only refresh; an answer from an ended sign-in changes nothing.
+//
+// Review R40: a success status whose reply cannot be read is neither a
+// rejection nor a confirmation. A read-only refresh decides; the draft stays
+// unless the Server's handle is the draft; the update is never resent. A
+// cached handle is labelled as possibly out of date.
 
 import 'dart:async';
 import 'dart:convert';
@@ -33,12 +38,16 @@ import 'package:http/testing.dart';
 class _Server {
   int status = 200;
   bool unreachable = false;
+
+  /// Review R40: a success status whose body is not JSON.
+  bool unreadable = false;
   final List<String> names = [];
 
   late final MockClient transport = MockClient((request) async {
     if (request.method == 'PATCH' && request.url.path.endsWith('/atomicuser')) {
       if (unreachable) throw http.ClientException('synthetic: unreachable');
       names.add((jsonDecode(request.body) as Map)['username'] as String);
+      if (unreadable) return http.Response('synthetic non-JSON body', status);
       return http.Response(
           status == 200 ? '{}' : '{"error":"synthetic_failure"}', status);
     }
@@ -221,6 +230,26 @@ void main() {
       expect(await server.updater.update('grace'),
           UsernameUpdateOutcome.uncertain);
       expect(ProfileStore.instance.cachedUsername, before);
+    });
+
+    // Review R40.
+    test('a success status with an unreadable reply is unconfirmed, not a '
+        'rejection, and nothing is cached', () async {
+      final server = _Server()..unreadable = true;
+      final before = ProfileStore.instance.cachedUsername;
+      expect(await server.updater.update('grace'),
+          UsernameUpdateOutcome.unconfirmed);
+      expect(server.names, ['grace']);
+      expect(ProfileStore.instance.cachedUsername, before);
+    });
+
+    test('a failure status with an unreadable reply is still a rejection',
+        () async {
+      final server = _Server()
+        ..unreadable = true
+        ..status = 500;
+      expect(
+          await server.updater.update('grace'), UsernameUpdateOutcome.rejected);
     });
 
     test('a Server success is saved and cached', () async {
@@ -435,6 +464,198 @@ void main() {
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
       expect(_live.calls, ['GET', 'PATCH', 'GET']);
+    });
+  });
+
+  // Review R40: the Server says 200 but its reply cannot be read.
+  group('a success status with an unreadable reply (R40)', () {
+    const uncertain =
+        "Couldn't confirm the update. Check your connection and try again.";
+    const unconfirmed = "Couldn't confirm the update. Try again.";
+    final Finder stale = find.byKey(const ValueKey('profile-handle-stale'));
+
+    /// PATCH applies the name (unless [apply] is false) and says 200 with a
+    /// body that is not JSON.
+    void unreadableOk({bool apply = true}) => _live.patch = (name) async {
+          if (apply) _live.handle = name;
+          return http.Response('synthetic non-JSON body', 200);
+        };
+
+    testWidgets('the refresh reads the draft: saved, no error, not resent',
+        (tester) async {
+      await _openDefault(tester);
+      unreadableOk();
+      await _saveDraft(tester, 'grace');
+      expect(_live.calls, ['GET', 'PATCH', 'GET']);
+      expect(find.textContaining('Error'), findsNothing);
+      expect(find.text('Username updated'), findsOneWidget);
+      expect(_field, findsNothing);
+      expect(find.text('@grace'), findsWidgets);
+      expect(_refresh, findsNothing);
+      expect(ProfileStore.instance.cachedUsername, 'grace',
+          reason: 'the Server answer is cached, not the unreadable reply');
+    });
+
+    testWidgets('the refresh reads another name: the draft stays and a retry '
+        'saves once', (tester) async {
+      await _openDefault(tester);
+      unreadableOk(apply: false);
+      await _saveDraft(tester, 'grace');
+      expect(_live.calls, ['GET', 'PATCH', 'GET']);
+      expect(find.textContaining('Error'), findsNothing);
+      expect(find.text(unconfirmed), findsOneWidget);
+      expect(find.text('Username updated'), findsNothing);
+      expect(find.text('Username updated wait for refresh'), findsNothing);
+      expect(_field, findsOneWidget);
+      expect(_draft(tester), 'grace');
+      expect(tester.widget<AtomicButton>(_save).busy, isFalse);
+      expect(find.text('@ada'), findsWidgets);
+
+      _live.patch = null;
+      await _quiet(tester);
+      await tester.tap(_save);
+      await tester.pumpAndSettle();
+      expect(_live.calls, ['GET', 'PATCH', 'GET', 'PATCH', 'GET']);
+      expect(_field, findsNothing);
+      expect(find.text('@grace'), findsWidgets);
+    });
+
+    testWidgets('the refresh cannot reach the Server: uncertain, the draft '
+        'stays, and Refresh only reads', (tester) async {
+      await _openDefault(tester);
+      unreadableOk();
+      _live.get = () async => _unavailable();
+      await _typeDraft(tester, 'grace');
+      // GET at open already answered; later GETs fail.
+      await tester.tap(_save);
+      await tester.pumpAndSettle();
+      expect(_live.calls, ['GET', 'PATCH', 'GET']);
+      expect(find.text(uncertain), findsOneWidget);
+      expect(find.textContaining('Error'), findsNothing);
+      expect(find.text('Username updated'), findsNothing);
+      expect(_field, findsOneWidget);
+      expect(_draft(tester), 'grace');
+      expect(tester.widget<AtomicButton>(_save).busy, isFalse);
+      expect(find.text('@ada'), findsWidgets);
+      expect(stale, findsNothing, reason: 'the shown name is a Server answer');
+
+      await _quiet(tester);
+      await tester.tap(find.byTooltip('Cancel'));
+      await tester.pump();
+      _live.get = null;
+      await tester.tap(_refresh);
+      await tester.pumpAndSettle();
+      expect(_live.calls, ['GET', 'PATCH', 'GET', 'GET'],
+          reason: 'Refresh reads; it does not resend');
+      expect(find.text('@grace'), findsWidgets);
+      expect(_refresh, findsNothing);
+    });
+
+    testWidgets('one save at a time through the reconciling refresh',
+        (tester) async {
+      await _openDefault(tester);
+      unreadableOk();
+      final gate = Completer<http.Response>();
+      await _typeDraft(tester, 'grace');
+      _live.get = () => gate.future;
+      await tester.tap(_save);
+      await tester.pump();
+      await tester.pump();
+      expect(_live.calls, ['GET', 'PATCH', 'GET']);
+      expect(tester.widget<AtomicButton>(_save).busy, isTrue);
+      await tester.tap(_save);
+      await tester.pump();
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+      expect(_live.calls, ['GET', 'PATCH', 'GET'], reason: 'no second update');
+      gate.complete(http.Response('{"username":"grace"}', 200));
+      await tester.pumpAndSettle();
+      expect(_live.calls, ['GET', 'PATCH', 'GET']);
+      expect(_field, findsNothing);
+      expect(find.text('@grace'), findsWidgets);
+    });
+
+    testWidgets('an unreadable 200 answered after the sign-in changed '
+        'changes nothing', (tester) async {
+      await _openDefault(tester);
+      final gate = Completer<http.Response>();
+      _live.patch = (name) {
+        _live.handle = name;
+        return gate.future;
+      };
+      await _typeDraft(tester, 'grace');
+      await tester.tap(_save);
+      await tester.pump();
+      await tester.runAsync(() => _signIn('synthetic-owner-r40-d'));
+      gate.complete(http.Response('synthetic non-JSON body', 200));
+      await tester.pumpAndSettle();
+      expect(_live.calls, ['GET', 'PATCH'], reason: 'nothing is refreshed');
+      expect(find.textContaining('Error'), findsNothing);
+      expect(find.textContaining("Couldn't confirm"), findsNothing);
+      expect(find.text('Username updated'), findsNothing);
+      expect(find.text('@grace'), findsNothing);
+      expect(ProfileStore.instance.cachedUsername, isNull,
+          reason: "the new account's copy is untouched");
+      expect(tester.widget<AtomicButton>(_save).busy, isFalse);
+
+      _live.patch = null;
+      await tester.tap(_save);
+      await tester.pumpAndSettle();
+      expect(_live.calls, ['GET', 'PATCH'], reason: 'no update for account B');
+    });
+
+    testWidgets('a reconciling refresh answered after the sign-in changed is '
+        'not shown or cached', (tester) async {
+      await _openDefault(tester);
+      unreadableOk();
+      final gate = Completer<http.Response>();
+      await _typeDraft(tester, 'grace');
+      _live.get = () => gate.future;
+      await tester.tap(_save);
+      await tester.pump();
+      await tester.pump();
+      expect(_live.calls, ['GET', 'PATCH', 'GET']);
+      await tester.runAsync(() => _signIn('synthetic-owner-r40-e'));
+      gate.complete(http.Response('{"username":"grace"}', 200));
+      await tester.pumpAndSettle();
+      expect(find.text('@grace'), findsNothing);
+      expect(find.text('@ada'), findsWidgets);
+      expect(find.text('Username updated'), findsNothing);
+      expect(find.textContaining('Error'), findsNothing);
+      expect(find.textContaining("Couldn't confirm"), findsNothing);
+      expect(ProfileStore.instance.cachedUsername, isNull,
+          reason: "the new account's copy is untouched");
+      expect(tester.widget<AtomicButton>(_save).busy, isFalse);
+    });
+
+    testWidgets('a cached handle is labelled as possibly out of date until '
+        'the Server answers', (tester) async {
+      await ProfileStore.instance.cacheUsername('old-ada');
+      _live.get = () async => _unavailable();
+      await _openDefault(tester);
+      expect(find.text('@old-ada'), findsWidgets);
+      expect(stale, findsOneWidget);
+      expect(find.text('Saved on this device · may be out of date'),
+          findsOneWidget);
+      expect(_refresh, findsOneWidget);
+
+      _live.get = null;
+      await tester.tap(_refresh);
+      await tester.pumpAndSettle();
+      expect(_live.calls, ['GET', 'GET']);
+      expect(find.text('@ada'), findsWidgets);
+      expect(stale, findsNothing);
+    });
+
+    testWidgets('no cached handle: the placeholder is not labelled as a copy',
+        (tester) async {
+      await ProfileStore.instance.cacheUsername('');
+      expect(ProfileStore.instance.cachedUsername, isNull);
+      _live.get = () async => _unavailable();
+      await _openDefault(tester);
+      expect(find.text('@atomicuser'), findsWidgets);
+      expect(_refresh, findsOneWidget);
+      expect(stale, findsNothing);
     });
   });
 

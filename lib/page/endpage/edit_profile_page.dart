@@ -28,7 +28,7 @@ enum UsernameUpdateOutcome {
   /// The Server took the name and this device cached it.
   saved,
 
-  /// The Server did not take the name, or could not be reached.
+  /// The Server answered with a failure status: it did not take the name.
   rejected,
 
   /// The Server took the name, but caching it on this device failed. The
@@ -39,6 +39,12 @@ enum UsernameUpdateOutcome {
   /// or may not have taken the name (review R37). Neither is assumed: the
   /// draft stays for a retry.
   uncertain,
+
+  /// The Server answered with a success status, but its reply could not be
+  /// read (review R40). That is not a rejection, and the unreadable reply is
+  /// not a confirmation either: nothing is cached, and the page reads the
+  /// handle back, read-only, to decide. The update is never resent.
+  unconfirmed,
 
   /// The sign-in that sent the update has ended. Its answer belongs to the
   /// old session: nothing is shown and nothing is cached (review R37).
@@ -60,6 +66,10 @@ class ProfileUsernameUpdater {
       await _api.setUsername(username);
     } on ApiException catch (error) {
       if (error.code == 'session_changed') return UsernameUpdateOutcome.retired;
+      // A success status whose reply could not be read (review R40).
+      if (error.statusCode >= 200 && error.statusCode < 300) {
+        return UsernameUpdateOutcome.unconfirmed;
+      }
       // The Server answered, and the answer was no.
       return UsernameUpdateOutcome.rejected;
     } catch (_) {
@@ -221,6 +231,10 @@ class _EditProfilePageState extends State<EditProfilePage> {
   /// a read-only refresh beside Copy and Edit, without moving the page.
   bool _canRefresh = false;
 
+  /// The shown handle is this device's cached copy, not a Server answer: the
+  /// username row says it may be out of date (review R40).
+  bool _shownFromCache = false;
+
   /// Only the latest read may change the handle.
   int _reads = 0;
 
@@ -228,6 +242,10 @@ class _EditProfilePageState extends State<EditProfilePage> {
       "Username updated. Couldn't refresh it yet.";
   static const String _uncachedNote =
       "This device couldn't keep a copy of your username.";
+  static const String _uncertainMessage =
+      "Couldn't confirm the update. Check your connection and try again.";
+  static const String _unconfirmedMessage =
+      "Couldn't confirm the update. Try again.";
 
   final ScrollController _scroll = ScrollController();
 
@@ -294,9 +312,15 @@ class _EditProfilePageState extends State<EditProfilePage> {
       if (read.authoritative) {
         _username = read.username;
         _canRefresh = false;
+        _shownFromCache = false;
         _note = read.cacheFailed ? _uncachedNote : null;
       } else {
-        _username ??= read.username ?? ProfileHandleReader.placeholder;
+        if (_username == null) {
+          _username = read.username ?? ProfileHandleReader.placeholder;
+          _shownFromCache = read.source == ProfileHandleSource.cache &&
+              read.username != null &&
+              read.username != ProfileHandleReader.placeholder;
+        }
         _canRefresh = true;
         if (afterSave) _note = _acknowledgedNote;
       }
@@ -343,6 +367,10 @@ class _EditProfilePageState extends State<EditProfilePage> {
   /// Server took the name but this device could not cache it, a refreshed
   /// Server handle decides; a refresh that cannot reach the Server leaves the
   /// acknowledged update standing and offers a read-only retry (review R37).
+  /// A success status with an unreadable reply is neither a rejection nor a
+  /// confirmation: a read-only refresh decides, and the draft stays unless
+  /// the Server's handle is the draft (review R40). The admission is held
+  /// through that refresh, so it cannot start a second update.
   /// Nothing from a sign-in that has ended reaches this page.
   Future<void> _save() async {
     if (_saving || !_current) return;
@@ -377,8 +405,19 @@ class _EditProfilePageState extends State<EditProfilePage> {
           _say('Error updating username', 1500);
           return;
         case UsernameUpdateOutcome.uncertain:
-          _say("Couldn't confirm the update. Check your connection and try "
-              'again.');
+          _say(_uncertainMessage);
+          return;
+        case UsernameUpdateOutcome.unconfirmed:
+          final ProfileHandleRead? check = await _refresh(afterSave: false);
+          if (check == null) return;
+          if (check.authoritative && check.username == name) {
+            _say('Username updated', 1500);
+            saved = true;
+          } else if (check.authoritative) {
+            _say(_unconfirmedMessage);
+          } else {
+            _say(_uncertainMessage);
+          }
           return;
         case UsernameUpdateOutcome.retired:
           return;
@@ -543,6 +582,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
           onCopy: _copyUsername,
           onSubmitted: _save,
           onRefresh: _canRefresh ? _retryRefresh : null,
+          stale: _canRefresh && _shownFromCache,
         ),
         SettingsRow(
           icon: AtomicIcons.mail,
@@ -609,6 +649,7 @@ class _UsernameRow extends StatelessWidget {
     required this.onCopy,
     required this.onSubmitted,
     this.onRefresh,
+    this.stale = false,
   });
 
   final String? username;
@@ -622,6 +663,12 @@ class _UsernameRow extends StatelessWidget {
   /// Shown only while the handle could not be read from the Server: reads it
   /// again, never resubmits (review R37).
   final VoidCallback? onRefresh;
+
+  /// The shown name is this device's cached copy: say it may be out of date
+  /// (review R40).
+  final bool stale;
+
+  static const String staleLabel = 'Saved on this device · may be out of date';
 
   @override
   Widget build(BuildContext context) {
@@ -668,6 +715,11 @@ class _UsernameRow extends StatelessWidget {
                             overflow: TextOverflow.ellipsis,
                             style: AtomicType.bodySmall
                                 .copyWith(color: c.textSecondary)),
+                        if (stale)
+                          Text(staleLabel,
+                              key: const ValueKey('profile-handle-stale'),
+                              style: AtomicType.bodySmall
+                                  .copyWith(color: c.textSecondary)),
                       ],
                     ),
             ),
