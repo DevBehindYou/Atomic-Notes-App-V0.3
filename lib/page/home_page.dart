@@ -526,7 +526,7 @@ class _Heading extends StatelessWidget {
 /// 200 ms shared-axis swap (a fade only under reduced motion). The slot keeps
 /// its element when the header moves between layouts, so the field keeps its
 /// focus and input connection.
-class _TitleSlot extends StatelessWidget {
+class _TitleSlot extends StatefulWidget {
   const _TitleSlot({
     required this.open,
     required this.heading,
@@ -540,11 +540,26 @@ class _TitleSlot extends StatelessWidget {
   static const Duration swap = Duration(milliseconds: 200);
 
   @override
+  State<_TitleSlot> createState() => _TitleSlotState();
+}
+
+class _TitleSlotState extends State<_TitleSlot> {
+  bool? _openAtSwap;
+  bool _slide = false;
+
+  @override
   Widget build(BuildContext context) {
-    final reduced = AtomicMotion.reduced(context);
+    // Slide or fade is chosen when a swap starts. Reduced motion turning on
+    // or off between swaps (say, while the editor covers Home) then leaves
+    // the field's element, and so the focus that returns to it, in place.
+    if (_openAtSwap != widget.open) {
+      _openAtSwap = widget.open;
+      _slide = !AtomicMotion.reduced(context);
+    }
+    final slide = _slide;
     final rtl = Directionality.of(context) == TextDirection.rtl;
     return AnimatedSwitcher(
-      duration: AtomicMotion.fade(context, swap),
+      duration: AtomicMotion.fade(context, _TitleSlot.swap),
       switchInCurve: AtomicMotion.standardCurve,
       switchOutCurve: AtomicMotion.exitCurve,
       layoutBuilder: (current, previous) => Stack(
@@ -553,7 +568,7 @@ class _TitleSlot extends StatelessWidget {
       ),
       transitionBuilder: (child, animation) {
         final faded = FadeTransition(opacity: animation, child: child);
-        if (reduced) return faded;
+        if (!slide) return faded;
         // The field enters from the end, the title from the start.
         final incomingField = child.key == const ValueKey('home-search-slot');
         final from = (incomingField ? 0.06 : -0.06) * (rtl ? -1 : 1);
@@ -563,13 +578,14 @@ class _TitleSlot extends StatelessWidget {
           child: faded,
         );
       },
-      child: open
-          ? KeyedSubtree(key: const ValueKey('home-search-slot'), child: field)
+      child: widget.open
+          ? KeyedSubtree(
+              key: const ValueKey('home-search-slot'), child: widget.field)
           : KeyedSubtree(
               key: const ValueKey('home-title-slot'),
               child: Align(
                 alignment: AlignmentDirectional.centerStart,
-                child: heading,
+                child: widget.heading,
               ),
             ),
     );
@@ -1163,8 +1179,9 @@ Future<void> _runEditor(BuildContext context, NavigatorState navigator,
   // after this attempt is stored.
   final c = context.colors;
   final saved = await navigator.push<bool>(EditorRoute<bool>(
-    // Movement, so instant under reduced motion (ADR-011).
-    duration: AtomicMotion.move(context, AtomicMotion.emphasized),
+    // Movement: the route applies reduced motion (ADR-011) when it opens,
+    // when it closes and when the preference turns on in between.
+    duration: AtomicMotion.emphasized,
     canvas: c.canvas,
     originColor: fromButton ? c.accent : c.surface,
     // The new-note button is a circle.

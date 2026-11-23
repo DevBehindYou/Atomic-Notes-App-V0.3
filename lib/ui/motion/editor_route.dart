@@ -26,9 +26,11 @@ Rect? editorOriginRect(BuildContext context, NavigatorState navigator) {
 /// over the last 60 %. Close reverses into the origin as it is then, or fades
 /// out when it has gone.
 ///
-/// [duration] comes from the caller through `AtomicMotion.move`, so reduced
-/// motion opens and closes at once. The page itself is unchanged: it keeps its
-/// own layout, Back handling and result.
+/// [duration] is the full motion duration. Reduced motion (ADR-011) is read
+/// when the route opens and again when it closes, so either is instant when
+/// it is on at that moment. Turning it on while the transform runs finishes
+/// the transform at once. The page itself is unchanged: it keeps its own
+/// layout, Back handling and result.
 class EditorRoute<T> extends PageRoute<T> {
   EditorRoute({
     required this.builder,
@@ -55,11 +57,49 @@ class EditorRoute<T> extends PageRoute<T> {
   /// The origin measured when the open or close started.
   Rect? _from;
 
-  @override
-  Duration get transitionDuration => _duration;
+  /// Whether reduced motion is on now, read where the navigator sits without
+  /// adding a dependency.
+  bool get _reduced {
+    final navigator = this.navigator;
+    if (navigator == null || !navigator.mounted) return false;
+    final media =
+        navigator.context.getInheritedWidgetOfExactType<MediaQuery>()?.data;
+    return media != null &&
+        (media.disableAnimations || media.accessibleNavigation);
+  }
+
+  Duration get _current => _reduced ? Duration.zero : _duration;
 
   @override
-  Duration get reverseTransitionDuration => _duration;
+  Duration get transitionDuration => _current;
+
+  @override
+  Duration get reverseTransitionDuration => _current;
+
+  /// Gives the controller the duration for the preference as it is now.
+  void _applyMotion() {
+    final controller = this.controller;
+    if (controller == null) return;
+    final duration = _current;
+    controller
+      ..duration = duration
+      ..reverseDuration = duration;
+  }
+
+  /// Reduced motion turned on: a transform that is still running ends now,
+  /// at the place it was heading (ADR-011: cancel effects already running).
+  void _finishTransform() {
+    final controller = this.controller;
+    if (controller == null || !controller.isAnimating) return;
+    controller
+      ..duration = Duration.zero
+      ..reverseDuration = Duration.zero;
+    if (controller.status == AnimationStatus.reverse) {
+      controller.reverse();
+    } else {
+      controller.forward();
+    }
+  }
 
   @override
   bool get opaque => true;
@@ -79,6 +119,7 @@ class EditorRoute<T> extends PageRoute<T> {
   @override
   TickerFuture didPush() {
     _from = origin?.call();
+    _applyMotion();
     return super.didPush();
   }
 
@@ -86,6 +127,8 @@ class EditorRoute<T> extends PageRoute<T> {
   bool didPop(T? result) {
     // Return into where the origin is now, or fade if it has gone.
     _from = origin?.call();
+    // The preference may have changed since the editor opened.
+    _applyMotion();
     return super.didPop(result);
   }
 
@@ -102,51 +145,80 @@ class EditorRoute<T> extends PageRoute<T> {
       curve: AtomicMotion.emphasizedCurve,
       reverseCurve: AtomicMotion.emphasizedCurve.flipped,
     );
-    return LayoutBuilder(
-      builder: (context, constraints) => AnimatedBuilder(
-        animation: progress,
-        child: child,
-        builder: (context, child) {
-          final t = progress.value;
-          final full = Offset.zero & constraints.biggest;
-          final from = _from;
-          final Rect rect;
-          final double radius;
-          final double content;
-          final Color fill;
-          double opacity = 1;
-          if (from == null) {
-            rect = full;
-            radius = 0;
-            content = 1;
-            fill = canvas;
-            opacity = t;
-          } else {
-            rect = Rect.lerp(from, full, t)!;
-            radius = lerpDouble(originRadius ?? from.shortestSide / 2, 0, t)!;
-            content = const Interval(0.4, 1).transform(t);
-            fill = Color.lerp(originColor ?? canvas, canvas, t)!;
-          }
-          return Opacity(
-            opacity: opacity,
-            child: ClipRRect(
-              key: const ValueKey('editor-route-clip'),
-              clipper: _RRectClipper(
-                  RRect.fromRectAndRadius(rect, Radius.circular(radius))),
-              child: ColoredBox(
-                color: fill,
-                child: Opacity(
-                  key: const ValueKey('editor-route-content'),
-                  opacity: content,
-                  child: child,
+    return _ReducedMotionWatch(
+      onReduced: _finishTransform,
+      child: LayoutBuilder(
+        builder: (context, constraints) => AnimatedBuilder(
+          animation: progress,
+          child: child,
+          builder: (context, child) {
+            final t = progress.value;
+            final full = Offset.zero & constraints.biggest;
+            final from = _from;
+            final Rect rect;
+            final double radius;
+            final double content;
+            final Color fill;
+            double opacity = 1;
+            if (from == null) {
+              rect = full;
+              radius = 0;
+              content = 1;
+              fill = canvas;
+              opacity = t;
+            } else {
+              rect = Rect.lerp(from, full, t)!;
+              radius = lerpDouble(originRadius ?? from.shortestSide / 2, 0, t)!;
+              content = const Interval(0.4, 1).transform(t);
+              fill = Color.lerp(originColor ?? canvas, canvas, t)!;
+            }
+            return Opacity(
+              opacity: opacity,
+              child: ClipRRect(
+                key: const ValueKey('editor-route-clip'),
+                clipper: _RRectClipper(
+                    RRect.fromRectAndRadius(rect, Radius.circular(radius))),
+                child: ColoredBox(
+                  color: fill,
+                  child: Opacity(
+                    key: const ValueKey('editor-route-content'),
+                    opacity: content,
+                    child: child,
+                  ),
                 ),
               ),
-            ),
-          );
-        },
+            );
+          },
+        ),
       ),
     );
   }
+}
+
+/// Calls [onReduced] after the frame in which reduced motion is found on,
+/// so a running transform can finish without changing the tree mid-build.
+class _ReducedMotionWatch extends StatefulWidget {
+  const _ReducedMotionWatch({required this.onReduced, required this.child});
+
+  final VoidCallback onReduced;
+  final Widget child;
+
+  @override
+  State<_ReducedMotionWatch> createState() => _ReducedMotionWatchState();
+}
+
+class _ReducedMotionWatchState extends State<_ReducedMotionWatch> {
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!AtomicMotion.reduced(context)) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) widget.onReduced();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }
 
 class _RRectClipper extends CustomClipper<RRect> {

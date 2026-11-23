@@ -42,9 +42,11 @@ Future<NotesBloc> _home(WidgetTester tester, FakeNotesSource source,
   });
   await tester.pumpWidget(MaterialApp(
     theme: AtomicTheme.light,
+    // The platform preference still reaches the app, so it can change live.
     builder: (context, child) => MediaQuery(
-      data:
-          MediaQuery.of(context).copyWith(disableAnimations: disableAnimations),
+      data: MediaQuery.of(context).copyWith(
+          disableAnimations:
+              disableAnimations || MediaQuery.disableAnimationsOf(context)),
       child: child!,
     ),
     home: BlocProvider<NotesBloc>.value(
@@ -379,5 +381,233 @@ void main() {
     expect(_editor, findsNothing);
     expect(source.saveCalls, 0);
     expect(tester.takeException(), isNull);
+  });
+
+  group('reduced motion changing while the editor is shown (R41)', () {
+    void setReduced(WidgetTester tester, bool on) {
+      tester.platformDispatcher.accessibilityFeaturesTestValue =
+          FakeAccessibilityFeatures(disableAnimations: on);
+    }
+
+    void clearOnTearDown(WidgetTester tester) => addTearDown(
+        tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
+
+    Rect clipRect(WidgetTester tester) {
+      final clip = tester.renderObject<RenderClipRRect>(
+          find.byKey(const ValueKey('editor-route-clip')));
+      return clip.clipper!.getClip(clip.size).outerRect;
+    }
+
+    double contentOpacity(WidgetTester tester) => tester
+        .widget<Opacity>(find.byKey(const ValueKey('editor-route-content')))
+        .opacity;
+
+    testWidgets(
+        'review: enabling reduced motion while editor is open also '
+        'disables the exit transform', (tester) async {
+      await _home(tester, _three());
+      clearOnTearDown(tester);
+      await tester.tap(find.byKey(const ValueKey('b')));
+      await _settle(tester);
+      final route = _editorRoute(tester);
+      setReduced(tester, true);
+      await tester.pump();
+      expect(MediaQuery.disableAnimationsOf(tester.element(_editor)), isTrue);
+      await tester.binding.handlePopRoute();
+      await tester.pump();
+      expect(route.animation!.status, AnimationStatus.dismissed,
+          reason: 'the platform preference changed before closing the editor');
+      await tester.pump();
+      expect(_editor, findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'turned on while the editor grows: the open finishes at once and '
+        'Done still stores the draft once', (tester) async {
+      final source = _three();
+      final bloc = await _home(tester, source);
+      clearOnTearDown(tester);
+      await tester.tap(find.byKey(const ValueKey('b')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      final route = _editorRoute(tester);
+      expect(route.animation!.status, AnimationStatus.forward);
+      expect(route.animation!.value, lessThan(1));
+      setReduced(tester, true);
+      await tester.pump();
+      expect(route.animation!.status, AnimationStatus.completed,
+          reason: 'A running entrance ends when reduced motion turns on.');
+      await tester.pump();
+      expect(clipRect(tester), Offset.zero & tester.view.physicalSize / 3);
+      expect(contentOpacity(tester), 1);
+      expect(tester.hasRunningAnimations, isFalse);
+      // The editor works as usual.
+      await tester.enterText(_title, 'Ideas, revised');
+      await tester.tap(find.text('Done'));
+      await tester.pump();
+      await tester.pump();
+      await tester.pump();
+      expect(_editor, findsNothing);
+      expect(source.saveCalls, 1);
+      expect(source.byId('b')!.title, 'Ideas, revised');
+      expect(bloc.state.notes.firstWhere((n) => n.id == 'b').title,
+          'Ideas, revised');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('turned on while the editor closes: the close finishes at once',
+        (tester) async {
+      final source = _three();
+      await _home(tester, source);
+      clearOnTearDown(tester);
+      await tester.tap(find.byKey(const ValueKey('b')));
+      await _settle(tester);
+      final route = _editorRoute(tester);
+      await tester.binding.handlePopRoute();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(route.animation!.status, AnimationStatus.reverse);
+      expect(route.animation!.value, greaterThan(0));
+      setReduced(tester, true);
+      await tester.pump();
+      expect(route.animation!.status, AnimationStatus.dismissed,
+          reason: 'A running exit ends when reduced motion turns on.');
+      await tester.pump();
+      expect(_editor, findsNothing);
+      expect(source.saveCalls, 0);
+      expect(find.byKey(const ValueKey('b')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'turned on while Done closes the editor: the draft is stored once',
+        (tester) async {
+      final source = _three();
+      await _home(tester, source);
+      clearOnTearDown(tester);
+      await tester.tap(find.byKey(const ValueKey('b')));
+      await _settle(tester);
+      final route = _editorRoute(tester);
+      await tester.enterText(_title, 'Kept');
+      await tester.tap(find.text('Done'));
+      await tester.pump();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(route.animation!.status, AnimationStatus.reverse);
+      setReduced(tester, true);
+      await tester.pump();
+      expect(route.animation!.status, AnimationStatus.dismissed);
+      await tester.pump();
+      expect(_editor, findsNothing);
+      expect(source.saveCalls, 1);
+      expect(source.byId('b')!.title, 'Kept');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'turned on while the editor closes: search text and focus come back',
+        (tester) async {
+      final source = _three();
+      final bloc = await _home(tester, source);
+      clearOnTearDown(tester);
+      await tester.tap(find.byTooltip('Search notes'));
+      await _settle(tester);
+      await tester.enterText(find.byType(TextField), 'rocket');
+      await _settle(tester);
+      final search = tester.state<EditableTextState>(find.byType(EditableText));
+      await tester.tap(find.byKey(const ValueKey('b')));
+      await _settle(tester);
+      expect(search.widget.focusNode.hasFocus, isFalse);
+      await tester.binding.handlePopRoute();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      setReduced(tester, true);
+      await _settle(tester);
+      expect(_editor, findsNothing);
+      expect(bloc.state.query, 'rocket');
+      expect(search.mounted, isTrue);
+      expect(search.widget.controller.text, 'rocket');
+      expect(search.widget.focusNode.hasFocus, isTrue,
+          reason: 'Focus (and so the keyboard) returns to the search field.');
+    });
+
+    testWidgets(
+        'turned on while the editor is fully open: Back is instant and the '
+        'search field gets its focus back', (tester) async {
+      final source = _three();
+      final bloc = await _home(tester, source);
+      clearOnTearDown(tester);
+      await tester.tap(find.byTooltip('Search notes'));
+      await _settle(tester);
+      await tester.enterText(find.byType(TextField), 'rocket');
+      await _settle(tester);
+      final search = tester.state<EditableTextState>(find.byType(EditableText));
+      await tester.tap(find.byKey(const ValueKey('b')));
+      await _settle(tester);
+      final route = _editorRoute(tester);
+      setReduced(tester, true);
+      await _settle(tester);
+      await tester.binding.handlePopRoute();
+      await tester.pump();
+      expect(route.animation!.status, AnimationStatus.dismissed);
+      await _settle(tester);
+      expect(_editor, findsNothing);
+      expect(source.saveCalls, 0);
+      expect(bloc.state.query, 'rocket');
+      expect(search.mounted, isTrue,
+          reason: 'The field keeps its element across the preference change.');
+      expect(search.widget.focusNode.hasFocus, isTrue,
+          reason: 'Focus (and so the keyboard) returns to the search field.');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('turned off while the editor is open: the close moves again',
+        (tester) async {
+      await _home(tester, _three());
+      clearOnTearDown(tester);
+      setReduced(tester, true);
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('b')));
+      await tester.pump();
+      final route = _editorRoute(tester);
+      expect(route.animation!.status, AnimationStatus.completed,
+          reason: 'Opened under reduced motion: no entrance.');
+      await _settle(tester);
+      setReduced(tester, false);
+      await tester.pump();
+      await tester.binding.handlePopRoute();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(route.animation!.status, AnimationStatus.reverse,
+          reason: 'The close uses the preference as it is now.');
+      await _settle(tester);
+      expect(_editor, findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a later open uses the preference as it is then',
+        (tester) async {
+      await _home(tester, _three());
+      clearOnTearDown(tester);
+      setReduced(tester, true);
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('b')));
+      await tester.pump();
+      expect(_editorRoute(tester).animation!.status, AnimationStatus.completed);
+      await _back(tester);
+      expect(_editor, findsNothing);
+      setReduced(tester, false);
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('c')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      final route = _editorRoute(tester);
+      expect(route.animation!.status, AnimationStatus.forward);
+      expect(route.transitionDuration, const Duration(milliseconds: 350));
+      await _settle(tester);
+      await _back(tester);
+      expect(tester.takeException(), isNull);
+    });
   });
 }
