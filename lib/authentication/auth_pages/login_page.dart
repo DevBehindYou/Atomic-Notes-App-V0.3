@@ -3,11 +3,15 @@
 import 'package:atomic_notes/api/atomic_notes_api.dart';
 import 'package:atomic_notes/profile/guest_profile_store.dart';
 import 'package:atomic_notes/profile/guest_workspace_page.dart';
-import 'package:atomic_notes/theme/app_tokens.dart';
-import 'package:atomic_notes/theme/editorial.dart';
+import 'package:atomic_notes/theme/atomic_colors.dart';
+import 'package:atomic_notes/theme/atomic_tokens.dart';
+import 'package:atomic_notes/theme/atomic_type.dart';
+import 'package:atomic_notes/ui/buttons/atomic_button.dart';
+import 'package:atomic_notes/ui/motion/atomic_pressable.dart';
+import 'package:atomic_notes/ui/motion/entrance.dart';
+import 'package:atomic_notes/ui/overlays/atomic_snack_bar.dart';
+import 'package:atomic_notes/utility/component/atomic_brand.dart';
 import 'package:atomic_notes/utility/component/login_button.dart';
-import 'package:atomic_notes/utility/component/logo_container.dart';
-import 'package:atomic_notes/utility/component/my_snackbar.dart';
 import 'package:flutter/material.dart';
 
 /// MIGRATION NOTE: this used to be an email/password sign-in and sign-up
@@ -19,25 +23,47 @@ import 'package:flutter/material.dart';
 /// made here), so there is no password to forget and nothing to verify by
 /// email. Those three pages were deleted along with their main.dart routes
 /// once Google-only auth was confirmed — there was no live path to them left.
+///
+/// Layout (screens spec, Login): the brand mark, the display headline, the
+/// existing subtitle, "Sign in with Google" in Google's own button style,
+/// the optional Guest entry, and the terms line. There are no text fields,
+/// so there is nothing to autofill.
 class LoginPage extends StatefulWidget {
-  const LoginPage({this.guestEntry = GuestFeature.enabled, super.key});
+  const LoginPage({
+    this.guestEntry = GuestFeature.enabled,
+    this.signIn,
+    super.key,
+  });
 
   /// Offers "Continue without an account" (local-only Guest notes). Off in
   /// default builds; the Google-only start is unchanged.
   final bool guestEntry;
+
+  /// The Google sign-in. Null uses `ApiClient.instance.signInWithGoogle`, as
+  /// the app does; tests pass a fake.
+  final Future<void> Function()? signIn;
+
+  static const String title = 'Your notes, your Drive.';
+  static const String subtitle = 'Sign in with Google. Notes sync to your own '
+      'Google Drive — nothing is stored on our servers but sync metadata.';
+  static const String googleLabel = 'Sign in with Google';
+  static const String guestLabel = 'Continue without an account';
+  static const String termsLine = 'By signing in you agree to the terms.';
+  static const String termsLink = 'Read the terms';
 
   @override
   _LoginPageState createState() => _LoginPageState();
 }
 
 class _LoginPageState extends State<LoginPage> {
-  final _api = ApiClient.instance;
   bool _isLoading = false;
 
   Future<void> _signInWithGoogle() async {
+    // One sign-in per action, even for two taps inside one frame.
+    if (_isLoading) return;
     setState(() => _isLoading = true);
     try {
-      await _api.signInWithGoogle();
+      await (widget.signIn ?? ApiClient.instance.signInWithGoogle)();
       if (!mounted) return;
       Navigator.of(context).pushReplacementNamed('/splashpage');
     } on ApiException catch (e) {
@@ -45,14 +71,16 @@ class _LoginPageState extends State<LoginPage> {
       if (e.code == 'cancelled') return; // user dismissed the picker — not an error
       // Visible in `adb logcat -s flutter`; carries error codes only, never tokens.
       debugPrint('Sign-in failed: ${e.code} (HTTP ${e.statusCode})');
-      MySnackBar(text: _friendly(e), sec: 2500).showMySnackBar(context);
+      AtomicSnackBar(text: _friendly(e), millis: 2500, error: true)
+          .show(context);
     } catch (e) {
       if (!mounted) return;
       // A Google PlatformException (for example ApiException: 10 when the signing
       // certificate is not registered) or a network error ends up here.
       debugPrint('Sign-in failed unexpectedly: ${e.runtimeType}: $e');
-      const MySnackBar(text: 'Unknown error occurred!', sec: 2000)
-          .showMySnackBar(context);
+      const AtomicSnackBar(
+              text: 'Unknown error occurred!', millis: 2000, error: true)
+          .show(context);
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -79,71 +107,94 @@ class _LoginPageState extends State<LoginPage> {
     }
   }
 
+  void _openGuest() => Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) =>
+          GuestWorkspacePage(notes: GuestStoreNotes(GuestProfileStore()))));
+
   @override
   Widget build(BuildContext context) {
+    final c = context.colors;
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final margin = AtomicSpace.screenMargin(MediaQuery.sizeOf(context).width);
     return Scaffold(
-      backgroundColor: AppColors.paper,
+      backgroundColor: c.canvas,
       body: SafeArea(
-        child: SingleChildScrollView(
-          child: Column(
-            children: [
-              const SizedBox(height: 96),
-              const LogoContainer(showTagline: true),
-              const SizedBox(height: AppSpace.xxl),
-              const _AuthHeader(
-                eyebrow: 'WELCOME',
-                title: 'Your notes,\nyour Drive.',
-                subtitle:
-                    'Sign in with Google. Notes sync to your own Google Drive — nothing is stored on our servers but sync metadata.',
-              ),
-              const SizedBox(height: AppSpace.xl),
-              Padding(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: AppSpace.screenMargin),
-                child: LoginButton(
-                  ico: 'assets/login.svg',
-                  isLoading: _isLoading,
-                  signIn: _signInWithGoogle,
-                  text: 'Sign in with Google',
-                ),
-              ),
-              if (widget.guestEntry)
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: AppSpace.screenMargin),
-                  child: TextButton(
-                    key: const ValueKey('login-guest'),
-                    style: TextButton.styleFrom(
-                        minimumSize: const Size.fromHeight(48)),
-                    onPressed: _isLoading
-                        ? null
-                        : () => Navigator.of(context).push(MaterialPageRoute(
-                            builder: (_) => GuestWorkspacePage(
-                                notes: GuestStoreNotes(GuestProfileStore())))),
-                    child: const Text('Continue without an account'),
-                  ),
-                ),
-              const SizedBox(height: AppSpace.lg),
-              Padding(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: AppSpace.screenMargin),
-                child: GestureDetector(
-                  onTap: () => Navigator.pushNamed(context, '/tcpage'),
-                  behavior: HitTestBehavior.opaque,
-                  child: const Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      HairRule(),
-                      SizedBox(height: AppSpace.md),
-                      MonoLabel('BY SIGNING IN YOU AGREE TO THE TERMS'),
-                      SizedBox(height: AppSpace.xs),
-                      ArrowLink('Read terms & conditions'),
+        child: EntranceGroup(
+          child: SingleChildScrollView(
+            padding: EdgeInsets.symmetric(
+                horizontal: margin, vertical: AtomicSpace.x12),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 420),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Entrance(
+                      index: 0,
+                      child: Align(
+                        alignment: AlignmentDirectional.centerStart,
+                        child: Semantics(
+                          label: 'Atomic Notes',
+                          image: true,
+                          child: ExcludeSemantics(
+                            child: AtomicBrandMark(
+                              key: const ValueKey('login-mark'),
+                              size: 64,
+                              onDark: dark,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: AtomicSpace.x8),
+                    Entrance(
+                      index: 1,
+                      child: Semantics(
+                        header: true,
+                        child: Text(
+                          LoginPage.title,
+                          style:
+                              AtomicType.display.copyWith(color: c.textPrimary),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: AtomicSpace.x3),
+                    Entrance(
+                      index: 2,
+                      child: Text(
+                        LoginPage.subtitle,
+                        style: AtomicType.bodyLarge
+                            .copyWith(color: c.textSecondary),
+                      ),
+                    ),
+                    const SizedBox(height: AtomicSpace.x8),
+                    Entrance(
+                      index: 3,
+                      child: LoginButton(
+                        key: const ValueKey('login-google'),
+                        isLoading: _isLoading,
+                        signIn: _signInWithGoogle,
+                        text: LoginPage.googleLabel,
+                      ),
+                    ),
+                    if (widget.guestEntry) ...[
+                      const SizedBox(height: AtomicSpace.x3),
+                      Entrance(
+                        index: 4,
+                        child: AtomicButton.tonal(
+                          key: const ValueKey('login-guest'),
+                          label: LoginPage.guestLabel,
+                          onPressed: _isLoading ? null : _openGuest,
+                          expand: true,
+                        ),
+                      ),
                     ],
-                  ),
+                    const SizedBox(height: AtomicSpace.x8),
+                    Entrance(index: 5, child: _TermsLine(colors: c)),
+                  ],
                 ),
               ),
-              const SizedBox(height: AppSpace.xl),
-            ],
+            ),
           ),
         ),
       ),
@@ -151,35 +202,41 @@ class _LoginPageState extends State<LoginPage> {
   }
 }
 
-/// Eyebrow + display headline + one-line subtitle, left-aligned against the
-/// page margin — the standard section opener in this design system.
-class _AuthHeader extends StatelessWidget {
-  final String eyebrow;
-  final String title;
-  final String subtitle;
-  const _AuthHeader({
-    required this.eyebrow,
-    required this.title,
-    required this.subtitle,
-  });
+/// "By signing in you agree to the terms." and the "Read the terms" link in
+/// `infoText`, with a full 48 dp target.
+class _TermsLine extends StatelessWidget {
+  const _TermsLine({required this.colors});
+
+  final AtomicColors colors;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding:
-          const EdgeInsets.symmetric(horizontal: AppSpace.screenMargin),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          MonoLabel(eyebrow, color: AppColors.signal),
-          const SizedBox(height: AppSpace.xs),
-          EditorialHeading(title, style: AppType.displayLg),
-          const SizedBox(height: AppSpace.xs),
-          Text(subtitle, style: AppType.bodyMd),
-          const SizedBox(height: AppSpace.md),
-          const HairRule(color: AppColors.ink),
-        ],
-      ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          LoginPage.termsLine,
+          style: AtomicType.bodySmall.copyWith(color: colors.textSecondary),
+        ),
+        AtomicPressable(
+          key: const ValueKey('login-terms'),
+          onTap: () => Navigator.pushNamed(context, '/tcpage'),
+          semanticsLabel: LoginPage.termsLink,
+          excludeSemantics: true,
+          borderRadius: AtomicRadius.smallAll,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: AtomicSpace.x3),
+            child: Text(
+              LoginPage.termsLink,
+              style: AtomicType.labelLarge.copyWith(
+                color: colors.infoText,
+                decoration: TextDecoration.underline,
+                decorationColor: colors.infoText,
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

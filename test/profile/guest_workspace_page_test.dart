@@ -75,7 +75,7 @@ class _MemoryNotes implements GuestNotesPort {
   }
 }
 
-const _googleLabel = 'SIGN IN WITH GOOGLE';
+const _googleLabel = 'Sign in with Google';
 
 void main() {
   late _NoNetwork network;

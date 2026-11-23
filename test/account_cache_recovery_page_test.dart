@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:atomic_notes/page/account_cache_recovery_page.dart';
+import 'package:atomic_notes/ui/buttons/atomic_button.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -36,10 +37,10 @@ void main() {
       calls++;
       return gate.future;
     });
-    await tester.tap(find.byType(FilledButton));
+    await tester.tap(find.byType(AtomicButton));
     await tester.pump();
     expect(find.text('Returning to sign-in…'), findsOneWidget);
-    expect(tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
+    expect(tester.widget<AtomicButton>(find.byType(AtomicButton)).onPressed,
         isNull);
     expect(calls, 1);
     gate.complete();
@@ -55,11 +56,11 @@ void main() {
     await show(tester, () async {
       if (++calls == 1) throw StateError('Synthetic private error');
     });
-    await tester.tap(find.byType(FilledButton));
+    await tester.tap(find.byType(AtomicButton));
     await tester.pumpAndSettle();
     expect(find.textContaining('stored notes are unchanged'), findsOneWidget);
     expect(find.textContaining('Synthetic private error'), findsNothing);
-    await tester.tap(find.byType(FilledButton));
+    await tester.tap(find.byType(AtomicButton));
     await tester.pumpAndSettle();
     expect(calls, 2);
     expect(find.text('Synthetic login'), findsOneWidget);
@@ -79,7 +80,7 @@ void main() {
       home: AccountCacheRecoveryPage(signOut: () async {}),
     ));
     expect(tester.takeException(), isNull);
-    await tester.ensureVisible(find.byType(FilledButton));
+    await tester.ensureVisible(find.byType(AtomicButton));
     expect(tester.takeException(), isNull);
   });
 }

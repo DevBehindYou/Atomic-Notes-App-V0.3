@@ -8,12 +8,12 @@ import 'package:atomic_notes/database/notification_service.dart';
 import 'package:atomic_notes/database/notes_repository.dart';
 import 'package:atomic_notes/security/two_factor.dart';
 import 'package:atomic_notes/security/vault.dart';
-import 'package:atomic_notes/theme/app_tokens.dart';
-import 'package:atomic_notes/theme/editorial.dart';
+import 'package:atomic_notes/theme/atomic_colors.dart';
+import 'package:atomic_notes/theme/atomic_tokens.dart';
+import 'package:atomic_notes/theme/atomic_type.dart';
+import 'package:atomic_notes/ui/motion/entrance.dart';
 import 'package:atomic_notes/utility/app_info.dart';
-import 'package:atomic_notes/utility/component/atomic_brand.dart';
 import 'package:atomic_notes/utility/component/atomic_splash_mark.dart';
-import 'package:atomic_notes/utility/component/logo_container.dart';
 import 'package:atomic_notes/utility/splash_route_resolver.dart';
 import 'package:flutter/material.dart';
 import 'package:hive_ce/hive_ce.dart';
@@ -203,34 +203,74 @@ class _SplashPageState extends State<SplashPage> {
   // 'authBox' here shut it down seconds into every session.
 
   @override
+  Widget build(BuildContext context) => const SplashView();
+}
+
+/// What the splash shows while [SplashPage] decides the route (screens spec,
+/// Splash): the accepted static Atomic image centred on `canvas` in both
+/// themes, "Getting things ready…" under it, and the version. Rendering
+/// never takes part in routing.
+class SplashView extends StatelessWidget {
+  const SplashView({super.key});
+
+  static const String status = 'Getting things ready…';
+
+  @override
   Widget build(BuildContext context) {
+    final c = context.colors;
+    final margin = AtomicSpace.screenMargin(MediaQuery.sizeOf(context).width);
     return Scaffold(
-      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-      body: const SafeArea(
-        child: Padding(
-          padding: EdgeInsets.all(AppSpace.screenMargin),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Spacer(flex: 3),
-              LogoContainer(showTagline: true, mark: AtomicSplashMark()),
-              Spacer(flex: 4),
-              // Boot status reads like a system readout rather than a
-              // decorative spinner block.
-              HairRule(color: AppColors.ink),
-              SizedBox(height: AppSpace.md),
-              Row(
-                children: [
-                  DevBehindYouMascot(size: 24, secondary: true),
-                  SizedBox(width: AppSpace.md - 4),
-                  Expanded(
-                    child: MonoLabel('INITIALISING · CHECKING SESSION'),
+      backgroundColor: c.canvas,
+      body: SafeArea(
+        child: EntranceGroup(
+          child: LayoutBuilder(
+            builder: (context, constraints) => SingleChildScrollView(
+              padding: EdgeInsets.symmetric(
+                  horizontal: margin, vertical: AtomicSpace.x8),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  minHeight: (constraints.maxHeight - 2 * AtomicSpace.x8)
+                      .clamp(0, double.infinity),
+                ),
+                child: Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Entrance(
+                        index: 0,
+                        child: AtomicSplashMark(
+                            key: ValueKey('splash-mark'), size: 120),
+                      ),
+                      const SizedBox(height: AtomicSpace.x5),
+                      Entrance(
+                        index: 1,
+                        child: Semantics(
+                          liveRegion: true,
+                          child: Text(
+                            status,
+                            key: const ValueKey('splash-status'),
+                            textAlign: TextAlign.center,
+                            style: AtomicType.bodySmall
+                                .copyWith(color: c.textSecondary),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: AtomicSpace.x2),
+                      Entrance(
+                        index: 2,
+                        child: Text(
+                          'Version ${AppInfoText.version}',
+                          key: const ValueKey('splash-version'),
+                          textAlign: TextAlign.center,
+                          style: AtomicType.labelSmall
+                              .copyWith(color: c.textSecondary),
+                        ),
+                      ),
+                    ],
                   ),
-                  MonoLabel(AppInfoText.version, small: true),
-                ],
+                ),
               ),
-              SizedBox(height: AppSpace.sm),
-            ],
+            ),
           ),
         ),
       ),
