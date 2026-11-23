@@ -1,4 +1,5 @@
 import 'package:atomic_notes/database/energy_service.dart';
+import 'package:atomic_notes/database/energy_store.dart';
 import 'package:atomic_notes/database/notes_repository.dart';
 import 'package:atomic_notes/database/notes_source.dart';
 import 'package:atomic_notes/database/sync_report.dart';
@@ -23,13 +24,17 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 /// Cloud Notes (screens spec, Cloud Notes): this device against the cloud,
 /// side by side.
 ///
-/// Checking the cloud only COUNTS its notes. It never pulls or merges anything,
+/// Checking the cloud only COUNTS its note records (Server metadata). It never pulls or merges anything,
 /// so looking can never change what is on this device.
 class CloudNotesPage extends StatelessWidget {
-  /// [source] is only given by tests; the app uses the real notes store.
-  const CloudNotesPage({super.key, this.source});
+  /// [source] and [energy] are only given by tests; the app uses the real
+  /// notes store and the Server-reported energy prices.
+  const CloudNotesPage({super.key, this.source, this.energy});
 
   final NotesSource? source;
+
+  /// Where the upload batch prices come from (the Server's policy).
+  final EnergyStore? energy;
 
   static const String title = 'Cloud notes';
 
@@ -39,13 +44,15 @@ class CloudNotesPage extends StatelessWidget {
       // Count the cloud as soon as the screen opens.
       create: (_) =>
           CloudNotesCubit(source: source ?? NotesRepository.instance)..check(),
-      child: const _CloudNotesView(),
+      child: _CloudNotesView(energy: energy ?? EnergyService.instance),
     );
   }
 }
 
 class _CloudNotesView extends StatefulWidget {
-  const _CloudNotesView();
+  const _CloudNotesView({required this.energy});
+
+  final EnergyStore energy;
 
   @override
   State<_CloudNotesView> createState() => _CloudNotesViewState();
@@ -65,10 +72,27 @@ class _CloudNotesViewState extends State<_CloudNotesView> {
     super.initState();
     _scroll.addListener(() => _titleAway.value =
         _scroll.hasClients && _scroll.offset > AtomicSpace.x10);
+    // The prices follow the Server's policy, which can arrive after the page
+    // opens.
+    widget.energy.addListener(_onEnergy);
+  }
+
+  @override
+  void didUpdateWidget(_CloudNotesView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.energy != widget.energy) {
+      oldWidget.energy.removeListener(_onEnergy);
+      widget.energy.addListener(_onEnergy);
+    }
+  }
+
+  void _onEnergy() {
+    if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
+    widget.energy.removeListener(_onEnergy);
     _scroll.dispose();
     _titleAway.dispose();
     super.dispose();
@@ -108,8 +132,9 @@ class _CloudNotesViewState extends State<_CloudNotesView> {
     final int onDevice = state.onDevice;
     final int waiting = state.waiting;
     if (!SyncStatusHelper.isSyncOn) {
+      // Turning sync off removes nothing from Google Drive (copy proposal 1).
       return const _Verdict('Sync off',
-          'Cloud Sync is turned off, so notes stay on this device only.');
+          'Cloud sync is off. Your notes stay on this device. Copies already in Google Drive aren’t removed.');
     }
     final int? cloud = state.cloud;
     if (!state.checked) {
@@ -133,24 +158,26 @@ class _CloudNotesViewState extends State<_CloudNotesView> {
         _Tone.waiting,
       );
     }
+    // The cloud total is the Server's metadata count of note records, not an
+    // inventory of readable Google Drive files.
     if (cloud == onDevice) {
       return onDevice == 0
-          ? const _Verdict(
-              'No notes', 'There are no notes on this device or in the cloud.')
+          ? const _Verdict('No notes',
+              'This device has no notes, and the cloud metadata count is 0.')
           : const _Verdict(
               'Counts match',
-              'This device and the cloud hold the same number of notes. This check does not compare note contents.',
+              'This device’s note count matches the cloud metadata count. This check does not compare note contents.',
               _Tone.ok);
     }
     if (cloud < onDevice) {
       return const _Verdict(
           'Fewer in cloud',
-          'The cloud has fewer notes than this device. This check does not compare note contents. Sync to check for changes.',
+          'The cloud metadata count is lower than this device’s note count. This check does not compare note contents. Sync to check for changes.',
           _Tone.attention);
     }
     return const _Verdict(
         'More in cloud',
-        'The cloud has more notes than this device. This check does not compare note contents. Sync to check for changes.',
+        'The cloud metadata count is higher than this device’s note count. This check does not compare note contents. Sync to check for changes.',
         _Tone.attention);
   }
 
@@ -173,7 +200,8 @@ class _CloudNotesViewState extends State<_CloudNotesView> {
               final bool working = state.working;
               final bool busy = checking || working;
               final report = state.lastReport;
-              const cost = EnergyService.syncInstantCost;
+              final limits = widget.energy.limits;
+              final int cost = limits.syncInstantCost;
 
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -226,6 +254,17 @@ class _CloudNotesViewState extends State<_CloudNotesView> {
                                       horizontal: AtomicSpace.x1),
                                   child: Text(
                                     'Unchanged means no local edits are waiting; it does not compare cloud contents.',
+                                    style: AtomicType.bodySmall
+                                        .copyWith(color: c.textSecondary),
+                                  ),
+                                ),
+                                const SizedBox(height: AtomicSpace.x1),
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: AtomicSpace.x1),
+                                  child: Text(
+                                    'Cloud records is the server’s metadata count of note records. It doesn’t confirm which note files are in Google Drive or that they can be read.',
+                                    key: const ValueKey('cloud-notes-metadata'),
                                     style: AtomicType.bodySmall
                                         .copyWith(color: c.textSecondary),
                                   ),
@@ -289,7 +328,8 @@ class _CloudNotesViewState extends State<_CloudNotesView> {
                                 const SizedBox(height: AtomicSpace.x3),
                                 AtomicButton.primary(
                                   key: const ValueKey('cloud-notes-sync'),
-                                  label: 'Sync now · $cost energy per batch',
+                                  label:
+                                      'Sync now · $cost energy per charged upload batch',
                                   icon: AtomicIcons.refresh,
                                   size: AtomicButtonSize.large,
                                   expand: true,
@@ -305,7 +345,7 @@ class _CloudNotesViewState extends State<_CloudNotesView> {
                                     key: const ValueKey(
                                         'cloud-notes-upload-all'),
                                     label:
-                                        'Upload all · $cost energy per batch',
+                                        'Upload all · $cost energy per charged upload batch',
                                     icon: AtomicIcons.cloudUpload,
                                     size: AtomicButtonSize.large,
                                     expand: true,
@@ -319,13 +359,13 @@ class _CloudNotesViewState extends State<_CloudNotesView> {
                                   padding: const EdgeInsets.symmetric(
                                       horizontal: AtomicSpace.x1),
                                   child: Text(
-                                    'Checking the cloud only counts its notes. It never changes '
+                                    'Checking the cloud only reads its metadata count of note records. It never changes '
                                     'what is on this device. Sync now sends waiting changes. '
                                     'Upload all marks every live note for upload. Each charged upload batch '
                                     'costs $cost energy and carries up to 50 '
                                     'changes, subject to the size limit. Larger uploads can cost more. '
                                     'With nothing to upload, sync is free. Standard uploads cost '
-                                    '${EnergyService.syncStandardCost} energy per batch, with one '
+                                    '${limits.syncStandardCost} energy per charged upload batch, with one '
                                     'standard upload window per account per hour.',
                                     style: AtomicType.bodySmall
                                         .copyWith(color: c.textSecondary),
@@ -380,7 +420,7 @@ class _Hero extends StatelessWidget {
         '$deletions ${deletions == 1 ? 'deletion' : 'deletions'} waiting';
     final label = [
       '$onDevice on device, '
-          '${cloud == null ? 'cloud count unknown' : '$cloud in cloud'}',
+          '${cloud == null ? 'cloud record count unknown' : '$cloud cloud records'}',
       '$synced unchanged, $edited edited',
       if (deletions > 0) deletionText,
       if (busy) 'Working',
@@ -418,7 +458,7 @@ class _Hero extends StatelessWidget {
                 Expanded(
                   child: _Endpoint(
                       value: cloud?.toString() ?? '—',
-                      caption: 'in cloud',
+                      caption: 'cloud records',
                       alignEnd: true),
                 ),
               ],
@@ -428,8 +468,17 @@ class _Hero extends StatelessWidget {
               value: (synced + edited) == 0 ? 0 : synced / (synced + edited),
             ),
             const SizedBox(height: AtomicSpace.x3),
-            Text('$synced unchanged · $edited edited',
-                style: AtomicType.bodyMedium.copyWith(color: dim)),
+            // One line, two quantities: each is its own span so each can be
+            // checked on its own.
+            Text.rich(
+              TextSpan(children: [
+                TextSpan(text: '$synced unchanged'),
+                const TextSpan(text: ' · '),
+                TextSpan(text: '$edited edited'),
+              ]),
+              key: const ValueKey('cloud-notes-quantities'),
+              style: AtomicType.bodyMedium.copyWith(color: dim),
+            ),
             if (deletions > 0) ...[
               const SizedBox(height: AtomicSpace.x1),
               Text(deletionText,

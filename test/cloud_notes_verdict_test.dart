@@ -51,9 +51,10 @@ void main() {
           .widgetList<AtomicButton>(find.byType(AtomicButton))
           .map((button) => button.label)
           .toList();
-      expect(labels, contains('Sync now · 10 energy per batch'));
+      expect(labels, contains('Sync now · 10 energy per charged upload batch'));
       if (cloud == 0) {
-        expect(labels, contains('Upload all · 10 energy per batch'));
+        expect(labels,
+            contains('Upload all · 10 energy per charged upload batch'));
       }
       expect(find.textContaining('Each charged upload batch'), findsOneWidget);
       expect(

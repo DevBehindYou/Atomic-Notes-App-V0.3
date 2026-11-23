@@ -5,6 +5,8 @@
 
 import 'dart:async';
 
+import 'package:atomic_notes/database/energy_models.dart';
+import 'package:atomic_notes/database/energy_store.dart';
 import 'package:atomic_notes/database/note.dart';
 import 'package:atomic_notes/database/sync_report.dart';
 import 'package:atomic_notes/database/sync_status.dart';
@@ -21,6 +23,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive_ce.dart';
 
+import '../support/fake_energy_store.dart';
 import '../support/fake_notes_source.dart';
 
 class _SyncBox implements Box<bool> {
@@ -96,6 +99,7 @@ Future<void> _pump(
   double textScale = 1,
   bool disableAnimations = false,
   bool settle = true,
+  EnergyStore? energy,
 }) async {
   tester.view.physicalSize = Size(width * 3, height * 3);
   tester.view.devicePixelRatio = 3;
@@ -111,10 +115,28 @@ Future<void> _pump(
       ),
       child: child!,
     ),
-    home: CloudNotesPage(source: source),
+    home: CloudNotesPage(source: source, energy: energy),
   ));
   if (settle) await tester.pumpAndSettle();
 }
+
+/// The hero's two quantities, each from its own span of the shared line.
+({String unchanged, String edited}) _quantities(WidgetTester tester) {
+  final text =
+      tester.widget<Text>(find.byKey(const ValueKey('cloud-notes-quantities')));
+  final spans = (text.textSpan! as TextSpan)
+      .children!
+      .cast<TextSpan>()
+      .map((s) => s.text!)
+      .toList();
+  return (
+    unchanged: spans.singleWhere((s) => s.endsWith(' unchanged')),
+    edited: spans.singleWhere((s) => s.endsWith(' edited')),
+  );
+}
+
+const String _syncOffCopy = 'Cloud sync is off. Your notes stay on this '
+    'device. Copies already in Google Drive aren’t removed.';
 
 final Finder _verdictFinder = find.byKey(const ValueKey('cloud-notes-verdict'));
 final Finder _check = find.byKey(const ValueKey('cloud-notes-check'));
@@ -169,7 +191,7 @@ void main() {
       expect(find.text('Cloud notes'), findsWidgets);
       expect(find.text('3'), findsNWidgets(2));
       expect(find.text('on device'), findsOneWidget);
-      expect(find.text('in cloud'), findsOneWidget);
+      expect(find.text('cloud records'), findsOneWidget);
       expect(find.text('3 unchanged · 0 edited'), findsOneWidget);
       expect(_verdict(tester), 'Counts match');
       expect(
@@ -182,7 +204,8 @@ void main() {
       expect(find.byType(AtomicBanner), findsNothing);
       expect(_button(tester, _check).label, 'Check cloud');
       expect(_button(tester, _check).variant, AtomicButtonVariant.tonal);
-      expect(_button(tester, _sync).label, 'Sync now · 10 energy per batch');
+      expect(_button(tester, _sync).label,
+          'Sync now · 10 energy per charged upload batch');
       expect(_button(tester, _sync).variant, AtomicButtonVariant.primary);
       expect(_button(tester, _sync).onPressed, isNotNull);
       expect(_uploadAll, findsNothing);
@@ -235,7 +258,7 @@ void main() {
       await _pump(tester, source);
 
       expect(_button(tester, _uploadAll).label,
-          'Upload all · 10 energy per batch');
+          'Upload all · 10 energy per charged upload batch');
       await _tap(tester, _uploadAll);
       expect(source.markAllCalls, 1);
       expect(source.reportCalls, 1);
@@ -250,7 +273,9 @@ void main() {
       await _pump(tester, source);
 
       expect(_verdict(tester), 'No notes');
-      expect(find.text('There are no notes on this device or in the cloud.'),
+      expect(
+          find.text(
+              'This device has no notes, and the cloud metadata count is 0.'),
           findsOneWidget);
       expect(find.text('0'), findsNWidgets(2));
       expect(find.text('0 unchanged · 0 edited'), findsOneWidget);
@@ -462,8 +487,8 @@ void main() {
 
       expect(_verdict(tester), 'Sync off');
       expect(
-          find.text(
-              'Cloud Sync is turned off, so notes stay on this device only.'),
+          find.text('Cloud sync is off. Your notes stay on this device. '
+              'Copies already in Google Drive aren’t removed.'),
           findsOneWidget);
       expect(_button(tester, _sync).onPressed, isNull);
       expect(_uploadAll, findsNothing);
@@ -472,6 +497,162 @@ void main() {
       await tester.pumpAndSettle();
       expect(source.syncCalls, 0);
     });
+
+    // R42: turning sync off leaves existing cloud copies in place.
+    for (final edited in [0, 1]) {
+      testWidgets(
+          'with a cloud record already synced, says Drive copies stay '
+          '(edited=$edited)', (tester) async {
+        box.enabled = false;
+        final source = _Cloud(notes: _notes(1, edited: edited))
+          ..cloudNotes = 1 + edited;
+        await _pump(tester, source);
+
+        expect(_verdict(tester), 'Sync off');
+        expect(find.text(_syncOffCopy), findsOneWidget);
+        expect(find.textContaining('already in Google Drive'), findsOneWidget);
+        expect(find.textContaining('device only'), findsNothing);
+        expect(find.textContaining('turned off'), findsNothing);
+        expect(_button(tester, _sync).onPressed, isNull);
+        expect(source.syncCalls, 0);
+        expect(source.markAllCalls, 0);
+        expect(source.all.map((n) => n.id).toList(),
+            ['synced-0', if (edited == 1) 'edited-0']);
+      });
+    }
+  });
+
+  group('R42 cloud records are a metadata count', () {
+    const metadataNote = 'Cloud records is the server’s metadata count of '
+        'note records. It doesn’t confirm which note files are in Google '
+        'Drive or that they can be read.';
+    for (final (device, cloud, title, detail) in [
+      (
+        3,
+        3,
+        'Counts match',
+        'This device’s note count matches the cloud metadata count.'
+      ),
+      (
+        3,
+        1,
+        'Fewer in cloud',
+        'The cloud metadata count is lower than this device’s note count.'
+      ),
+      (
+        3,
+        5,
+        'More in cloud',
+        'The cloud metadata count is higher than this device’s note count.'
+      ),
+      (
+        0,
+        0,
+        'No notes',
+        'This device has no notes, and the cloud metadata count is 0.'
+      ),
+    ]) {
+      testWidgets('$device on device, $cloud cloud records: $title',
+          (tester) async {
+        final source = _Cloud(notes: _notes(device))..cloudNotes = cloud;
+        await _pump(tester, source);
+
+        expect(_verdict(tester), title);
+        expect(find.textContaining(detail), findsOneWidget);
+        expect(find.descendant(of: _hero, matching: find.text('$cloud')),
+            device == cloud ? findsNWidgets(2) : findsOneWidget);
+        expect(find.text('cloud records'), findsOneWidget);
+        expect(find.text('in cloud'), findsNothing);
+        expect(
+            tester
+                .widget<Text>(
+                    find.byKey(const ValueKey('cloud-notes-metadata')))
+                .data,
+            metadataNote);
+        expect(find.textContaining('same number of notes'), findsNothing);
+        expect(find.textContaining('no notes on this device or in the cloud'),
+            findsNothing);
+        expect(find.textContaining('has fewer notes'), findsNothing);
+        expect(find.textContaining('has more notes'), findsNothing);
+      });
+    }
+
+    testWidgets(
+        'screen readers hear cloud records, or that the count is unknown',
+        (tester) async {
+      final semantics = tester.ensureSemantics();
+      final source = _Cloud()..cloudNotes = 0;
+      await _pump(tester, source);
+      expect(
+          find.bySemanticsLabel('0 on device, 0 cloud records. '
+              '0 unchanged, 0 edited'),
+          findsOneWidget);
+
+      source.cloudNotes = null;
+      await _tap(tester, _check);
+      expect(_verdict(tester), 'Check failed');
+      expect(
+          find.bySemanticsLabel('0 on device, cloud record count unknown. '
+              '0 unchanged, 0 edited'),
+          findsOneWidget);
+      semantics.dispose();
+    });
+  });
+
+  group('R42 pricing follows the policy', () {
+    testWidgets(
+        'labels and note use the policy prices per charged upload batch',
+        (tester) async {
+      final energy = FakeEnergyStore(
+          limits: const EnergyLimits(syncInstantCost: 12, syncStandardCost: 6));
+      addTearDown(energy.dispose);
+      final source = _Cloud(notes: _notes(2))..cloudNotes = 0;
+      await _pump(tester, source, energy: energy);
+
+      expect(_button(tester, _sync).label,
+          'Sync now · 12 energy per charged upload batch');
+      expect(_button(tester, _uploadAll).label,
+          'Upload all · 12 energy per charged upload batch');
+      expect(find.textContaining('Each charged upload batch costs 12 energy'),
+          findsOneWidget);
+      expect(
+          find.textContaining('Standard uploads cost 6 energy per charged '
+              'upload batch'),
+          findsOneWidget);
+      expect(find.textContaining('10 energy'), findsNothing);
+      expect(find.textContaining('energy per batch'), findsNothing);
+
+      // A new policy from the Server reaches the open page.
+      energy.limits =
+          const EnergyLimits(syncInstantCost: 15, syncStandardCost: 7);
+      await energy.refresh();
+      await tester.pumpAndSettle();
+      expect(_button(tester, _sync).label,
+          'Sync now · 15 energy per charged upload batch');
+      expect(_button(tester, _uploadAll).label,
+          'Upload all · 15 energy per charged upload batch');
+      expect(
+          find.textContaining('Standard uploads cost 7 energy per charged '
+              'upload batch'),
+          findsOneWidget);
+      expect(find.textContaining('12 energy'), findsNothing);
+      expect(source.syncCalls, 0);
+      expect(source.markAllCalls, 0);
+    });
+  });
+
+  group('R42 unchanged and edited each have a proof', () {
+    for (final (synced, edited) in [(3, 0), (2, 1), (0, 2), (0, 0)]) {
+      testWidgets('$synced unchanged and $edited edited', (tester) async {
+        final source = _Cloud(notes: _notes(synced, edited: edited))
+          ..cloudNotes = synced + edited;
+        await _pump(tester, source);
+
+        final q = _quantities(tester);
+        expect(q.unchanged, '$synced unchanged', reason: 'unchanged count');
+        expect(q.edited, '$edited edited', reason: 'edited count');
+      });
+    }
   });
 
   group('details', () {
@@ -540,7 +721,7 @@ void main() {
 
       expect(
           find.bySemanticsLabel(
-              '3 on device, 3 in cloud. 2 unchanged, 1 edited'),
+              '3 on device, 3 cloud records. 2 unchanged, 1 edited'),
           findsOneWidget);
       final status =
           tester.getSemantics(find.byKey(const ValueKey('cloud-notes-status')));
