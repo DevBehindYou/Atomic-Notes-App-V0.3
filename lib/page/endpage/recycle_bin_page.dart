@@ -55,8 +55,10 @@ class RecycleBinPage extends StatelessWidget {
         : 'Deleted $day ${d.year}';
   }
 
-  /// What deleting [note] for good has to do first. Read from its sync flag
-  /// only: the page never infers the note's past in the cloud.
+  /// What deleting [note] for good has to do first, when no store judged it.
+  /// Read from its sync flag only: the page never infers the note's past in
+  /// the cloud. The notes store's own judgement replaces it (see
+  /// [BinRemover.stepOf]).
   @visibleForTesting
   static BinRemovalStep removalStep(Note note) => BinRemovalStep.of(note);
 
@@ -69,9 +71,11 @@ class RecycleBinPage extends StatelessWidget {
       'Deleting here does not promise to remove every copy kept elsewhere.';
 
   /// The body of the "Delete forever" confirmation for [note]: what this
-  /// removal does now, not what happened to the note before.
+  /// removal does now, not what happened to the note before. [step] is the
+  /// store's judgement, when it gave one.
   @visibleForTesting
-  static String deleteForeverBody(Note note) => switch (removalStep(note)) {
+  static String deleteForeverBody(Note note, {BinRemovalStep? step}) =>
+      switch (step ?? removalStep(note)) {
         BinRemovalStep.removeNow =>
           'It is removed from this device now and cannot be brought back from '
               'the Recycle Bin. It has no changes waiting to sync, so this '
@@ -83,12 +87,13 @@ class RecycleBinPage extends StatelessWidget {
       };
 
   /// What "Empty bin" does to [notes]: how many it removes, and how many of
-  /// them need no sync.
+  /// them need no sync. [stepOf] is the store's judgement, when it gives one.
   @visibleForTesting
-  static List<String> emptyBinConsequences(List<Note> notes) {
+  static List<String> emptyBinConsequences(List<Note> notes,
+      {BinRemovalStep Function(Note)? stepOf}) {
+    final step = stepOf ?? removalStep;
     final count = notes.length;
-    final now =
-        notes.where((n) => removalStep(n) == BinRemovalStep.removeNow).length;
+    final now = notes.where((n) => step(n) == BinRemovalStep.removeNow).length;
     return [
       count == 1
           ? '1 deleted note is removed from this device for good.'
@@ -103,9 +108,11 @@ class RecycleBinPage extends StatelessWidget {
   /// The warning "Empty bin" adds when some notes must sync first, or null
   /// when none must.
   @visibleForTesting
-  static String? emptyBinWarning(List<Note> notes) {
+  static String? emptyBinWarning(List<Note> notes,
+      {BinRemovalStep Function(Note)? stepOf}) {
+    final step = stepOf ?? removalStep;
     final pending =
-        notes.where((n) => removalStep(n) == BinRemovalStep.syncFirst).length;
+        notes.where((n) => step(n) == BinRemovalStep.syncFirst).length;
     if (pending == 0) return null;
     return '${pending == 1 ? '1 note has' : '$pending notes have'} changes '
         'that have not finished syncing. They sync first. Without Cloud Sync, '
@@ -143,12 +150,16 @@ enum BinRemovalStep {
 /// exactly which notes it showed, what it said removing each one does, and
 /// whose session it was. Notes are edited in place, so it keeps copies of
 /// those facts, never the notes. A note that reaches the bin later is not
-/// part of it.
+/// part of it. With the real notes store, the store froze those facts itself
+/// ([BinPurgeConsent]) and checks them again before it removes anything.
 final class BinRemoval {
-  BinRemoval._(this._facts, this._identity, {required this.wholeBin});
+  BinRemoval._(this._facts, this._identity,
+      {required this.wholeBin, BinPurgeConsent? consent})
+      : _consent = consent;
 
   final Map<String, (BinRemovalStep, String)> _facts;
   final Object? _identity;
+  final BinPurgeConsent? _consent;
 
   /// Confirmed from "Empty bin" rather than from one note's card.
   final bool wholeBin;
@@ -161,15 +172,41 @@ final class BinRemoval {
   /// How many confirmed notes were shown with [step].
   int count(BinRemovalStep step) =>
       _facts.values.where((f) => f.$1 == step).length;
+
+  /// What the confirmation said removing [id] does, or null when [id] is not
+  /// part of it.
+  BinRemovalStep? stepOf(String id) => _facts[id]?.$1;
 }
 
 /// Runs the page's confirmed removals against its notes store: the same
-/// store, `syncNow` and `deleteForever(ids)` calls the cubit uses. One
-/// removal runs at a time.
+/// store and `deleteForever(ids)` call the cubit uses. With the real notes
+/// store the store itself says what each removal needs, syncs when it must
+/// and removes only while its confirmation still holds. One removal runs at a
+/// time.
 class BinRemover {
   BinRemover(this._source);
 
   final NotesSource _source;
+
+  /// The real notes store, which judges and guards removals itself.
+  NotesRepository? get _store {
+    final source = _source;
+    return source is NotesRepository ? source : null;
+  }
+
+  /// What deleting [note] for good has to do first: the store's judgement
+  /// when it gives one, else the note's sync flag.
+  BinRemovalStep stepOf(Note note) {
+    final store = _store;
+    if (store == null) return BinRemovalStep.of(note);
+    return _step(store.binPurgeConsent([note.id]).factOf(note.id), note);
+  }
+
+  static BinRemovalStep _step(BinPurgeFact? fact, Note note) => fact == null
+      ? BinRemovalStep.of(note)
+      : fact.needsSync
+          ? BinRemovalStep.syncFirst
+          : BinRemovalStep.removeNow;
 
   /// A removal is running; another one waits for it to answer.
   bool _removing = false;
@@ -186,13 +223,23 @@ class BinRemover {
   /// Freezes what a confirmation is about to show for [notes]. Build it from
   /// the same notes the confirmation's words are built from, at the same
   /// moment.
-  BinRemoval confirm(Iterable<Note> notes, {bool wholeBin = false}) =>
-      BinRemoval._(
-          Map.unmodifiable({
-            for (final n in notes) n.id: (BinRemovalStep.of(n), n.title),
-          }),
-          _identity,
-          wholeBin: wholeBin);
+  BinRemoval confirm(Iterable<Note> notes, {bool wholeBin = false}) {
+    final shown = notes.toList();
+    final consent = _store?.binPurgeConsent(shown.map((n) => n.id));
+    return BinRemoval._(
+        Map.unmodifiable({
+          for (final n in shown)
+            n.id: (
+              consent == null
+                  ? BinRemovalStep.of(n)
+                  : _step(consent.factOf(n.id), n),
+              n.title
+            ),
+        }),
+        _identity,
+        wholeBin: wholeBin,
+        consent: consent);
+  }
 
   static const UiMessage _changed = UiMessage(
       'The Recycle Bin changed before this could finish. Nothing was deleted '
@@ -204,6 +251,12 @@ class BinRemover {
   /// The one change allowed is the one the confirmation announced: a change
   /// that had to sync first has synced.
   bool _drifted(BinRemoval removal) {
+    final store = _store, consent = removal._consent;
+    if (store != null || consent != null) {
+      return store == null ||
+          consent == null ||
+          !consent.allows(store.binPurgeConsent(removal.ids));
+    }
     if (removal._identity != _identity) return true;
     for (final MapEntry(key: id, value: (step, title))
         in removal._facts.entries) {
@@ -219,10 +272,10 @@ class BinRemover {
       removal._facts.keys.any((id) => _source.byId(id)?.dirty ?? false);
 
   /// Deletes for good exactly the notes [removal] confirmed, and only while
-  /// they are as it showed them. A change that must sync first syncs here,
-  /// before the store is asked, so the store never has to sync (and wait)
-  /// between choosing its notes and removing them. The check right before the
-  /// store's call has no wait in between, so nothing can change in that gap.
+  /// they are as it showed them. The real store gets the confirmation itself
+  /// and guards every wait inside its call. With any other store a change
+  /// that must sync first syncs here, before the store is asked, and the
+  /// check right before the store's call has no wait in between.
   Future<UiMessage> remove(BinRemoval removal) async {
     if (_removing) {
       return const UiMessage(
@@ -232,6 +285,16 @@ class BinRemover {
     _removing = true;
     try {
       if (removal.length == 0 || _drifted(removal)) return _changed;
+      final store = _store, consent = removal._consent;
+      if (store != null && consent != null) {
+        // The store syncs first when it must and checks the confirmation
+        // again after every wait, so a note restored or replaced meanwhile is
+        // never removed under it.
+        final removed =
+            await store.deleteForever(removal.ids, consent: consent);
+        if (removed == 0 && _drifted(removal)) return _changed;
+        return _outcome(removal, removed);
+      }
       if (_waitsToSync(removal)) {
         final synced = await _source.syncNow();
         if (_drifted(removal)) return _changed;
@@ -373,8 +436,9 @@ class _RecycleBinViewState extends State<_RecycleBinView> {
   Future<void> _deleteForever(Note note) async {
     final name = note.title.trim();
     // The words and the confirmed removal come from the same note, now.
-    final body = RecycleBinPage.deleteForeverBody(note);
     final removal = _remover.confirm([note]);
+    final body =
+        RecycleBinPage.deleteForeverBody(note, step: removal.stepOf(note.id));
     final confirmed = await showAtomicDialog<bool>(
       context: context,
       // Destructive: only the buttons close it, as before.
@@ -425,8 +489,10 @@ class _RecycleBinViewState extends State<_RecycleBinView> {
       builder: (dialogContext) => SlideConfirmDialog(
         title: 'Empty the Recycle Bin',
         slideLabel: 'empty bin',
-        consequences: RecycleBinPage.emptyBinConsequences(notes),
-        warning: RecycleBinPage.emptyBinWarning(notes),
+        consequences: RecycleBinPage.emptyBinConsequences(notes,
+            stepOf: (n) => removal.stepOf(n.id) ?? BinRemovalStep.of(n)),
+        warning: RecycleBinPage.emptyBinWarning(notes,
+            stepOf: (n) => removal.stepOf(n.id) ?? BinRemovalStep.of(n)),
         onConfirmed: () async {
           final message = await _remover.remove(removal);
           if (dialogContext.mounted) Navigator.pop(dialogContext);

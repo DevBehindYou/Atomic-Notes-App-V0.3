@@ -150,3 +150,79 @@ NoteProjection projectNote(NotesSource source, Note note,
     source is NoteProjectionSource
         ? (source as NoteProjectionSource).projectionFor(note, evict: evict)
         : NoteProjection.fromNote(note);
+
+/// What one bin note was when a "delete for good" was confirmed, as its store
+/// judged it: whether removing it must sync first, and the facts that say
+/// which tombstone it was.
+final class BinPurgeFact {
+  const BinPurgeFact({
+    required this.needsSync,
+    required this.deleted,
+    required this.contentSig,
+    required this.serverVersion,
+    required this.dirty,
+    required this.updatedAt,
+  });
+
+  /// The store must sync this note before it may forget it: it has a change
+  /// waiting, and the cloud may hold (or be receiving) a copy of it.
+  final bool needsSync;
+  final bool deleted;
+  final String contentSig;
+  final int serverVersion;
+  final bool dirty;
+  final DateTime updatedAt;
+}
+
+/// A confirmed "delete for good", frozen by the store when its confirmation
+/// opened: exactly which notes, what each one needed, and whose account,
+/// session and store lifecycle it was. A later freeze of the same notes is
+/// compared with it by [allows] before anything is removed.
+final class BinPurgeConsent {
+  BinPurgeConsent(this._identity, Map<String, BinPurgeFact?> facts)
+      : _facts = Map.unmodifiable(facts);
+
+  final Object? _identity;
+
+  /// Null for a note the store did not hold when this was frozen.
+  final Map<String, BinPurgeFact?> _facts;
+
+  /// The confirmed notes, in the order they were given.
+  List<String> get ids => List.unmodifiable(_facts.keys);
+
+  /// What the store said about [id] when this was frozen.
+  BinPurgeFact? factOf(String id) => _facts[id];
+
+  /// Whether any confirmed note must sync first.
+  bool get needsSync => _facts.values.any((f) => f?.needsSync ?? false);
+
+  /// Same store, account, session and lifecycle as [now].
+  bool sameIdentity(BinPurgeConsent now) => now._identity == _identity;
+
+  /// Whether [now], a later freeze of the same notes by the same store, still
+  /// describes what this confirmation showed. Each note must still be the
+  /// same deleted note with the same content, needing no more than was
+  /// disclosed. The only change allowed is an acknowledgement of a note that
+  /// had a change waiting: its sync flag and version settle, its content does
+  /// not. A restored note, a newer or different tombstone, a note gone, or
+  /// another session all need a fresh confirmation.
+  bool allows(BinPurgeConsent now) {
+    if (!sameIdentity(now) || now._facts.length != _facts.length) return false;
+    for (final MapEntry(key: id, value: was) in _facts.entries) {
+      final cur = now._facts[id];
+      if (was == null || cur == null || !was.deleted || !cur.deleted) {
+        return false;
+      }
+      if (cur.contentSig != was.contentSig) return false;
+      if (cur.needsSync && !was.needsSync) return false;
+      final same = cur.serverVersion == was.serverVersion &&
+          cur.dirty == was.dirty &&
+          cur.updatedAt == was.updatedAt;
+      if (same) continue;
+      // Only a waiting change can be acknowledged, and an acknowledgement
+      // always moves the version forward.
+      if (!was.dirty || cur.serverVersion <= was.serverVersion) return false;
+    }
+    return true;
+  }
+}

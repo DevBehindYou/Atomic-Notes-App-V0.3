@@ -1534,23 +1534,44 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     return true;
   });
 
+  /// Read-only: what deleting [ids] for good needs now, frozen for a
+  /// confirmation (see [BinPurgeConsent]). A note needs a sync first when it
+  /// has a change waiting and the cloud may hold, or be receiving, a copy of
+  /// it: the same rule [deleteForever] applies. Changes nothing.
+  BinPurgeConsent binPurgeConsent(Iterable<String> ids) => BinPurgeConsent(
+      (this, _userId, _api.sessionRevision, _lifecycleRevision), {
+        for (final id in ids)
+          id: switch (_notes[id]) {
+            final n? => BinPurgeFact(
+                needsSync: n.dirty && (n.serverVersion > 0 || _mayHaveReachedCloud(id)),
+                deleted: n.deleted, contentSig: n.contentSig, serverVersion: n.serverVersion,
+                dirty: n.dirty, updatedAt: n.updatedAt),
+            null => null,
+          },
+      });
+
   /// Removes deleted notes from this device for good. A deletion that has not
   /// reached the cloud yet is synced first: forgetting it locally would let the
   /// note come back from the cloud on the next pull. Returns how many were
   /// removed; 0 means nothing was, for example because that sync failed.
+  ///
+  /// With [consent] (from [binPurgeConsent] for exactly [ids]) nothing is
+  /// removed unless every confirmed note is still as confirmed, in the same
+  /// account, session and lifecycle: checked first, again after the sync, and
+  /// the identity again before each stored copy is dropped.
   @override
-  Future<int> deleteForever(Iterable<String> ids) => _trackNoteMutation(() async {
+  Future<int> deleteForever(Iterable<String> ids, {BinPurgeConsent? consent}) => _trackNoteMutation(() async {
     _assertWritable();
-    final targets = ids.where((id) => _notes[id]?.deleted == true).toList();
+    final asked = ids.toList();
+    bool holds() => consent == null || consent.allows(binPurgeConsent(asked));
+    if (!holds()) return 0;
+    final targets = asked.where((id) => _notes[id]?.deleted == true).toList();
     if (targets.isEmpty) return 0;
-    bool unsent() => targets.any((id) {
-          final n = _notes[id];
-          return n != null && n.dirty && (n.serverVersion > 0 || _mayHaveReachedCloud(id));
-        });
+    bool unsent() => binPurgeConsent(targets).needsSync;
     if (unsent()) {
       if (!SyncStatusHelper.isSyncOn) return 0;
       await syncNow();
-      if (unsent()) return 0;
+      if (unsent() || !holds()) return 0;
     }
     var removed = 0;
     for (final id in targets) {
@@ -1560,6 +1581,10 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
     await _drainWrites();
     _assertCacheOwner();
     for (final id in targets) {
+      // A pull may have stored a new note under this id meanwhile, and a
+      // confirmed removal stops if its session or lifecycle ended.
+      if (_notes.containsKey(id)) continue;
+      if (consent != null && !consent.sameIdentity(binPurgeConsent(const []))) break;
       await _box.delete(id);
     }
     notifyListeners();
