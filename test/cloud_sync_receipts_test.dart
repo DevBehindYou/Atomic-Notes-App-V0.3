@@ -110,7 +110,7 @@ void main() {
       (tester) async {
     final source = _Reports(report(operations: [operation('a')]));
     await _showReceipt(tester, source);
-    expect(find.text('NET UPLOAD COST'), findsOneWidget);
+    expect(find.text('Net upload cost'), findsOneWidget);
     expect(find.text('10 energy'), findsNWidgets(2));
     expect(source.reportCalls, 1);
     expect(source.reportInstant, isTrue);
@@ -125,11 +125,11 @@ void main() {
         ..cloudNotes = 0;
       await _mountCloud(tester, source);
       final button =
-          find.textContaining(uploadAll ? 'UPLOAD ALL  ·' : 'SYNC NOW  ·');
+          find.textContaining(uploadAll ? 'Upload all ·' : 'Sync now ·');
       await tester.ensureVisible(button);
       await tester.tap(button);
       await tester.pumpAndSettle();
-      expect(find.text('NET UPLOAD COST'), findsOneWidget);
+      expect(find.text('Net upload cost'), findsOneWidget);
       expect(source.reportCalls, 1);
       expect(source.reportInstant, isTrue);
       expect(source.markAllCalls, uploadAll ? 1 : 0);
@@ -189,7 +189,7 @@ void main() {
             ])));
     expect(find.text('1 of 2 upload batches confirmed'), findsOneWidget);
     expect(find.text('Confirmed totals only'), findsOneWidget);
-    expect(find.text('NET UPLOAD COST'), findsNothing);
+    expect(find.text('Net upload cost'), findsNothing);
     expect(find.text('10 energy'), findsNWidgets(2));
   });
 
@@ -262,10 +262,10 @@ void main() {
       (tester) async {
     final source = _Reports(report(operations: [operation('a')]));
     await _showReceipt(tester, source);
-    expect(find.text('NET UPLOAD COST'), findsOneWidget);
+    expect(find.text('Net upload cost'), findsOneWidget);
     source.changeSession();
     await tester.pumpAndSettle();
-    expect(find.text('NET UPLOAD COST'), findsNothing);
+    expect(find.text('Net upload cost'), findsNothing);
   });
 
   testWidgets('large-text receipt remains readable without layout exceptions',
@@ -278,7 +278,7 @@ void main() {
             error:
                 'The pull could not finish. Your changes remain on this device.')),
         textScale: 2);
-    await tester.ensureVisible(find.text('NET UPLOAD COST'));
+    await tester.ensureVisible(find.text('Net upload cost'));
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
     expect(find.text('10 energy'), findsNWidgets(2));

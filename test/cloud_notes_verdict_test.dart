@@ -1,7 +1,8 @@
 import 'package:atomic_notes/database/sync_status.dart';
 import 'package:atomic_notes/page/endpage/cloud_notes_page.dart';
 import 'package:atomic_notes/theme/app_theme.dart';
-import 'package:atomic_notes/theme/editorial.dart';
+import 'package:atomic_notes/ui/buttons/atomic_button.dart';
+import 'package:atomic_notes/ui/feedback/atomic_banner.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive_ce.dart';
@@ -26,8 +27,12 @@ Future<void> _open(WidgetTester tester, FakeNotesSource source) async {
   await tester.pumpAndSettle();
 }
 
-String _verdict(WidgetTester tester) =>
-    tester.widget<DataChip>(find.byType(DataChip)).label;
+// The status title is a banner's title for a mismatch or failure, else text.
+String _verdict(WidgetTester tester) {
+  final widget =
+      tester.widget(find.byKey(const ValueKey('cloud-notes-verdict')));
+  return widget is AtomicBanner ? widget.title : (widget as Text).data!;
+}
 
 void main() {
   late _SyncBox syncBox;
@@ -43,12 +48,13 @@ void main() {
       addTearDown(source.dispose);
       await _open(tester, source);
       final labels = tester
-          .widgetList<GhostButton>(find.byType(GhostButton))
+          .widgetList<AtomicButton>(find.byType(AtomicButton))
           .map((button) => button.label)
           .toList();
-      expect(labels, contains('Sync now  ·  10 energy / batch'));
+      expect(labels, contains('Sync now · 10 energy per charged upload batch'));
       if (cloud == 0) {
-        expect(labels, contains('Upload all  ·  10 energy / batch'));
+        expect(labels,
+            contains('Upload all · 10 energy per charged upload batch'));
       }
       expect(find.textContaining('Each charged upload batch'), findsOneWidget);
       expect(

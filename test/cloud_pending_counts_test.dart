@@ -62,8 +62,9 @@ void main() {
     await tester.pumpWidget(MaterialApp(
         theme: AppTheme.light, home: CloudNotesPage(source: source)));
     await tester.pumpAndSettle();
-    expect(find.text('UNCHANGED 1'), findsOneWidget);
-    expect(find.text('EDITED 0'), findsOneWidget);
+    // Each quantity has its own proof, though both share one line.
+    expect(find.textContaining(RegExp(r'^1 unchanged · ')), findsOneWidget);
+    expect(find.textContaining(RegExp(r' · 0 edited$')), findsOneWidget);
     expect(find.text('1 deletion waiting'), findsOneWidget);
     expect(find.textContaining('including edited notes or deletions'),
         findsOneWidget);
