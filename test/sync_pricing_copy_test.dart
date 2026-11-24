@@ -12,7 +12,7 @@ void main() {
     await tester.pumpWidget(
         MaterialApp(theme: AppTheme.light, home: const EnergyIntroScreen()));
     for (var i = 0; i < 3; i++) {
-      await tester.tap(find.text('NEXT'));
+      await tester.tap(find.byTooltip('Next'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 500));
     }
@@ -24,7 +24,7 @@ void main() {
     await tester.ensureVisible(explanation);
     await tester.pump();
     expect(tester.takeException(), isNull);
-    expect(find.text('GOT IT').hitTestable(), findsOneWidget);
+    expect(find.text('Got it').hitTestable(), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());
   });
 }

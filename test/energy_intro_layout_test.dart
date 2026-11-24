@@ -51,9 +51,10 @@ void main() {
       for (var step = 0; step < 4; step++) {
         expect(errors, isEmpty,
             reason: errors.map((e) => e.toString()).join('\n'));
-        final action = find.text(step == 3 ? 'GOT IT' : 'NEXT');
+        final action =
+            step == 3 ? find.text('Got it') : find.byTooltip('Next');
         expect(action.hitTestable(), findsOneWidget);
-        expect(find.text('SKIP').hitTestable(), findsOneWidget);
+        expect(find.text('Skip').hitTestable(), findsOneWidget);
         await tester.tap(action);
         await advance();
       }
