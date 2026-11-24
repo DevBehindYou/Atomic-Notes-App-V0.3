@@ -175,7 +175,7 @@ void main() {
       final on = await armed(tester);
       await openGate(tester);
 
-      await tester.tap(find.text('USE A RECOVERY CODE'));
+      await tester.tap(find.text('Use a recovery code'));
       await tester.pump();
       await tester.enterText(find.byType(TextField), on.codes.first);
       await tester.testTextInput.receiveAction(TextInputAction.done);
@@ -205,9 +205,9 @@ void main() {
       storage.failReads = true;
       await openGate(tester);
 
-      expect(find.text('KEY UNAVAILABLE'), findsOneWidget);
-      expect(find.text('TRY AGAIN'), findsOneWidget);
-      expect(find.text('TURN OFF ON THIS DEVICE'), findsOneWidget);
+      expect(find.text('Key unavailable'), findsOneWidget);
+      expect(find.text('Try again'), findsOneWidget);
+      expect(find.text('Turn off on this device'), findsOneWidget);
     });
   });
 }
