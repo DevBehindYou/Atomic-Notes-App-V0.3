@@ -12,7 +12,7 @@
 #   tool/check_pr_scope.sh <label> <base-ref> [--worktree] [--allow-file FILE]
 #
 #   label         foundation | component | state | page | legacy | rename |
-#                 verify | gate | save-ack | owned-save
+#                 verify | gate | save-ack | owned-save | bin-purge
 #   base-ref      the last ACCEPTED checkpoint (commit or tag). It must be an
 #                 ancestor of HEAD. Check it against the handoff record:
 #                 ancestry alone cannot prove the right checkpoint was chosen.
@@ -210,6 +210,22 @@ case $label in
     )
     review=("${allowed[@]}")
     manifest_ok=false
+    ;;
+  bin-purge)
+    allowed=(
+      'lib/database/notes_repository.dart'
+      'lib/database/notes_source.dart'
+      'lib/page/endpage/recycle_bin_page.dart'
+      'test/bin_and_danger_pages_test.dart'
+      'test/recycle_bin_page_redesign_test.dart'
+      'test/recycle_bin_purge_consent_test.dart'
+      'test/recycle_bin_purge_provenance_test.dart'
+      'test/recycle_bin_removal_scope_test.dart'
+      'test/recycle_bin_test.dart'
+    )
+    review=("${allowed[@]}")
+    manifest_ok=false
+    region['lib/database/notes_repository.dart']='bin-purge-members'
     ;;
   legacy)
     allowed=(
@@ -419,13 +435,14 @@ region_bounds() {
     { lines[NR] = $0 }
     END {
       s = 0; e = 0
-      if (mode == "dart-method") {
+      if (mode == "dart-method" || mode == "dart-method-optional") {
         if (!lex()) exit 3
         found = 0
         for (i = 1; i <= NR; i++)
           # Nothing on the line before the declaration may hold a brace or a
           # ";", so no other member can share its first line (review R03).
           if (startcode[i] && startdepth[i] == 1 && code[i] ~ ("^  [^ /{};][^{};]*[ ]" name "[ ]*[(]")) { s = i; found++ }
+        if (found == 0 && mode == "dart-method-optional") { print "0 0"; exit }
         if (found != 1) exit 3
         # The body: a block from the first top-level "{", or an arrow body to
         # its ";", or a bodiless declaration ending at ";".
@@ -464,6 +481,25 @@ region_bounds() {
     }' "$file"
 }
 
+# This exception covers two adjacent members. The reader may be absent from
+# the base but must be unique in the candidate. Compare prefix and suffix
+# separately so a valid region cannot be moved or hide another declaration.
+bin_purge_bounds() {
+  local file=$1 mode=$2 remove read rs re ds de gap
+  remove=$(region_bounds dart-method:deleteForever "$file") || return 1
+  read=$(region_bounds "$mode:binPurgeConsent" "$file") || return 1
+  read -r ds de <<<"$remove"
+  read -r rs re <<<"$read"
+  if ((rs == 0)); then
+    printf '%s %s\n' "$ds" "$de"
+    return 0
+  fi
+  ((ds == re + 2)) || return 1
+  gap=$(sed -n "$((re + 1))p" "$file") || return 1
+  [[ -z $gap ]] || return 1
+  printf '%s %s\n' "$rs" "$de"
+}
+
 # Fails (returns 1) unless every changed line between the base version and
 # the given new version lies inside the rule's region in both versions.
 check_region() {
@@ -480,6 +516,16 @@ check_region() {
   fi
   tr -d '\r' <"$old.raw" >"$old" || die "tr failed"
   tr -d '\r' <"$new.raw" >"$new" || die "tr failed"
+  if [[ $rule == bin-purge-members ]]; then
+    ob=$(bin_purge_bounds "$old" dart-method-optional) || return 1
+    nb=$(bin_purge_bounds "$new" dart-method) || return 1
+    read -r os oe <<<"$ob"
+    read -r ns ne <<<"$nb"
+    ((os == ns)) || return 1
+    cmp -s <(head -n "$((os - 1))" "$old") <(head -n "$((ns - 1))" "$new") &&
+      cmp -s <(tail -n "+$((oe + 1))" "$old") <(tail -n "+$((ne + 1))" "$new")
+    return $?
+  fi
   ob=$(region_bounds "$rule" "$old") || return 1
   nb=$(region_bounds "$rule" "$new") || return 1
   [[ -n $ob && -n $nb ]] || return 1
