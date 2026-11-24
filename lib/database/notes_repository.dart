@@ -1615,7 +1615,15 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
       for (final id in targets) {
         if (!owned()) break;
         if (_notes.containsKey(id)) continue;
-        await _box.delete(id);
+        try {
+          await _box.delete(id);
+        } catch (_) {
+          // A confirmed batch can still describe its completed deletions.
+          // Keep the original error contract for other callers and when
+          // the store has no durable success to report.
+          if (consent == null || removed == 0) rethrow;
+          break;
+        }
         held.remove(id);
         removed++;
       }

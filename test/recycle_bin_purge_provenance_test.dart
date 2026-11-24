@@ -220,7 +220,8 @@ void main() {
       expect(box.containsKey(a.id), isTrue);
     });
 
-    test('the store\'s own acknowledgement of the confirmed tombstone is '
+    test(
+        'the store\'s own acknowledgement of the confirmed tombstone is '
         'allowed', () async {
       final a = await pendingTombstone('Synthetic A');
       final consent = repository.binPurgeConsent([a.id]);
@@ -238,7 +239,8 @@ void main() {
       expect(box.containsKey(a.id), isFalse);
     });
 
-    test('a restore and re-delete with identical content during the sync is '
+    test(
+        'a restore and re-delete with identical content during the sync is '
         'refused', () async {
       final a = await pendingTombstone('Synthetic A');
       final consent = repository.binPurgeConsent([a.id]);
@@ -257,8 +259,7 @@ void main() {
       expect(box.containsKey(a.id), isTrue);
     });
 
-    test('an acknowledgement from before the call is not attributed',
-        () async {
+    test('an acknowledgement from before the call is not attributed', () async {
       final a = await pendingTombstone('Synthetic A');
       final removal = remover.confirm([repository.byId(a.id)!]);
       expect(await repository.syncNow(instant: true), isTrue);
@@ -310,7 +311,8 @@ void main() {
       return (save,);
     }
 
-    test('a session change before the durable deletes removes and counts '
+    test(
+        'a session change before the durable deletes removes and counts '
         'nothing', () async {
       final a = await settledTombstone('Synthetic A');
       final b = await settledTombstone('Synthetic B');
@@ -329,7 +331,8 @@ void main() {
           reason: 'Another session: not put back into this memory.');
     });
 
-    test('a session change between durable deletes counts only the removed '
+    test(
+        'a session change between durable deletes counts only the removed '
         'one', () async {
       final a = await settledTombstone('Synthetic A');
       final b = await settledTombstone('Synthetic B');
@@ -349,9 +352,7 @@ void main() {
       final consent = repository.binPurgeConsent([a.id, b.id]);
       box.failDelete =
           (key) => key == b.id ? const FileSystemException('synthetic') : null;
-      await expectLater(
-          repository.deleteForever([a.id, b.id], consent: consent),
-          throwsA(isA<FileSystemException>()));
+      expect(await repository.deleteForever([a.id, b.id], consent: consent), 1);
       expect(box.deleted, [a.id]);
       expect(repository.byId(a.id), isNull);
       expect(repository.byId(b.id)?.deleted, isTrue,
@@ -390,14 +391,31 @@ void main() {
   });
 
   group('copy', () {
+    test(
+        'review R50: a second durable delete failure reports the first completed deletion',
+        () async {
+      final a = await settledTombstone('Synthetic A');
+      final b = await settledTombstone('Synthetic B');
+      final removal = remover.confirm(
+          [repository.byId(a.id)!, repository.byId(b.id)!],
+          wholeBin: true);
+      box.failDelete =
+          (key) => key == b.id ? const FileSystemException('synthetic') : null;
+      final message = await remover.remove(removal);
+      expect(box.deleted, [a.id]);
+      expect(box.containsKey(b.id), isTrue);
+      expect(message.text, startsWith('Deleted 1 of 2 notes for good'));
+    });
+
     test('a batch interrupted part way says so', () async {
       await settledTombstone('Synthetic A');
       await settledTombstone('Synthetic B');
       final removal = remover.confirm(repository.binNotes, wholeBin: true);
       box.afterDelete = (key) async => api.sessionRevision++;
-      expect((await remover.remove(removal)).text,
+      expect(
+          (await remover.remove(removal)).text,
           'Deleted 1 of 2 notes for good, then the removal was interrupted. '
-          'One was not deleted. Check the Recycle Bin.');
+          'One deletion was not confirmed. Check the Recycle Bin.');
     });
 
     test('a local-only dirty tombstone says no sync is needed', () {

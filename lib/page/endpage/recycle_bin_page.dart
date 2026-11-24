@@ -356,13 +356,13 @@ class BinRemover {
   }
 
   /// A confirmed removal that stopped after removing [removed] of its notes
-  /// for good. The rest were not deleted.
+  /// for good. The remaining attempts have no confirmed outcome.
   UiMessage _interrupted(BinRemoval removal, int removed) {
     final kept = removal.length - removed;
     return UiMessage(
         'Deleted $removed of ${removal.length} notes for good, then the '
-        'removal was interrupted. ${kept == 1 ? 'One was' : '$kept were'} '
-        'not deleted. Check the Recycle Bin.',
+        'removal was interrupted. ${kept == 1 ? 'One deletion was' : '$kept deletions were'} '
+        'not confirmed. Check the Recycle Bin.',
         4000);
   }
 
