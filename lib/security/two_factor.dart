@@ -160,11 +160,16 @@ class TwoFactor extends ChangeNotifier {
   TwoFactor({
     TwoFactorStorage? storage,
     String? Function()? account,
+    int Function()? sessionRevision,
     String? Function()? label,
     DateTime Function()? clock,
     Random? random,
   })  : _storage = storage ?? const DeviceTwoFactorStorage(),
         _account = account ?? (() => ApiClient.instance.currentUserId),
+        _sessionRevision = sessionRevision ??
+            (account == null
+                ? () => ApiClient.instance.sessionRevision
+                : () => 0),
         _label = label ?? (() => ApiClient.instance.currentUserEmail),
         _clock = clock ?? DateTime.now,
         _random = random ?? Random.secure();
@@ -184,6 +189,7 @@ class TwoFactor extends ChangeNotifier {
 
   final TwoFactorStorage _storage;
   final String? Function() _account;
+  final int Function() _sessionRevision;
   final String? Function() _label;
   final DateTime Function() _clock;
   final Random _random;
@@ -233,8 +239,7 @@ class TwoFactor extends ChangeNotifier {
     final List<int>? secret = _pendingSecret;
     if (account == null || secret == null) return null;
 
-    final int? step =
-        await Totp.match(secret, code, now: _clock(), window: 1);
+    final int? step = await Totp.match(secret, code, now: _clock(), window: 1);
     if (step == null) return null;
 
     final List<String> codes = _newRecoveryCodes();
@@ -258,8 +263,16 @@ class TwoFactor extends ChangeNotifier {
     if (account == null) {
       return const TwoFactorCheck(TwoFactorResult.unavailable);
     }
+    return _checkFor(account, input);
+  }
+
+  Future<TwoFactorCheck> _checkFor(
+    String account,
+    String input, {
+    bool Function()? current,
+  }) async {
     final _Data? data = await _read(account);
-    if (data == null) {
+    if (data == null || current?.call() == false) {
       return const TwoFactorCheck(TwoFactorResult.unavailable);
     }
 
@@ -294,6 +307,10 @@ class TwoFactor extends ChangeNotifier {
       }
     }
 
+    if (current?.call() == false) {
+      return const TwoFactorCheck(TwoFactorResult.unavailable);
+    }
+
     if (ok) {
       data.failures = 0;
       data.lockedUntil = 0;
@@ -305,8 +322,8 @@ class TwoFactor extends ChangeNotifier {
     data.failures += 1;
     if (data.failures % _triesPerLock == 0) {
       final int block = data.failures ~/ _triesPerLock;
-      final int seconds = min(
-          _firstLockSeconds * (1 << min(block - 1, 5)), _maxLockSeconds);
+      final int seconds =
+          min(_firstLockSeconds * (1 << min(block - 1, 5)), _maxLockSeconds);
       data.lockedUntil = nowMs + seconds * 1000;
     }
     await _storage.writeState(account, data.toJson());
@@ -319,28 +336,43 @@ class TwoFactor extends ChangeNotifier {
 
   /// Turns two-factor off after a valid code or recovery code.
   Future<TwoFactorCheck> disable(String input) async {
-    final TwoFactorCheck result = await check(input);
+    final account = _account();
+    final revision = _sessionRevision();
+    bool current() => _account() == account && _sessionRevision() == revision;
+    const retired = TwoFactorCheck(TwoFactorResult.unavailable);
+    if (account == null) return retired;
+    final result = await _checkFor(account, input, current: current);
+    if (!current()) return retired;
     if (!result.ok) return result;
-    final String? account = _account();
-    if (account != null) await _clear(account);
-    return result;
+    // Once a clear begins, both writes must finish for the captured account.
+    await _clear(account);
+    return current() ? result : retired;
   }
 
   /// Replaces the recovery codes after a valid code or recovery code.
   Future<TwoFactorCheck> regenerateRecoveryCodes(String input) async {
-    final TwoFactorCheck result = await check(input);
+    final account = _account();
+    final revision = _sessionRevision();
+    bool current() => _account() == account && _sessionRevision() == revision;
+    const retired = TwoFactorCheck(TwoFactorResult.unavailable);
+    if (account == null) return retired;
+    final result = await _checkFor(account, input, current: current);
+    if (!current()) return retired;
     if (!result.ok) return result;
-    final String? account = _account();
-    final _Data? data = account == null ? null : await _read(account);
-    if (account == null || data == null) {
-      return const TwoFactorCheck(TwoFactorResult.unavailable);
-    }
-    final List<String> codes = _newRecoveryCodes();
+    final data = await _read(account);
+    if (data == null || !current()) return retired;
+
+    final codes = _newRecoveryCodes();
+    final hashes = [
+      for (final code in codes) await _hashRecovery(account, code)
+    ];
+    if (!current()) return retired;
     data.recovery
       ..clear()
-      ..addAll([for (final c in codes) await _hashRecovery(account, c)]);
+      ..addAll(hashes);
     await _storage.writeState(account, data.toJson());
     notifyListeners();
+    if (!current()) return retired;
     return TwoFactorCheck(TwoFactorResult.ok,
         usedRecoveryCode: result.usedRecoveryCode, codes: codes);
   }
@@ -380,9 +412,10 @@ class TwoFactor extends ChangeNotifier {
   /// Only hashes are stored, so a recovery code cannot be read back from the
   /// device; it is shown once, at creation.
   Future<String> _hashRecovery(String account, String code) async {
-    final String normal = code.toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]'), '');
-    final hash =
-        await Sha256().hash(utf8.encode('atomic-2fa-recovery|$account|$normal'));
+    final String normal =
+        code.toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]'), '');
+    final hash = await Sha256()
+        .hash(utf8.encode('atomic-2fa-recovery|$account|$normal'));
     return hash.bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
   }
 }
