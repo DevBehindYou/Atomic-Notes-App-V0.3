@@ -17,6 +17,7 @@ import 'package:atomic_notes/ui/fields/search_field.dart';
 import 'package:atomic_notes/ui/headers/selection_bar.dart';
 import 'package:atomic_notes/ui/mascot/mascot_stage.dart';
 import 'package:atomic_notes/ui/motion/atomic_pressable.dart';
+import 'package:atomic_notes/ui/motion/editor_route.dart';
 import 'package:atomic_notes/ui/motion/entrance.dart';
 import 'package:atomic_notes/ui/overlays/atomic_sheet.dart';
 import 'package:atomic_notes/utility/component/atomic_brand.dart';
@@ -116,8 +117,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   late final Widget _scrollingBody;
 
   // Keyboard resizing replaces the grid, but the Home owner must still accept
-  // its editor result. Keep the dialog's context outside both grid layouts.
-  void _editNote(Note note) => unawaited(_openEditor(context, note));
+  // its editor result. Keep the editor's context outside both grid layouts.
+  void _editNote(Note note, EditorOrigin? origin) =>
+      unawaited(_openEditor(context, note, origin: origin));
 
   @override
   void initState() {
@@ -524,7 +526,7 @@ class _Heading extends StatelessWidget {
 /// 200 ms shared-axis swap (a fade only under reduced motion). The slot keeps
 /// its element when the header moves between layouts, so the field keeps its
 /// focus and input connection.
-class _TitleSlot extends StatelessWidget {
+class _TitleSlot extends StatefulWidget {
   const _TitleSlot({
     required this.open,
     required this.heading,
@@ -538,11 +540,26 @@ class _TitleSlot extends StatelessWidget {
   static const Duration swap = Duration(milliseconds: 200);
 
   @override
+  State<_TitleSlot> createState() => _TitleSlotState();
+}
+
+class _TitleSlotState extends State<_TitleSlot> {
+  bool? _openAtSwap;
+  bool _slide = false;
+
+  @override
   Widget build(BuildContext context) {
-    final reduced = AtomicMotion.reduced(context);
+    // Slide or fade is chosen when a swap starts. Reduced motion turning on
+    // or off between swaps (say, while the editor covers Home) then leaves
+    // the field's element, and so the focus that returns to it, in place.
+    if (_openAtSwap != widget.open) {
+      _openAtSwap = widget.open;
+      _slide = !AtomicMotion.reduced(context);
+    }
+    final slide = _slide;
     final rtl = Directionality.of(context) == TextDirection.rtl;
     return AnimatedSwitcher(
-      duration: AtomicMotion.fade(context, swap),
+      duration: AtomicMotion.fade(context, _TitleSlot.swap),
       switchInCurve: AtomicMotion.standardCurve,
       switchOutCurve: AtomicMotion.exitCurve,
       layoutBuilder: (current, previous) => Stack(
@@ -551,7 +568,7 @@ class _TitleSlot extends StatelessWidget {
       ),
       transitionBuilder: (child, animation) {
         final faded = FadeTransition(opacity: animation, child: child);
-        if (reduced) return faded;
+        if (!slide) return faded;
         // The field enters from the end, the title from the start.
         final incomingField = child.key == const ValueKey('home-search-slot');
         final from = (incomingField ? 0.06 : -0.06) * (rtl ? -1 : 1);
@@ -561,13 +578,14 @@ class _TitleSlot extends StatelessWidget {
           child: faded,
         );
       },
-      child: open
-          ? KeyedSubtree(key: const ValueKey('home-search-slot'), child: field)
+      child: widget.open
+          ? KeyedSubtree(
+              key: const ValueKey('home-search-slot'), child: widget.field)
           : KeyedSubtree(
               key: const ValueKey('home-title-slot'),
               child: Align(
                 alignment: AlignmentDirectional.centerStart,
-                child: heading,
+                child: widget.heading,
               ),
             ),
     );
@@ -1088,7 +1106,7 @@ class _Feed extends StatelessWidget {
   final ScrollController? controller;
   final Widget strip;
   final bool pinChips;
-  final ValueChanged<Note> onEdit;
+  final _EditNote onEdit;
   final VoidCallback onShowAll;
 
   @override
@@ -1126,7 +1144,29 @@ int _responsiveColumnCount(BuildContext context) {
   return 2;
 }
 
-Future<void> _openEditor(BuildContext context, Note note) async {
+/// Opens a note in the editor, growing from [origin] when it is known.
+typedef _EditNote = void Function(Note note, EditorOrigin? origin);
+
+/// The navigators already showing an editor opened from Home. A second tap,
+/// or a tap on another card while the editor grows, opens nothing more.
+final Expando<Object> _editorOpenOn = Expando('home editor');
+
+/// Opens the editor as a full-screen route from [origin] (motion spec,
+/// Editor open). One editor per navigator at a time.
+Future<void> _openEditor(BuildContext context, Note note,
+    {EditorOrigin? origin, bool fromButton = false}) async {
+  final navigator = Navigator.of(context);
+  if (_editorOpenOn[navigator] != null) return;
+  _editorOpenOn[navigator] = note;
+  try {
+    await _runEditor(context, navigator, note, origin, fromButton);
+  } finally {
+    _editorOpenOn[navigator] = null;
+  }
+}
+
+Future<void> _runEditor(BuildContext context, NavigatorState navigator,
+    Note note, EditorOrigin? origin, bool fromButton) async {
   final bloc = context.read<NotesBloc>();
   // visible() returns repository objects. Do not let an editor result mutate
   // one before the caller's acceptance and repository persistence checks.
@@ -1137,9 +1177,16 @@ Future<void> _openEditor(BuildContext context, Note note) async {
   final editorContext = owned ? bloc.captureEditorContext() : null;
   // With an acknowledging store the editor owns the save and closes only
   // after this attempt is stored.
-  final saved = await showDialog<bool>(
-    context: context,
-    barrierDismissible: false,
+  final c = context.colors;
+  final saved = await navigator.push<bool>(EditorRoute<bool>(
+    // Movement: the route applies reduced motion (ADR-011) when it opens,
+    // when it closes and when the preference turns on in between.
+    duration: AtomicMotion.emphasized,
+    canvas: c.canvas,
+    originColor: fromButton ? c.accent : c.surface,
+    // The new-note button is a circle.
+    originRadius: fromButton ? null : AtomicRadius.large,
+    origin: origin,
     builder: (_) => NotesCreaterPage(
       note: draft,
       onDelete: bloc.state.notes.any((n) => n.id == note.id)
@@ -1150,7 +1197,7 @@ Future<void> _openEditor(BuildContext context, Note note) async {
               _saveFromEditor(context, bloc, editorContext, snapshot)
           : null,
     ),
-  );
+  ));
   if (owned) return;
   // A store that cannot acknowledge saves keeps the earlier flow.
   if (saved != true || !context.mounted || bloc.isClosed) return;
@@ -1186,6 +1233,7 @@ Future<NoteSaveResult> _saveFromEditor(BuildContext context, NotesBloc bloc,
 }
 
 void _newNote(BuildContext context, NoteKind kind) {
+  final navigator = Navigator.of(context);
   // Notes and to-dos draw on the same allowance.
   final state = context.read<NotesBloc>().state;
   if (state.isAtLimit) {
@@ -1195,14 +1243,16 @@ void _newNote(BuildContext context, NoteKind kind) {
     ).showMySnackBar(context);
     return;
   }
-  _openEditor(context, Note.create(kind: kind));
+  // The editor grows from the button that asked for it.
+  _openEditor(context, Note.create(kind: kind),
+      origin: () => editorOriginRect(context, navigator), fromButton: true);
 }
 
 /// The featured card, the masonry grid, or an empty state.
 class _NotesSliver extends StatelessWidget {
   const _NotesSliver({required this.onEdit, required this.onShowAll});
 
-  final ValueChanged<Note> onEdit;
+  final _EditNote onEdit;
   final VoidCallback onShowAll;
 
   @override
@@ -1239,18 +1289,21 @@ class _NotesSliver extends StatelessWidget {
         final offset = featured == null ? 0 : 1;
         Widget card(Note note, int index, {bool featured = false}) => Stagger(
               index: index,
-              child: NotesBulder(
-                key: ValueKey(note.id),
-                note: note,
-                projection: bloc.projectionFor(note),
-                featured: featured,
-                selected: state.selected.contains(note.id),
-                selectionMode: state.selecting,
-                onTap: () => state.selecting
-                    ? bloc.add(NoteSelectionToggled(note.id))
-                    : onEdit(note),
-                onLongPress: () => bloc.add(NoteSelectionToggled(note.id)),
-                onToggleItem: (i) => bloc.add(NoteItemToggled(note, i)),
+              child: _CardOrigin(
+                noteId: note.id,
+                builder: (origin) => NotesBulder(
+                  key: ValueKey(note.id),
+                  note: note,
+                  projection: bloc.projectionFor(note),
+                  featured: featured,
+                  selected: state.selected.contains(note.id),
+                  selectionMode: state.selecting,
+                  onTap: () => state.selecting
+                      ? bloc.add(NoteSelectionToggled(note.id))
+                      : onEdit(note, origin()),
+                  onLongPress: () => bloc.add(NoteSelectionToggled(note.id)),
+                  onToggleItem: (i) => bloc.add(NoteItemToggled(note, i)),
+                ),
               ),
             );
         return SliverMainAxisGroup(
@@ -1282,6 +1335,28 @@ class _NotesSliver extends StatelessWidget {
       },
     );
   }
+}
+
+/// Marks a card as the place its editor grows from and returns to. The
+/// origin stays valid only while this element still shows the same note: a
+/// card scrolled away, filtered out, deleted or rebuilt for another note
+/// gives null, and the editor fades instead.
+class _CardOrigin extends StatelessWidget {
+  const _CardOrigin({required this.noteId, required this.builder});
+
+  final String noteId;
+  final Widget Function(EditorOrigin Function() origin) builder;
+
+  @override
+  Widget build(BuildContext context) => builder(() {
+        final navigator = Navigator.of(context);
+        return () {
+          if (!context.mounted) return null;
+          final shown = context.widget;
+          if (shown is! _CardOrigin || shown.noteId != noteId) return null;
+          return editorOriginRect(context, navigator);
+        };
+      });
 }
 
 /// No notes at all, or nothing that matches the chips and the search.
