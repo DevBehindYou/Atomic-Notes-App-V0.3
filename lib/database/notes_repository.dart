@@ -1537,7 +1537,10 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
   /// Read-only: what deleting [ids] for good needs now, frozen for a
   /// confirmation (see [BinPurgeConsent]). A note needs a sync first when it
   /// has a change waiting and the cloud may hold, or be receiving, a copy of
-  /// it: the same rule [deleteForever] applies. Changes nothing.
+  /// it: the same rule [deleteForever] applies. Each fact carries the record
+  /// held now as its generation: a pull installs a new record, while an
+  /// acknowledgement of this store's upload settles the same one in place.
+  /// Changes nothing.
   BinPurgeConsent binPurgeConsent(Iterable<String> ids) => BinPurgeConsent(
       (this, _userId, _api.sessionRevision, _lifecycleRevision), {
         for (final id in ids)
@@ -1545,49 +1548,87 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
             final n? => BinPurgeFact(
                 needsSync: n.dirty && (n.serverVersion > 0 || _mayHaveReachedCloud(id)),
                 deleted: n.deleted, contentSig: n.contentSig, serverVersion: n.serverVersion,
-                dirty: n.dirty, updatedAt: n.updatedAt),
+                dirty: n.dirty, updatedAt: n.updatedAt, generation: n),
             null => null,
           },
       });
 
   /// Removes deleted notes from this device for good. A deletion that has not
   /// reached the cloud yet is synced first: forgetting it locally would let the
-  /// note come back from the cloud on the next pull. Returns how many were
-  /// removed; 0 means nothing was, for example because that sync failed.
+  /// note come back from the cloud on the next pull. Returns how many stored
+  /// copies were removed; 0 means none was, for example because that sync
+  /// failed. A batch that stops part way returns only what it removed, and
+  /// the notes it did not remove stay in this session's bin.
   ///
   /// With [consent] (from [binPurgeConsent] for exactly [ids]) nothing is
   /// removed unless every confirmed note is still as confirmed, in the same
-  /// account, session and lifecycle: checked first, again after the sync, and
-  /// the identity again before each stored copy is dropped.
+  /// account, session and lifecycle. The call must start from exactly the
+  /// confirmed notes, so an acknowledgement is accepted only from this call's
+  /// own sync, and only while nothing else was seen changing them: a restore
+  /// and re-delete during that sync, or an acknowledgement seen while another
+  /// note change runs, needs a fresh confirmation. Checked again after the
+  /// sync and after the wait for writes, and the identity before each stored
+  /// copy is dropped.
   @override
   Future<int> deleteForever(Iterable<String> ids, {BinPurgeConsent? consent}) => _trackNoteMutation(() async {
     _assertWritable();
     final asked = ids.toList();
-    bool holds() => consent == null || consent.allows(binPurgeConsent(asked));
-    if (!holds()) return 0;
+    if (consent != null && !consent.unchanged(binPurgeConsent(asked))) return 0;
+    final owner = consent ?? binPurgeConsent(const []);
+    bool owned() => _ownsCache(_userId) && owner.sameIdentity(binPurgeConsent(const []));
     final targets = asked.where((id) => _notes[id]?.deleted == true).toList();
     if (targets.isEmpty) return 0;
     bool unsent() => binPurgeConsent(targets).needsSync;
     if (unsent()) {
       if (!SyncStatusHelper.isSyncOn) return 0;
-      await syncNow();
-      if (unsent() || !holds()) return 0;
+      // Every change the store announces is seen here. An acknowledgement
+      // seen while another note change runs cannot be told apart from that
+      // change being masked by it.
+      var unproven = false;
+      void watch() {
+        if (consent == null || unproven) return;
+        final now = binPurgeConsent(asked);
+        unproven = !consent.allows(now) ||
+            (consent.acknowledged(now) && _activeNoteMutations > 1);
+      }
+      addListener(watch);
+      try {
+        await syncNow();
+      } finally {
+        removeListener(watch);
+      }
+      watch();
+      if (unproven || unsent()) return 0;
     }
+    final held = <String, Note>{
+      for (final id in targets)
+        if (_notes.remove(id) case final n?) id: n,
+    };
     var removed = 0;
-    for (final id in targets) {
-      if (_notes.remove(id) != null) removed++;
+    try {
+      // Let an in-flight write finish, then drop the stored copies.
+      await _drainWrites();
+      _assertCacheOwner();
+      // A pull may have stored a new note under an id meanwhile. A confirmed
+      // batch then removes nothing; another caller skips that note.
+      if (consent != null && (!owned() || targets.any(_notes.containsKey))) return 0;
+      for (final id in targets) {
+        if (!owned()) break;
+        if (_notes.containsKey(id)) continue;
+        await _box.delete(id);
+        held.remove(id);
+        removed++;
+      }
+    } finally {
+      // What was not removed goes back to the session it belongs to. Another
+      // session's stored copy stays where it is, out of this memory.
+      if (owned()) {
+        for (final MapEntry(key: id, value: n) in held.entries) {
+          if (identical(_notes.putIfAbsent(id, () => n), n)) unawaited(_persist(id));
+        }
+      }
+      notifyListeners();
     }
-    // Let an in-flight write finish, then drop the stored copies.
-    await _drainWrites();
-    _assertCacheOwner();
-    for (final id in targets) {
-      // A pull may have stored a new note under this id meanwhile, and a
-      // confirmed removal stops if its session or lifecycle ended.
-      if (_notes.containsKey(id)) continue;
-      if (consent != null && !consent.sameIdentity(binPurgeConsent(const []))) break;
-      await _box.delete(id);
-    }
-    notifyListeners();
     return removed;
   });
 

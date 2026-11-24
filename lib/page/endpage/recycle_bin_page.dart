@@ -76,6 +76,12 @@ class RecycleBinPage extends StatelessWidget {
   @visibleForTesting
   static String deleteForeverBody(Note note, {BinRemovalStep? step}) =>
       switch (step ?? removalStep(note)) {
+        // A change waits, but the store says nothing of it can be in the
+        // cloud: say only that no sync is needed.
+        BinRemovalStep.removeNow when note.dirty =>
+          'It is removed from this device now and cannot be brought back from '
+              'the Recycle Bin. No sync is needed to remove this note from '
+              'this device, so this sends nothing to the cloud.',
         BinRemovalStep.removeNow =>
           'It is removed from this device now and cannot be brought back from '
               'the Recycle Bin. It has no changes waiting to sync, so this '
@@ -93,7 +99,10 @@ class RecycleBinPage extends StatelessWidget {
       {BinRemovalStep Function(Note)? stepOf}) {
     final step = stepOf ?? removalStep;
     final count = notes.length;
-    final now = notes.where((n) => step(n) == BinRemovalStep.removeNow).length;
+    final removeNow = notes.where((n) => step(n) == BinRemovalStep.removeNow);
+    final now = removeNow.where((n) => !n.dirty).length;
+    // A change waits, but the store says nothing of it can be in the cloud.
+    final local = removeNow.where((n) => n.dirty).length;
     return [
       count == 1
           ? '1 deleted note is removed from this device for good.'
@@ -102,6 +111,12 @@ class RecycleBinPage extends StatelessWidget {
         '1 has no changes waiting to sync, so nothing is sent for it.',
       if (now > 1)
         '$now have no changes waiting to sync, so nothing is sent for them.',
+      if (local == 1)
+        'No sync is needed to remove 1 note from this device, so nothing is '
+            'sent for it.',
+      if (local > 1)
+        'No sync is needed to remove $local notes from this device, so '
+            'nothing is sent for them.',
     ];
   }
 
@@ -290,10 +305,19 @@ class BinRemover {
         // The store syncs first when it must and checks the confirmation
         // again after every wait, so a note restored or replaced meanwhile is
         // never removed under it.
+        // The store returns how many it removed for good, so the message
+        // says that, not what is left in memory.
         final removed =
             await store.deleteForever(removal.ids, consent: consent);
-        if (removed == 0 && _drifted(removal)) return _changed;
-        return _outcome(removal, removed);
+        if (removed == removal.length) return _done(removal);
+        if (removed > 0) return _interrupted(removal, removed);
+        // Nothing was removed: a change still waiting to sync says why;
+        // otherwise the store could not show the bin is as confirmed.
+        if (!_drifted(removal) &&
+            store.binPurgeConsent(removal.ids).needsSync) {
+          return UiMessage(_notSentYet(), 3000);
+        }
+        return _changed;
       }
       if (_waitsToSync(removal)) {
         final synced = await _source.syncNow();
@@ -328,6 +352,22 @@ class BinRemover {
           '${left == 1 ? 'One is' : '$left are'} still in the Recycle Bin.',
           4000);
     }
+    return _done(removal);
+  }
+
+  /// A confirmed removal that stopped after removing [removed] of its notes
+  /// for good. The rest were not deleted.
+  UiMessage _interrupted(BinRemoval removal, int removed) {
+    final kept = removal.length - removed;
+    return UiMessage(
+        'Deleted $removed of ${removal.length} notes for good, then the '
+        'removal was interrupted. ${kept == 1 ? 'One was' : '$kept were'} '
+        'not deleted. Check the Recycle Bin.',
+        4000);
+  }
+
+  /// Every confirmed note was removed for good.
+  UiMessage _done(BinRemoval removal) {
     if (!removal.wholeBin) return const UiMessage('Deleted for good', 3000);
     if (_source.binNotes.isEmpty) {
       return const UiMessage('Recycle Bin emptied', 3000);

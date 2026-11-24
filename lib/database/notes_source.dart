@@ -162,6 +162,7 @@ final class BinPurgeFact {
     required this.serverVersion,
     required this.dirty,
     required this.updatedAt,
+    this.generation,
   });
 
   /// The store must sync this note before it may forget it: it has a change
@@ -172,6 +173,12 @@ final class BinPurgeFact {
   final int serverVersion;
   final bool dirty;
   final DateTime updatedAt;
+
+  /// Which record of the note this was, compared by identity only. The store
+  /// gives the record it holds: an acknowledgement of its own upload settles
+  /// that record in place, while a note that came in from the cloud is a new
+  /// record, whatever its content. Null when the store gives none.
+  final Object? generation;
 }
 
 /// A confirmed "delete for good", frozen by the store when its confirmation
@@ -201,11 +208,14 @@ final class BinPurgeConsent {
 
   /// Whether [now], a later freeze of the same notes by the same store, still
   /// describes what this confirmation showed. Each note must still be the
-  /// same deleted note with the same content, needing no more than was
+  /// same deleted record with the same content, needing no more than was
   /// disclosed. The only change allowed is an acknowledgement of a note that
-  /// had a change waiting: its sync flag and version settle, its content does
-  /// not. A restored note, a newer or different tombstone, a note gone, or
-  /// another session all need a fresh confirmation.
+  /// had a change waiting: its sync flag and version settle, its content and
+  /// record do not. A restored note, a newer or different tombstone (even one
+  /// with the same content), a note gone, or another session all need a fresh
+  /// confirmation. Facts alone cannot say which upload an acknowledgement
+  /// answered, so the store also checks that (see [unchanged] and
+  /// [acknowledged]).
   bool allows(BinPurgeConsent now) {
     if (!sameIdentity(now) || now._facts.length != _facts.length) return false;
     for (final MapEntry(key: id, value: was) in _facts.entries) {
@@ -213,6 +223,7 @@ final class BinPurgeConsent {
       if (was == null || cur == null || !was.deleted || !cur.deleted) {
         return false;
       }
+      if (!identical(cur.generation, was.generation)) return false;
       if (cur.contentSig != was.contentSig) return false;
       if (cur.needsSync && !was.needsSync) return false;
       final same = cur.serverVersion == was.serverVersion &&
@@ -225,4 +236,19 @@ final class BinPurgeConsent {
     }
     return true;
   }
+
+  /// Whether [now] is exactly what this confirmation showed: it [allows] it
+  /// and no confirmed note carries an acknowledgement.
+  bool unchanged(BinPurgeConsent now) => allows(now) && !acknowledged(now);
+
+  /// Whether any confirmed note in [now] has settled since this was frozen:
+  /// its version, sync flag or time differs.
+  bool acknowledged(BinPurgeConsent now) => _facts.entries.any((e) {
+        final cur = now._facts[e.key], was = e.value;
+        return cur != null &&
+            was != null &&
+            (cur.serverVersion != was.serverVersion ||
+                cur.dirty != was.dirty ||
+                cur.updatedAt != was.updatedAt);
+      });
 }
