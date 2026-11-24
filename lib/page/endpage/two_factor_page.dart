@@ -136,6 +136,8 @@ class _TwoFactorPageState extends State<TwoFactorPage> {
   _Stage _stage = _Stage.overview;
   TwoFactorSetup? _setup;
   List<String> _codes = const [];
+  Object? _codesOwner;
+  StreamSubscription<void>? _sessionEnded;
   bool _saved = false;
   bool _busy = false;
   String? _error;
@@ -160,6 +162,11 @@ class _TwoFactorPageState extends State<TwoFactorPage> {
   @override
   void initState() {
     super.initState();
+    if (widget.identity == null) {
+      _sessionEnded = ApiClient.instance.onSessionEnded.listen((_) {
+        if (mounted && _sensitiveStageRetired) _stopForSignInChange();
+      });
+    }
     _scroll.addListener(() => _titleAway.value =
         _scroll.hasClients && _scroll.offset > AtomicSpace.x10);
     final Future<void>? storing = _ledger.storing;
@@ -184,6 +191,7 @@ class _TwoFactorPageState extends State<TwoFactorPage> {
     // Leaving mid-setup discards the key, if it is still this page's: a
     // confirm already being stored carries on and keeps its codes for the
     // account that started it.
+    unawaited(_sessionEnded?.cancel());
     _release();
     _attempt++;
     _countRead++;
@@ -224,6 +232,7 @@ class _TwoFactorPageState extends State<TwoFactorPage> {
       ..unshownOwner = null;
     if (_identity() != owner) return;
     _codes = codes;
+    _codesOwner = owner;
     _saved = false;
     _notice = null;
     _stage = _Stage.codes;
@@ -339,6 +348,7 @@ class _TwoFactorPageState extends State<TwoFactorPage> {
     setState(() {
       _busy = false;
       _codes = shown;
+      _codesOwner = owner;
       _saved = false;
       _stage = _Stage.codes;
       _setup = null;
@@ -358,6 +368,7 @@ class _TwoFactorPageState extends State<TwoFactorPage> {
       _busy = false;
       _setup = null;
       _codes = const [];
+      _codesOwner = null;
       _saved = false;
       _codesLeft = null;
       _error = null;
@@ -368,9 +379,19 @@ class _TwoFactorPageState extends State<TwoFactorPage> {
     _refreshCount();
   }
 
-  Future<void> _copy(String text, String done) async {
+  bool get _sensitiveStageRetired => switch (_stage) {
+        _Stage.setup => _identity() != _setupOwner,
+        _Stage.codes => _identity() != _codesOwner,
+        _Stage.overview => false,
+      };
+
+  Future<void> _copy(String text, String done, Object? owner) async {
+    if (_identity() != owner) {
+      _stopForSignInChange();
+      return;
+    }
     await Clipboard.setData(ClipboardData(text: text));
-    if (!mounted) return;
+    if (!mounted || _identity() != owner) return;
     _say(done);
   }
 
@@ -420,6 +441,7 @@ class _TwoFactorPageState extends State<TwoFactorPage> {
     if (result == null || !result.ok || result.codes == null) return;
     setState(() {
       _codes = result.codes!;
+      _codesOwner = owner;
       _saved = false;
       _stage = _Stage.codes;
       _notice = null;
@@ -452,6 +474,13 @@ class _TwoFactorPageState extends State<TwoFactorPage> {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    final retired = _sensitiveStageRetired;
+    if (retired) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _sensitiveStageRetired) _stopForSignInChange();
+      });
+    }
+    final displayedStage = retired ? _Stage.overview : _stage;
     final margin = AtomicSpace.screenMargin(MediaQuery.sizeOf(context).width);
     return BlocProvider(
       create: (_) => TwoFactorArmedCubit(source: _tf),
@@ -511,8 +540,8 @@ class _TwoFactorPageState extends State<TwoFactorPage> {
                               layoutBuilder: (current, previous) =>
                                   current ?? const SizedBox.shrink(),
                               child: KeyedSubtree(
-                                key: ValueKey(_stage),
-                                child: switch (_stage) {
+                                key: ValueKey(displayedStage),
+                                child: switch (displayedStage) {
                                   _Stage.setup => _setupView(),
                                   _Stage.codes => _codesView(),
                                   _Stage.overview =>
@@ -655,7 +684,7 @@ class _TwoFactorPageState extends State<TwoFactorPage> {
                               .copyWith(color: c.textSecondary)),
                     ),
                     Text(
-                      left == null ? '–' : '$left',
+                      left == null ? 'â€“' : '$left',
                       key: const ValueKey('tf-setup-codes-left'),
                       style:
                           AtomicType.titleLarge.copyWith(color: c.textPrimary),
@@ -748,7 +777,8 @@ class _TwoFactorPageState extends State<TwoFactorPage> {
                       icon: AtomicIcons.copy,
                       onCard: true,
                       size: AtomicButtonSize.compact,
-                      onPressed: () => _copy(setup.secret, 'Setup key copied'),
+                      onPressed: () =>
+                          _copy(setup.secret, 'Setup key copied', _setupOwner),
                     ),
                   ],
                 ),
@@ -852,7 +882,8 @@ class _TwoFactorPageState extends State<TwoFactorPage> {
           key: const ValueKey('tf-setup-copy-codes'),
           label: TwoFactorPage.copyAllLabel,
           icon: AtomicIcons.copy,
-          onPressed: () => _copy(_codes.join('\n'), 'Recovery codes copied'),
+          onPressed: () =>
+              _copy(_codes.join('\n'), 'Recovery codes copied', _codesOwner),
           size: AtomicButtonSize.large,
           expand: true,
         ),
@@ -888,6 +919,7 @@ class _TwoFactorPageState extends State<TwoFactorPage> {
               ? () {
                   setState(() {
                     _codes = const [];
+                    _codesOwner = null;
                     _stage = _Stage.overview;
                   });
                   _toTop();

@@ -219,6 +219,50 @@ String _secretShown(WidgetTester tester) =>
     tester.widget<SelectableText>(_k('tf-setup-key')).data!.replaceAll(' ', '');
 
 void main() {
+  testWidgets('review: already-rendered recovery codes follow the session',
+      (tester) async {
+    var account = 'account-a';
+    final tf = _HeldTwoFactor();
+    await _pump(tester, tf, identity: () => account);
+    await _tap(tester, _k('tf-setup-begin'));
+    await tester.enterText(_field, '123456');
+    await tester.pump();
+    tf.confirms.single.complete(_synthCodes);
+    await _settle(tester);
+    expect(_k('tf-setup-codes'), findsOneWidget);
+    account = 'account-b';
+    tester.view.physicalSize = const Size(810, 1720);
+    await _settle(tester);
+    expect(_k('tf-setup-codes'), findsNothing);
+  });
+
+  testWidgets('the previous session cannot copy already-rendered codes',
+      (tester) async {
+    final messenger = tester.binding.defaultBinaryMessenger;
+    var copies = 0;
+    messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'Clipboard.setData') copies++;
+      return null;
+    });
+    addTearDown(() =>
+        messenger.setMockMethodCallHandler(SystemChannels.platform, null));
+    var revision = 1;
+    final tf = _HeldTwoFactor();
+    await _pump(tester, tf, identity: () => ('same-account', revision));
+    await _tap(tester, _k('tf-setup-begin'));
+    await tester.enterText(_field, '123456');
+    await tester.pump();
+    tf.confirms.single.complete(_synthCodes);
+    await _settle(tester);
+    final renderedCopy = _button(tester, _k('tf-setup-copy-codes')).onPressed;
+    expect(renderedCopy, isNotNull);
+    revision++;
+    renderedCopy!();
+    await _settle(tester);
+    expect(copies, 0);
+    expect(_k('tf-setup-codes'), findsNothing);
+  });
+
   group('overview', () {
     testWidgets('off: title, status, the way in and the notes', (tester) async {
       await _pump(tester, _HeldTwoFactor());
@@ -489,7 +533,7 @@ void main() {
       account = 'account-b';
       count.complete(5);
       await _settle(tester);
-      expect(tester.widget<Text>(_k('tf-setup-codes-left')).data, '–');
+      expect(tester.widget<Text>(_k('tf-setup-codes-left')).data, 'â€“');
     });
 
     testWidgets('a sign-in change while a code prompt is open shows nothing',
@@ -702,8 +746,8 @@ void main() {
 
       // The old key is gone from the service as well: back as A, it fails.
       owner = 'owner-a';
-      final List<String>? again = await tester
-          .runAsync<List<String>?>(() => tf.confirmSetup(code));
+      final List<String>? again =
+          await tester.runAsync<List<String>?>(() => tf.confirmSetup(code));
       expect(again == null, isTrue);
       expect(storage.armed, isEmpty);
     });
