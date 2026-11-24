@@ -23,9 +23,12 @@ class _Fakes {
   bool unlocked = false;
   bool enabled = false;
   String? account = 'account-a';
+  int session = 1;
+  void Function()? afterCreate;
   int waiting = 0;
   Object? createError;
   Object? migrateError;
+  void Function()? afterMigrate;
   final List<String> calls = [];
 
   Future<void> create(List<String> phrase) async {
@@ -35,12 +38,14 @@ class _Fakes {
     if (error != null) throw error;
     unlocked = true;
     enabled = true;
+    afterCreate?.call();
   }
 
   Future<int> migrate() async {
     calls.add('migrateToVault');
     final error = migrateError;
     if (error != null) throw error;
+    afterMigrate?.call();
     return waiting;
   }
 
@@ -83,6 +88,7 @@ Future<void> _pump(WidgetTester tester, _Fakes fakes) async {
       migrateToVault: fakes.migrate,
       lockVault: fakes.lock,
       currentAccount: () => fakes.account,
+      currentSession: () => fakes.session,
     ),
   ));
   await tester.pumpAndSettle();
@@ -129,6 +135,51 @@ void _expectNoOverclaim() {
 }
 
 void main() {
+  testWidgets(
+      'review R49: completing another session does not show its pending outcome',
+      (tester) async {
+    final fakes = _Fakes()..waiting = 2;
+    fakes.afterMigrate = () => fakes.account = 'account-b';
+    await _pump(tester, fakes);
+    await _turnOnEncryption(tester);
+    expect(_pending, findsNothing);
+    expect(find.text(EncryptionPage.waitingMessage(2)), findsNothing);
+  });
+
+  testWidgets(
+      'review R49: lock explanation does not promise all copies are encrypted while setup is pending',
+      (tester) async {
+    final fakes = _Fakes()..waiting = 2;
+    await _pump(tester, fakes);
+    await _turnOnEncryption(tester);
+    await _afterToast(tester);
+    expect(_pending, findsOneWidget);
+    expect(find.textContaining('Your notes stay encrypted in the cloud'),
+        findsNothing);
+  });
+
+  testWidgets('a different session does not start the notes migration',
+      (tester) async {
+    final fakes = _Fakes();
+    fakes.afterCreate = () => fakes.session++;
+    await _pump(tester, fakes);
+    await _turnOnEncryption(tester);
+    expect(fakes.calls, ['createVault']);
+    expect(find.byType(SnackBar), findsNothing);
+  });
+
+  testWidgets('a new session for the same account hides the old setup count',
+      (tester) async {
+    final fakes = _Fakes()..waiting = 2;
+    await _pump(tester, fakes);
+    await _turnOnEncryption(tester);
+    await _afterToast(tester);
+    expect(_pending, findsOneWidget);
+    fakes.session++;
+    await _rebuild(tester);
+    expect(_pending, findsNothing);
+  });
+
   group('copy', () {
     test('no message claims every note or promises the next sync', () {
       final copies = [

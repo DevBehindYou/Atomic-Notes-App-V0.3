@@ -39,6 +39,7 @@ class EncryptionPage extends StatefulWidget {
     this.migrateToVault,
     this.lockVault,
     this.currentAccount,
+    this.currentSession,
   });
 
   /// Whether the vault is open on this device. Defaults to
@@ -66,6 +67,7 @@ class EncryptionPage extends StatefulWidget {
   /// The signed-in account, which a setup outcome belongs to. Defaults to
   /// [ApiClient.currentUserId]. Read only, never sent anywhere.
   final String? Function()? currentAccount;
+  final int Function()? currentSession;
 
   static const String title = 'Encryption';
 
@@ -131,8 +133,8 @@ class EncryptionPage extends StatefulWidget {
   static String pendingTitle(int waiting) =>
       'Setup left $waiting ${waiting == 1 ? 'note' : 'notes'} waiting';
   static const String pendingBody =
-      'They have not been sent to the cloud encrypted yet. Until a sync sends '
-      'them encrypted, any copy of them already in the cloud stays plain.';
+      'Setup finished before these notes were sent encrypted. This result '
+      'does not reflect any later sync.';
 
   // On, open on this device.
   static const String onTitle = 'Encryption is on';
@@ -142,9 +144,9 @@ class EncryptionPage extends StatefulWidget {
       'reaches the server only as ciphertext it cannot read.';
   static const String deviceLabel = 'This device';
   static const String lockBody =
-      'Locking forgets the key here. Your notes stay encrypted in the cloud '
-      'and on your other devices, and this device asks for the recovery '
-      'phrase again.';
+      'Locking forgets the key here. It does not change copies already '
+      'encrypted in the cloud or on other devices. This device asks for '
+      'the recovery phrase again.';
   static const String lockLabel = 'Lock on this device';
   static const String locking = 'Locking on this device…';
   static const String lockFailedMessage =
@@ -176,12 +178,12 @@ enum _Step { intro, show, verify }
 /// waiting ([waiting] > 0), or a notes step that failed after the vault was
 /// made ([failed]). A completed setup leaves no outcome.
 class _Outcome {
-  const _Outcome.pending(this.account, this.waiting) : failed = false;
-  const _Outcome.failed(this.account)
+  const _Outcome.pending(this.owner, this.waiting) : failed = false;
+  const _Outcome.failed(this.owner)
       : waiting = 0,
         failed = true;
 
-  final String? account;
+  final (String?, int) owner;
   final int waiting;
   final bool failed;
 }
@@ -229,12 +231,34 @@ class _EncryptionPageState extends State<EncryptionPage> {
   String? _account() =>
       (widget.currentAccount ?? () => ApiClient.instance.currentUserId)();
 
+  (String?, int) _owner() => (
+        _account(),
+        widget.currentSession?.call() ?? ApiClient.instance.sessionRevision,
+      );
+
+  bool _showSetupResult((String?, int) owner) {
+    if (!mounted) return false;
+    if (_owner() == owner) return true;
+    for (final field in _fields) {
+      field.clear();
+    }
+    setState(() {
+      _loading = false;
+      _settingUp = false;
+      _phrase = const [];
+      _step = _Step.intro;
+      _error = null;
+      _outcome = null;
+    });
+    return false;
+  }
+
   /// The outcome, if it is a fact about the account signed in now. Only the
   /// On and Locked views show it, so it is never shown once that account's
   /// vault is off.
   _Outcome? _knownOutcome() {
     final outcome = _outcome;
-    if (outcome == null || outcome.account != _account()) return null;
+    if (outcome == null || outcome.owner != _owner()) return null;
     return outcome;
   }
 
@@ -284,7 +308,7 @@ class _EncryptionPageState extends State<EncryptionPage> {
     }
 
     // The account this setup runs for; its outcome belongs to it alone.
-    final account = _account();
+    final owner = _owner();
     setState(() {
       _loading = true;
       _settingUp = true;
@@ -293,23 +317,27 @@ class _EncryptionPageState extends State<EncryptionPage> {
     });
     try {
       await (widget.createVault ?? Vault.instance.createVault)(_phrase);
+      if (_owner() != owner) {
+        _showSetupResult(owner);
+        return;
+      }
       // Fold every existing plaintext note into the vault.
       final waiting = await (widget.migrateToVault ??
           NotesRepository.instance.migrateToVault)();
-      if (!mounted) return;
+      if (!_showSetupResult(owner)) return;
       setState(() {
         _loading = false;
         _settingUp = false;
         _phrase = const [];
         _step = _Step.intro;
         // Notes still waiting stay on the page after the toast.
-        _outcome = waiting > 0 ? _Outcome.pending(account, waiting) : null;
+        _outcome = waiting > 0 ? _Outcome.pending(owner, waiting) : null;
       });
       _toast(waiting == 0
           ? EncryptionPage.onMessage
           : EncryptionPage.waitingMessage(waiting));
     } on VaultAlreadyExistsError {
-      if (!mounted) return;
+      if (!_showSetupResult(owner)) return;
       setState(() {
         _loading = false;
         _settingUp = false;
@@ -317,15 +345,15 @@ class _EncryptionPageState extends State<EncryptionPage> {
       });
     } catch (e) {
       // Plain copy only: an error's own text is never shown or logged here.
-      if (!mounted) return;
+      if (!_showSetupResult(owner)) return;
       setState(() {
         _loading = false;
         _settingUp = false;
         // The vault may be on already (the notes step failed after it was
         // made): say so rather than claim encryption did not turn on. That
         // outcome stays shown for this account, through [_message].
-        if (_unlocked()) {
-          _outcome = _Outcome.failed(account);
+        if (_enabled() || _unlocked()) {
+          _outcome = _Outcome.failed(owner);
         } else {
           _error = EncryptionPage.failedMessage;
         }
