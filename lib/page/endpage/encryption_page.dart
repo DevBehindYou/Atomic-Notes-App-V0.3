@@ -1,5 +1,6 @@
 // ignore_for_file: use_build_context_synchronously
 
+import 'package:atomic_notes/api/atomic_notes_api.dart';
 import 'package:atomic_notes/database/notes_repository.dart';
 import 'package:atomic_notes/security/seed_phrase.dart';
 import 'package:atomic_notes/security/vault.dart';
@@ -37,6 +38,7 @@ class EncryptionPage extends StatefulWidget {
     this.createVault,
     this.migrateToVault,
     this.lockVault,
+    this.currentAccount,
   });
 
   /// Whether the vault is open on this device. Defaults to
@@ -60,6 +62,10 @@ class EncryptionPage extends StatefulWidget {
   /// Forgets the key on this device. Defaults to
   /// [NotesRepository.lockVault].
   final Future<void> Function()? lockVault;
+
+  /// The signed-in account, which a setup outcome belongs to. Defaults to
+  /// [ApiClient.currentUserId]. Read only, never sent anywhere.
+  final String? Function()? currentAccount;
 
   static const String title = 'Encryption';
 
@@ -116,15 +122,24 @@ class EncryptionPage extends StatefulWidget {
   static const String onMessage =
       'Encryption is on. Your notes are now end-to-end encrypted.';
   static String waitingMessage(int waiting) =>
-      'Encryption is on. $waiting ${waiting == 1 ? 'note is' : 'notes are'} '
-      'still plain in the cloud and will be encrypted at the next sync.';
+      'Encryption is on. $waiting ${waiting == 1 ? 'note has' : 'notes have'} '
+      'not been sent encrypted yet.';
+
+  /// The setup outcome that stays on the page after the toast: the notes
+  /// the notes step reported as still waiting. Phrased as what setup left,
+  /// so it never promises when they will be sent.
+  static String pendingTitle(int waiting) =>
+      'Setup left $waiting ${waiting == 1 ? 'note' : 'notes'} waiting';
+  static const String pendingBody =
+      'They have not been sent to the cloud encrypted yet. Until a sync sends '
+      'them encrypted, any copy of them already in the cloud stays plain.';
 
   // On, open on this device.
   static const String onTitle = 'Encryption is on';
   static const String onBody =
-      'Every note is sealed with AES-256-GCM on this device before it is '
-      'stored or synced. The server only ever holds ciphertext it cannot '
-      'read.';
+      'While the vault is open here, notes are sealed with AES-256-GCM on '
+      'this device before they are stored or synced. An encrypted note '
+      'reaches the server only as ciphertext it cannot read.';
   static const String deviceLabel = 'This device';
   static const String lockBody =
       'Locking forgets the key here. Your notes stay encrypted in the cloud '
@@ -157,12 +172,30 @@ class EncryptionPage extends StatefulWidget {
 
 enum _Step { intro, show, verify }
 
+/// What the last setup on this page reported for one account: notes still
+/// waiting ([waiting] > 0), or a notes step that failed after the vault was
+/// made ([failed]). A completed setup leaves no outcome.
+class _Outcome {
+  const _Outcome.pending(this.account, this.waiting) : failed = false;
+  const _Outcome.failed(this.account)
+      : waiting = 0,
+        failed = true;
+
+  final String? account;
+  final int waiting;
+  final bool failed;
+}
+
 class _EncryptionPageState extends State<EncryptionPage> {
   _Step _step = _Step.intro;
   List<String> _phrase = const [];
   late List<TextEditingController> _fields;
   bool _loading = false;
   String? _error;
+
+  /// The last-known setup outcome. Shown only for the account it belongs
+  /// to ([_knownOutcome]).
+  _Outcome? _outcome;
 
   /// Setup is running (a subset of [_loading]); only decides what is shown.
   bool _settingUp = false;
@@ -193,6 +226,23 @@ class _EncryptionPageState extends State<EncryptionPage> {
 
   bool _unlocked() => (widget.isUnlocked ?? () => Vault.instance.isUnlocked)();
   bool _enabled() => (widget.isEnabled ?? () => Vault.instance.isEnabled)();
+  String? _account() =>
+      (widget.currentAccount ?? () => ApiClient.instance.currentUserId)();
+
+  /// The outcome, if it is a fact about the account signed in now. Only the
+  /// On and Locked views show it, so it is never shown once that account's
+  /// vault is off.
+  _Outcome? _knownOutcome() {
+    final outcome = _outcome;
+    if (outcome == null || outcome.account != _account()) return null;
+    return outcome;
+  }
+
+  /// The message for the message slot: this action's error, else a known
+  /// failed notes step.
+  String? _message() =>
+      _error ??
+      (_knownOutcome()?.failed == true ? EncryptionPage.partialMessage : null);
 
   void _toast(String text, {bool error = false}) =>
       AtomicSnackBar(text: text, millis: 2500, error: error).show(context);
@@ -233,10 +283,13 @@ class _EncryptionPageState extends State<EncryptionPage> {
       return;
     }
 
+    // The account this setup runs for; its outcome belongs to it alone.
+    final account = _account();
     setState(() {
       _loading = true;
       _settingUp = true;
       _error = null;
+      _outcome = null;
     });
     try {
       await (widget.createVault ?? Vault.instance.createVault)(_phrase);
@@ -249,6 +302,8 @@ class _EncryptionPageState extends State<EncryptionPage> {
         _settingUp = false;
         _phrase = const [];
         _step = _Step.intro;
+        // Notes still waiting stay on the page after the toast.
+        _outcome = waiting > 0 ? _Outcome.pending(account, waiting) : null;
       });
       _toast(waiting == 0
           ? EncryptionPage.onMessage
@@ -267,10 +322,13 @@ class _EncryptionPageState extends State<EncryptionPage> {
         _loading = false;
         _settingUp = false;
         // The vault may be on already (the notes step failed after it was
-        // made): say so rather than claim encryption did not turn on.
-        _error = _unlocked()
-            ? EncryptionPage.partialMessage
-            : EncryptionPage.failedMessage;
+        // made): say so rather than claim encryption did not turn on. That
+        // outcome stays shown for this account, through [_message].
+        if (_unlocked()) {
+          _outcome = _Outcome.failed(account);
+        } else {
+          _error = EncryptionPage.failedMessage;
+        }
       });
     }
   }
@@ -362,7 +420,7 @@ class _EncryptionPageState extends State<EncryptionPage> {
   /// The current message, announced when it appears. Always in the tree so
   /// a change of message animates in place.
   Widget _errorSlot() {
-    final error = _error;
+    final error = _message();
     return AnimatedSize(
       duration: AtomicMotion.move(context, AtomicMotion.standard),
       curve: AtomicMotion.standardCurve,
@@ -385,6 +443,24 @@ class _EncryptionPageState extends State<EncryptionPage> {
                   ),
                 ),
               ),
+      ),
+    );
+  }
+
+  /// Notes the last setup left waiting, for the account signed in now. It
+  /// stays after the toast, so the page never reads as fully encrypted
+  /// while its own outcome says otherwise.
+  Widget _pendingSlot() {
+    final outcome = _knownOutcome();
+    if (outcome == null || outcome.waiting <= 0) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: AtomicSpace.x4),
+      child: AtomicBanner(
+        key: const ValueKey('encryption-pending'),
+        tone: BannerTone.attention,
+        icon: AtomicIcons.alertTriangle,
+        title: EncryptionPage.pendingTitle(outcome.waiting),
+        body: EncryptionPage.pendingBody,
       ),
     );
   }
@@ -420,6 +496,7 @@ class _EncryptionPageState extends State<EncryptionPage> {
           chip: StatusChip(EncryptionPage.chipOn,
               tone: StatusTone.accent, icon: AtomicIcons.check),
         ),
+        _pendingSlot(),
         const SizedBox(height: AtomicSpace.x6),
         const _GroupLabel(EncryptionPage.deviceLabel),
         _body(EncryptionPage.lockBody),
@@ -446,6 +523,7 @@ class _EncryptionPageState extends State<EncryptionPage> {
           chip: StatusChip(EncryptionPage.chipLocked,
               tone: StatusTone.inverse, icon: AtomicIcons.lock),
         ),
+        _pendingSlot(),
         _errorSlot(),
         const SizedBox(height: AtomicSpace.x6),
         AtomicButton.primary(

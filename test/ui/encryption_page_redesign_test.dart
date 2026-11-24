@@ -392,13 +392,11 @@ void main() {
     for (final (n, copy) in [
       (
         1,
-        'Encryption is on. 1 note is still plain in the cloud and will be '
-            'encrypted at the next sync.'
+        'Encryption is on. 1 note has not been sent encrypted yet.'
       ),
       (
         3,
-        'Encryption is on. 3 notes are still plain in the cloud and will be '
-            'encrypted at the next sync.'
+        'Encryption is on. 3 notes have not been sent encrypted yet.'
       ),
     ]) {
       testWidgets('says how many notes still wait ($n)', (tester) async {
