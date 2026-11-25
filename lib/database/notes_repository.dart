@@ -1584,14 +1584,16 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
       // Every change the store announces is seen here. An acknowledgement
       // seen while another note change runs cannot be told apart from that
       // change being masked by it.
+      final attempt = consent == null ? null : _SyncAttemptCollector();
       var unproven = false;
       void watch() {
         if (consent == null || unproven) return;
         final now = binPurgeConsent(asked);
         unproven = !consent.allows(now) ||
-            (consent.acknowledged(now) && _activeNoteMutations > 1);
+            (consent.acknowledged(now) &&
+                (attempt?.activity != SyncAttemptActivity.started ||
+                    _activeNoteMutations > 1));
       }
-      final attempt = consent == null ? null : _SyncAttemptCollector();
       addListener(watch);
       try {
         if (attempt == null) {

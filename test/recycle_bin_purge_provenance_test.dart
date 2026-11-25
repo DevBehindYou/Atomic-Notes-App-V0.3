@@ -152,7 +152,10 @@ void main() {
   late NotesRepository repository;
   late BinRemover remover;
 
+  Completer<void>? nextConnectivity;
+
   setUp(() async {
+    nextConnectivity = null;
     directory = await Directory.systemTemp.createTemp('atomic-bin-r45-');
     Hive.init(directory.path);
     box = _HookBox(await Hive.openBox('isolated-notes'));
@@ -163,7 +166,12 @@ void main() {
         box: box,
         api: api,
         vault: vault,
-        checkConnectivity: () async => [ConnectivityResult.wifi]);
+        checkConnectivity: () async {
+          final held = nextConnectivity;
+          nextConnectivity = null;
+          await held?.future;
+          return [ConnectivityResult.wifi];
+        });
     await repository.start();
     remover = BinRemover(repository);
   });
@@ -288,6 +296,26 @@ void main() {
       final remaining = repository.byId(note.id)!;
       expect(remaining.deleted, isTrue);
       expect(remaining.dirty, isFalse);
+      expect(box.containsKey(note.id), isTrue);
+    });
+
+    test('purge cannot use acknowledgement received before sync admission',
+        () async {
+      final note = await pendingTombstone('Synthetic A');
+      final consent = repository.binPurgeConsent([note.id]);
+      final held = Completer<void>();
+      nextConnectivity = held;
+      final purge = repository.deleteForever([note.id], consent: consent);
+      try {
+        expect(nextConnectivity, isNull, reason: 'Purge is waiting on network');
+        expect(await repository.syncNow(instant: true), isTrue);
+        expect(repository.byId(note.id)!.dirty, isFalse);
+      } finally {
+        held.complete();
+      }
+
+      expect(await purge, 0);
+      expect(repository.byId(note.id)!.deleted, isTrue);
       expect(box.containsKey(note.id), isTrue);
     });
 
