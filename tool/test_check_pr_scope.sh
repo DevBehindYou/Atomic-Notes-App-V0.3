@@ -273,6 +273,41 @@ edit_repo() {
   put "$1" lib/database/notes_repository.dart "${repo_src/"$2"/"$3"}"
 }
 
+# The first submission inserts a reader immediately before the existing delete.
+bin_base='class NotesRepository {
+  int get count => 0;
+
+  Future<int> deleteForever(Iterable<String> ids) async => 0;
+
+  int get pendingCount => 0;
+}'
+bin_fixed='class NotesRepository {
+  int get count => 0;
+
+  Object binPurgeConsent(Iterable<String> ids) => ids;
+
+  Future<int> deleteForever(Iterable<String> ids) async => 1;
+
+  int get pendingCount => 0;
+}'
+bin_region_case() {
+  local title=$1 expected=$2 source=$3 dir
+  dir=$(new_repo)
+  put "$dir" lib/database/notes_repository.dart "$bin_base"
+  git_t -C "$dir" commit -q -m 'bin base'
+  git_t -C "$dir" tag -f base >/dev/null
+  put "$dir" lib/database/notes_repository.dart "$source"
+  expect "$title" "$expected" "$dir" bin-purge base
+}
+bin_region_case 'bin gate grants two adjacent members' 0 "$bin_fixed"
+bin_region_case 'bin gate rejects a changed adjacent member' 1 "${bin_fixed/count => 0/count => 1}"
+bin_region_case 'bin gate rejects a changed class name' 1 "${bin_fixed/NotesRepository/OtherRepository}"
+bin_region_case 'bin gate rejects missing consent reader' 1 "$bin_base "
+bin_region_case 'bin gate rejects a new member between the grants' 1 "${bin_fixed/Future<int> deleteForever/$'int outside() => 1;\n\n  Future<int> deleteForever'}"
+bin_region_case 'bin gate rejects a duplicate declaration' 1 "${bin_fixed/Future<int> deleteForever/$'Object binPurgeConsent() => 0;\n\n  Future<int> deleteForever'}"
+case_staged 'bin gate rejects an unrelated file' bin-purge 1 lib/database/note.dart
+case_manifest 'bin gate refuses manifest' bin-purge 2 'test/a_test.dart' lib/database/notes_source.dart
+
 dir=$(region_repo)
 edit_repo "$dir" 'final list = <Note>[];' 'final list = <Note>[]; // edited'
 expect 'visible() body edit' 0 "$dir" state base
