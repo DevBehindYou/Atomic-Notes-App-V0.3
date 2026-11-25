@@ -75,7 +75,7 @@ class _MemoryNotes implements GuestNotesPort {
   }
 }
 
-const _googleLabel = 'Sign in with Google';
+final _googleButton = find.byKey(const ValueKey('login-google-mark'));
 
 void main() {
   late _NoNetwork network;
@@ -110,7 +110,7 @@ void main() {
     loginView(tester);
     expect(GuestFeature.enabled, isFalse);
     await tester.pumpWidget(const MaterialApp(home: LoginPage()));
-    expect(find.text(_googleLabel), findsOneWidget);
+    expect(_googleButton, findsOneWidget);
     expect(find.byKey(const ValueKey('login-guest')), findsNothing);
   });
 
@@ -119,7 +119,7 @@ void main() {
     loginView(tester);
     await tester
         .pumpWidget(const MaterialApp(home: LoginPage(guestEntry: true)));
-    expect(find.text(_googleLabel), findsOneWidget);
+    expect(_googleButton, findsOneWidget);
     expect(find.text('Continue without an account'), findsOneWidget);
   });
 

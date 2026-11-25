@@ -110,10 +110,7 @@ void _mockGoogle(Future<Object?> Function() answer, List<String> calls) {
   });
 }
 
-/// The Google action and the terms link, by their whole label in either
-/// case (the base page uppercases both).
-final Finder _googleButton =
-    find.textContaining(RegExp(r'^sign in with google$', caseSensitive: false));
+final Finder _googleButton = find.byKey(const ValueKey('login-google-face'));
 final Finder _termsLink =
     find.textContaining(RegExp(r'^read (the )?terms', caseSensitive: false));
 
@@ -179,12 +176,15 @@ void main() {
               expect(_pushed.single.arguments,
                   expected == SplashRoute.vaultUnlock ? true : isNull,
                   reason: combo);
-              expect(startup.log, [
-                'vault',
-                'notes',
-                'services',
-                if (expected == SplashRoute.onboarding) 'onboarding-write',
-              ], reason: combo);
+              expect(
+                  startup.log,
+                  [
+                    'vault',
+                    'notes',
+                    'services',
+                    if (expected == SplashRoute.onboarding) 'onboarding-write',
+                  ],
+                  reason: combo);
               await tester.pumpWidget(const SizedBox());
               startup.notesReady.complete();
               expect(startup.discards, 1, reason: combo);
@@ -215,7 +215,8 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     });
 
-    testWidgets('a failed vault check falls back once to sign-in; a retry '
+    testWidgets(
+        'a failed vault check falls back once to sign-in; a retry '
         'from a fresh splash routes normally', (tester) async {
       await tester.runAsync(() => auth.put('hasSeenOnboarding', true));
       final failing = _Startup();
@@ -237,7 +238,8 @@ void main() {
       retry.notesReady.complete();
     });
 
-    testWidgets('a notes start failure during the onboarding write routes '
+    testWidgets(
+        'a notes start failure during the onboarding write routes '
         'once to sign-in', (tester) async {
       await tester.runAsync(() => auth.put('hasSeenOnboarding', false));
       final startup = _Startup();
@@ -281,7 +283,8 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('a session change during the vault check restarts the splash '
+    testWidgets(
+        'a session change during the vault check restarts the splash '
         'once', (tester) async {
       final startup = _Startup();
       await open(tester, startup);
@@ -326,8 +329,7 @@ void main() {
     testWidgets(
         'Google answers: cancel is quiet and retryable, a platform failure '
         'and a missing server code show mapped copy, a late answer does '
-        'nothing',
-        (tester) async {
+        'nothing', (tester) async {
       Future<Object?> Function() answer = () async => null;
       _mockGoogle(() => answer(), calls);
 
@@ -469,7 +471,8 @@ void main() {
       expect(_names, ['/loginpage']);
     });
 
-    testWidgets('offline sign-out failure stays put, then a retry navigates '
+    testWidgets(
+        'offline sign-out failure stays put, then a retry navigates '
         'once', (tester) async {
       var calls = 0;
       await open(tester, () async {
@@ -534,7 +537,13 @@ void main() {
               RegExp(r"^atomic couldn't start$", caseSensitive: false)),
           findsOneWidget);
       expect(find.textContaining('reopen the app'), findsOneWidget);
+      expect(find.text('synthetic startup failure'), findsNothing);
+      final details = find.byKey(const ValueKey('startup-failed-details'));
+      await tester.ensureVisible(details);
+      await tester.tap(details);
+      await tester.pumpAndSettle();
       expect(find.text('synthetic startup failure'), findsOneWidget);
+      expect(tester.takeException(), isNull);
     });
   });
 }

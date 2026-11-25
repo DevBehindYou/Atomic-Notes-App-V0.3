@@ -22,11 +22,9 @@ import 'package:atomic_notes/ui/feedback/atomic_banner.dart';
 import 'package:atomic_notes/ui/mascot/mascot_stage.dart';
 import 'package:atomic_notes/utility/component/atomic_brand.dart';
 import 'package:atomic_notes/utility/component/atomic_splash_mark.dart';
-import 'package:atomic_notes/utility/component/login_button.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show SemanticsData;
 import 'package:flutter/services.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// Every route pushed by a page under test, in order.
@@ -73,7 +71,8 @@ Future<void> _pump(
 }
 
 Color? _scaffoldColor(WidgetTester tester, Finder inside) => tester
-    .widget<Scaffold>(find.ancestor(of: inside, matching: find.byType(Scaffold)))
+    .widget<Scaffold>(
+        find.ancestor(of: inside, matching: find.byType(Scaffold)))
     .backgroundColor;
 
 /// The combined opacity of the entrance fades above [finder].
@@ -133,35 +132,25 @@ void main() {
         expect(subtitle.style!.fontSize, AtomicType.bodyLarge.fontSize);
         expect(subtitle.style!.color, c.textSecondary);
 
-        // Google's dark button on the light theme, light on the dark one.
-        final style = dark ? LoginButton.onDark : LoginButton.onLight;
-        final face = tester.widget<DecoratedBox>(_googleFace).decoration
-            as BoxDecoration;
-        expect(face.color, style.fill);
-        expect((face.border! as Border).top.color, style.stroke);
-        expect(
-            tester.widget<Text>(find.text(LoginPage.googleLabel)).style!.color,
-            style.label);
-        // The official mark, in its own colours, never tinted.
-        final svg = tester.widget<SvgPicture>(
-            find.byKey(const ValueKey('login-google-mark')));
-        expect(svg.colorFilter, isNull);
-        expect(googleMark, contains('#4285F4'));
-        expect(googleMark, contains('#EA4335'));
-        expect(googleMark, contains('#FBBC05'));
-        expect(googleMark, contains('#34A853'));
-
+        final face = tester.getSize(_googleFace);
+        expect(face.height, greaterThanOrEqualTo(48));
+        final image = tester
+            .widget<Image>(find.byKey(const ValueKey('login-google-mark')));
+        expect((image.image as AssetImage).assetName,
+            'assets/google-sign-in-android-${dark ? 'light' : 'dark'}.png');
+        expect(image.color, isNull);
+        expect(image.fit, BoxFit.contain);
         final link = tester.widget<Text>(find.text(LoginPage.termsLink));
         expect(link.style!.color, c.infoText);
         expect(find.text(LoginPage.termsLine), findsOneWidget);
-        // The editorial copy is gone; the Guest entry stays gated.
         expect(find.text('WELCOME'), findsNothing);
         expect(find.text('SIGN IN WITH GOOGLE'), findsNothing);
         expect(_guest, findsNothing);
       });
     }
 
-    testWidgets('success navigates once to the splash; a second tap in the '
+    testWidgets(
+        'success navigates once to the splash; a second tap in the '
         'same frame does not sign in twice', (tester) async {
       final signIn = _SignIn();
       await _pump(tester, LoginPage(signIn: signIn.call));
@@ -296,9 +285,7 @@ void main() {
       expect(terms.label, LoginPage.termsLink);
       expect(terms.flagsCollection.isButton, isTrue);
       expect(find.bySemanticsLabel(LoginPage.title), findsOneWidget);
-      expect(
-          _node(tester, find.text(LoginPage.title))
-              .flagsCollection.isHeader,
+      expect(_node(tester, find.text(LoginPage.title)).flagsCollection.isHeader,
           isTrue);
       expect(find.bySemanticsLabel('Atomic Notes'), findsOneWidget);
       semantics.dispose();
@@ -372,16 +359,14 @@ void main() {
         await _pump(tester, const SplashView(), theme: theme);
         final c = theme.extension<AtomicColors>()!;
         expect(_scaffoldColor(tester, status), c.canvas);
-        expect(
-            tester.getSize(find.byKey(const ValueKey('splash-mark'))),
+        expect(tester.getSize(find.byKey(const ValueKey('splash-mark'))),
             const Size(120, 120));
         expect(find.byType(AtomicSplashMark), findsOneWidget);
         final text = tester.widget<Text>(status);
         expect(text.data, 'Getting things ready…');
         expect(text.style!.fontSize, AtomicType.bodySmall.fontSize);
         expect(text.style!.color, c.textSecondary);
-        expect(_node(tester, status).flagsCollection.isLiveRegion,
-            isTrue);
+        expect(_node(tester, status).flagsCollection.isLiveRegion, isTrue);
         expect(find.text('INITIALISING · CHECKING SESSION'), findsNothing);
         expect(find.byKey(const ValueKey('splash-version')), findsOneWidget);
         semantics.dispose();
@@ -439,11 +424,7 @@ void main() {
 
       testWidgets('fits 320 dp at 2.0 text ($name)', (tester) async {
         await _pump(tester, const LoggedOutScreen(),
-            theme: theme,
-            width: 320,
-            height: 640,
-            textScale: 2,
-            settle: false);
+            theme: theme, width: 320, height: 640, textScale: 2, settle: false);
         await tester.pump();
         expect(tester.takeException(), isNull);
         _fits(tester, signIn, 320);
@@ -474,7 +455,8 @@ void main() {
       await tester.pump();
       expect(
           _node(tester, find.text(LoggedOutScreen.title))
-              .flagsCollection.isHeader,
+              .flagsCollection
+              .isHeader,
           isTrue);
       final button = _node(tester, signIn);
       expect(button.label, LoggedOutScreen.signInLabel);
@@ -531,7 +513,8 @@ void main() {
       });
     }
 
-    testWidgets('progress uses the existing text; failure is a danger banner '
+    testWidgets(
+        'progress uses the existing text; failure is a danger banner '
         'in a live region', (tester) async {
       final semantics = tester.ensureSemantics();
       final gate = Completer<void>();
