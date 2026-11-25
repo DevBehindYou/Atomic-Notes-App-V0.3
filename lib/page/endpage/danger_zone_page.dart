@@ -26,6 +26,7 @@ class DangerZonePage extends StatelessWidget {
   Widget build(BuildContext context) {
     final store = source ?? NotesRepository.instance;
     return BlocProvider(
+      key: ObjectKey(store),
       create: (_) => DangerZoneCubit(source: store),
       child: _DangerZoneView(source: store),
     );
@@ -381,14 +382,26 @@ class _WipeConfirmationState extends State<_WipeConfirmation> {
           ),
         ],
         const SizedBox(height: AtomicSpace.x4),
+        Text('Slide to ${scope.label.toLowerCase()}',
+            style: AtomicType.labelLarge.copyWith(color: c.textPrimary)),
+        const SizedBox(height: AtomicSpace.x2),
         IgnorePointer(
           ignoring: _locked,
           child: SlideToConfirm(
             label: scope.label.toLowerCase(),
             target: scope,
+            allowAlternativeActivation: false,
             onConfirmed: _confirm,
           ),
         ),
+        if (_locked) ...[
+          const SizedBox(height: AtomicSpace.x2),
+          Semantics(
+            liveRegion: true,
+            child: Text('Removing notes…',
+                style: AtomicType.bodyMedium.copyWith(color: c.textPrimary)),
+          ),
+        ],
         const SizedBox(height: AtomicSpace.x2),
         AtomicButton.text(
           label: 'Review removal',

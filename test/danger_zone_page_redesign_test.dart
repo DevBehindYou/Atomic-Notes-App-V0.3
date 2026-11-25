@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:atomic_notes/database/notes_source.dart';
 import 'package:atomic_notes/database/sync_report.dart';
 import 'package:atomic_notes/page/endpage/danger_zone_page.dart';
+import 'package:atomic_notes/ui/buttons/atomic_button.dart';
 import 'package:atomic_notes/ui/motion/slide_to_confirm.dart';
 import 'package:atomic_notes/ui/overlays/atomic_dialog.dart';
 import 'package:flutter/material.dart';
@@ -49,12 +50,26 @@ class _Source extends FakeNotesSource implements SyncReportSource {
   }
 }
 
-Future<void> _open(WidgetTester tester, _Source source, String label) async {
-  tester.view.physicalSize = const Size(360, 1000);
+Future<void> _open(
+  WidgetTester tester,
+  _Source source,
+  String label, {
+  Size screen = const Size(360, 1000),
+  TextScaler textScaler = TextScaler.noScaling,
+}) async {
+  tester.view.physicalSize = screen;
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
-  await tester.pumpWidget(MaterialApp(home: DangerZonePage(source: source)));
+  await tester.pumpWidget(
+    MaterialApp(
+      builder: (context, child) => MediaQuery(
+        data: MediaQuery.of(context).copyWith(textScaler: textScaler),
+        child: child!,
+      ),
+      home: DangerZonePage(source: source),
+    ),
+  );
   await tester.ensureVisible(find.text(label));
   await tester.pumpAndSettle();
   await tester.tap(find.text(label));
@@ -63,6 +78,14 @@ Future<void> _open(WidgetTester tester, _Source source, String label) async {
 
 Finder _dialogText(String label) => find.descendant(
     of: find.byType(AtomicDialog<void>), matching: find.text(label));
+
+Future<void> _reviewRemoval(WidgetTester tester) async {
+  final review = _dialogText(_review);
+  await tester.ensureVisible(review);
+  await tester.pumpAndSettle();
+  await tester.tap(review);
+  await tester.pumpAndSettle();
+}
 
 void main() {
   testWidgets('review and removal are separate accessible actions',
@@ -89,6 +112,108 @@ void main() {
     expect(source.binNotes, isEmpty);
     expect(find.text(_localSuccess), findsOneWidget);
     semantics.dispose();
+  });
+
+  testWidgets('the drag thumb exposes no alternate confirmation action',
+      (tester) async {
+    final semantics = tester.ensureSemantics();
+    try {
+      final source = _Source();
+      await _open(tester, source, _cloud);
+      final thumb = find.byKey(SlideToConfirm.thumbKey);
+      await tester.ensureVisible(thumb);
+      await tester.pumpAndSettle();
+
+      await tester.tap(thumb);
+      await tester.pump();
+      expect(find.text(SlideToConfirm.armedText), findsNothing);
+      await tester.tap(thumb);
+      await tester.pumpAndSettle();
+      expect(source.cloudCalls, 0);
+
+      final slide = find.bySemanticsLabel('Slide to remove cloud notes');
+      expect(tester.getSemantics(slide),
+          isSemantics(isButton: false, hasTapAction: false));
+      final slideFocus = Focus.of(tester.element(thumb));
+      slideFocus.requestFocus();
+      await tester.pump();
+      expect(slideFocus.hasFocus, isFalse);
+    } finally {
+      semantics.dispose();
+    }
+  });
+
+  for (final drag in [false, true]) {
+    testWidgets('removal progress is announced for drag = $drag',
+        (tester) async {
+      final semantics = tester.ensureSemantics();
+      try {
+        final source = _Source()..cloudGate = Completer<WipeOutcome>();
+        await _open(tester, source, _cloud);
+        if (drag) {
+          final thumb = find.byKey(SlideToConfirm.thumbKey);
+          await tester.ensureVisible(thumb);
+          await tester.pumpAndSettle();
+          await tester.drag(thumb, const Offset(600, 0));
+        } else {
+          await _reviewRemoval(tester);
+          final confirm = _dialogText(_cloud);
+          await tester.ensureVisible(confirm);
+          await tester.pumpAndSettle();
+          await tester.tap(confirm);
+        }
+        await tester.pump();
+
+        final progress = find.text('Removing notes…');
+        await tester.ensureVisible(progress);
+        await tester.pump();
+        expect(tester.getSemantics(progress), isSemantics(isLiveRegion: true));
+        expect(source.cloudCalls, 1);
+        source.cloudGate!.complete(const WipeOutcome(false, 'Not signed in.'));
+        await tester.pumpAndSettle();
+        expect(progress, findsNothing);
+        expect(find.text('Not signed in.'), findsOneWidget);
+      } finally {
+        semantics.dispose();
+      }
+    });
+  }
+
+  testWidgets('large text keeps both confirmation steps and Cancel reachable',
+      (tester) async {
+    final source = _Source(notes: [syncedNote('local')..touch()]);
+    await _open(
+      tester,
+      source,
+      _local,
+      screen: const Size(320, 480),
+      textScaler: const TextScaler.linear(2),
+    );
+    final instruction = find.text('Slide to remove local notes');
+    await tester.ensureVisible(instruction);
+    await tester.pumpAndSettle();
+    expect(tester.widget<Text>(instruction).maxLines, isNull);
+
+    final review = find.widgetWithText(AtomicButton, _review);
+    await tester.ensureVisible(review);
+    await tester.pumpAndSettle();
+    expect(tester.getSize(review).height, greaterThanOrEqualTo(48));
+    await tester.tap(review);
+    await tester.pumpAndSettle();
+
+    final confirm = _dialogText(_local);
+    await tester.ensureVisible(confirm);
+    await tester.pumpAndSettle();
+    expect(confirm.hitTestable(), findsOneWidget);
+    final cancel = find.widgetWithText(AtomicButton, 'Cancel');
+    await tester.ensureVisible(cancel);
+    await tester.pumpAndSettle();
+    expect(tester.getSize(cancel).height, greaterThanOrEqualTo(48));
+    await tester.tap(cancel);
+    await tester.pumpAndSettle();
+    expect(source.localCalls, 0);
+    expect(find.byType(SlideToConfirm), findsNothing);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('pending edits and deletions are described as unsynced changes',
@@ -127,8 +252,7 @@ void main() {
     final source = _Source(notes: [syncedNote('device')])
       ..cloudGate = Completer<WipeOutcome>();
     await _open(tester, source, _cloud);
-    await tester.tap(find.text(_review));
-    await tester.pumpAndSettle();
+    await _reviewRemoval(tester);
     final confirm = _dialogText(_cloud);
     await tester.ensureVisible(confirm);
     await tester.tap(confirm);
@@ -162,8 +286,7 @@ void main() {
       (tester) async {
     final source = _Source();
     await _open(tester, source, _cloud);
-    await tester.tap(find.text(_review));
-    await tester.pumpAndSettle();
+    await _reviewRemoval(tester);
     source.session++;
 
     final confirm = _dialogText(_cloud);
