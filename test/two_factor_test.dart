@@ -2,10 +2,28 @@
 // handled. The keystore and clock are replaced, so nothing here touches the
 // device.
 
+import 'dart:async';
+
 import 'package:atomic_notes/security/two_factor.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'support/two_factor_fakes.dart';
+
+class _PausedVerificationStorage extends FakeTwoFactorStorage {
+  final verificationWrite = Completer<void>();
+  final resume = Completer<void>();
+  bool pauseNextWrite = false;
+
+  @override
+  Future<void> writeState(String account, String json) async {
+    if (pauseNextWrite) {
+      pauseNextWrite = false;
+      verificationWrite.complete();
+      await resume.future;
+    }
+    await super.writeState(account, json);
+  }
+}
 
 void main() {
   late FakeTwoFactorStorage storage;
@@ -16,6 +34,46 @@ void main() {
     storage = FakeTwoFactorStorage();
     clock = TestClock();
     tf = makeTwoFactor(storage, clock);
+  });
+
+  group('verified mutations belong to the initiating session', () {
+    for (final action in ['disable', 'regenerate']) {
+      for (final switchAccount in [true, false]) {
+        test('$action rejects retired verification (switch: $switchAccount)',
+            () async {
+          final store = _PausedVerificationStorage();
+          var user = 'account-a';
+          var revision = 1;
+          final service = TwoFactor(
+            storage: store,
+            account: () => user,
+            sessionRevision: () => revision,
+            clock: clock.call,
+          );
+          final first = await turnOn(service, clock);
+          user = 'account-b';
+          await turnOn(service, clock);
+          final otherState = store.state['account-b'];
+          user = 'account-a';
+          clock.advance(const Duration(seconds: 30));
+          final code = await codeAt(first.secret, clock.now);
+          store.pauseNextWrite = true;
+          final operation = action == 'disable'
+              ? service.disable(code)
+              : service.regenerateRecoveryCodes(code);
+          await store.verificationWrite.future;
+          if (switchAccount) user = 'account-b';
+          revision++;
+          store.resume.complete();
+
+          final result = await operation;
+          expect(result.result, TwoFactorResult.unavailable);
+          expect(result.codes, isNull);
+          expect(store.armed, containsAll(['account-a', 'account-b']));
+          expect(store.state['account-b'] == otherState, isTrue);
+        });
+      }
+    }
   });
 
   group('setup', () {
@@ -56,8 +114,8 @@ void main() {
       final setup = tf.beginSetup();
       tf.cancelSetup();
 
-      expect(await tf.confirmSetup(await codeAt(setup.secret, clock.now)),
-          isNull);
+      expect(
+          await tf.confirmSetup(await codeAt(setup.secret, clock.now)), isNull);
       expect(tf.isArmed, isFalse);
       expect(storage.state, isEmpty);
     });
@@ -238,8 +296,8 @@ void main() {
 
       expect(await tf.hasVerificationData(), isFalse);
       expect(await tf.recoveryCodesLeft(), isNull);
-      expect((await tf.check(on.codes.first)).result,
-          TwoFactorResult.unavailable);
+      expect(
+          (await tf.check(on.codes.first)).result, TwoFactorResult.unavailable);
       // The flag is still on, which is what tells this apart from "never on".
       expect(tf.isArmed, isTrue);
 
@@ -264,7 +322,7 @@ void main() {
 
     expect(signedOut.isArmed, isFalse);
     expect(await signedOut.hasVerificationData(), isFalse);
-    expect((await signedOut.check('123456')).result,
-        TwoFactorResult.unavailable);
+    expect(
+        (await signedOut.check('123456')).result, TwoFactorResult.unavailable);
   });
 }
