@@ -263,6 +263,37 @@ void main() {
     expect(_k('tf-setup-codes'), findsNothing);
   });
 
+  testWidgets('a previous setup Copy cannot copy or dismiss the next setup',
+      (tester) async {
+    final messenger = tester.binding.defaultBinaryMessenger;
+    var copies = 0;
+    messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'Clipboard.setData') copies++;
+      return null;
+    });
+    addTearDown(() =>
+        messenger.setMockMethodCallHandler(SystemChannels.platform, null));
+
+    var account = 'account-a';
+    await _pump(tester, _HeldTwoFactor(), identity: () => account);
+    await _tap(tester, _k('tf-setup-begin'));
+    final previousSecret = _secretShown(tester);
+    final previousCopy = _button(tester, _k('tf-setup-copy-key')).onPressed!;
+
+    account = 'account-b';
+    tester.view.physicalSize = const Size(810, 1720);
+    await _settle(tester);
+    await _tap(tester, _k('tf-setup-begin'));
+    expect(previousSecret == _secretShown(tester), isFalse);
+
+    previousCopy();
+    await _settle(tester);
+    expect(copies, 0);
+    expect(_k('tf-setup-steps'), findsOneWidget);
+    await _tap(tester, _k('tf-setup-copy-key'));
+    expect(copies, 1);
+  });
+
   group('overview', () {
     testWidgets('off: title, status, the way in and the notes', (tester) async {
       await _pump(tester, _HeldTwoFactor());

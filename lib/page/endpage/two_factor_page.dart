@@ -386,8 +386,9 @@ class _TwoFactorPageState extends State<TwoFactorPage> {
       };
 
   Future<void> _copy(String text, String done, Object? owner) async {
+    if (!mounted) return;
     if (_identity() != owner) {
-      _stopForSignInChange();
+      if (_sensitiveStageRetired) _stopForSignInChange();
       return;
     }
     await Clipboard.setData(ClipboardData(text: text));
@@ -734,6 +735,7 @@ class _TwoFactorPageState extends State<TwoFactorPage> {
   Widget _setupView() {
     final c = context.colors;
     final TwoFactorSetup setup = _setup!;
+    final owner = _setupOwner;
     return Column(
       key: const ValueKey('tf-setup-steps'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -777,8 +779,11 @@ class _TwoFactorPageState extends State<TwoFactorPage> {
                       icon: AtomicIcons.copy,
                       onCard: true,
                       size: AtomicButtonSize.compact,
-                      onPressed: () =>
-                          _copy(setup.secret, 'Setup key copied', _setupOwner),
+                      onPressed: () {
+                        if (_stage != _Stage.setup || !identical(_setup, setup))
+                          return;
+                        _copy(setup.secret, 'Setup key copied', owner);
+                      },
                     ),
                   ],
                 ),
@@ -834,17 +839,19 @@ class _TwoFactorPageState extends State<TwoFactorPage> {
 
   Widget _codesView() {
     final c = context.colors;
+    final codes = _codes;
+    final owner = _codesOwner;
     final rows = <Widget>[];
-    for (var i = 0; i < _codes.length; i += 2) {
+    for (var i = 0; i < codes.length; i += 2) {
       rows.add(Padding(
         padding: EdgeInsets.only(top: i == 0 ? 0 : AtomicSpace.x3),
         child: Row(
           children: [
             for (var j = i; j < i + 2; j++)
               Expanded(
-                child: j < _codes.length
+                child: j < codes.length
                     ? SelectableText(
-                        _codes[j],
+                        codes[j],
                         style: AtomicType.mono
                             .copyWith(letterSpacing: 1.4, color: c.textPrimary),
                       )
@@ -882,8 +889,10 @@ class _TwoFactorPageState extends State<TwoFactorPage> {
           key: const ValueKey('tf-setup-copy-codes'),
           label: TwoFactorPage.copyAllLabel,
           icon: AtomicIcons.copy,
-          onPressed: () =>
-              _copy(_codes.join('\n'), 'Recovery codes copied', _codesOwner),
+          onPressed: () {
+            if (_stage != _Stage.codes || !identical(_codes, codes)) return;
+            _copy(codes.join('\n'), 'Recovery codes copied', owner);
+          },
           size: AtomicButtonSize.large,
           expand: true,
         ),
