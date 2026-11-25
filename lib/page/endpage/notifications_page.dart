@@ -143,8 +143,11 @@ class _NotificationsPageState extends State<NotificationsPage> {
       {required bool markAllBelow}) {
     final c = context.colors;
     if (state.loading && state.items.isEmpty) {
-      return const Center(
-        child: ProgressRing(semanticsLabel: 'Loading notifications'),
+      return Center(
+        child: ProgressRing(
+          semanticsLabel: 'Loading notifications',
+          stationary: AtomicMotion.reduced(context),
+        ),
       );
     }
     final margin = AtomicSpace.screenMargin(MediaQuery.sizeOf(context).width);

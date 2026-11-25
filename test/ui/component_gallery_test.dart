@@ -490,6 +490,15 @@ void main() {
   testWidgets('screen readers hear every demo, with its state', (tester) async {
     final handle = tester.ensureSemantics();
     await _pumpGallery(tester);
+    final iconButtons = tester
+        .widgetList<AtomicIconButton>(find.byType(AtomicIconButton))
+        .toList();
+    expect(iconButtons, isNotEmpty);
+    for (final button in iconButtons) {
+      final label = button.semanticsLabel ?? button.tooltip;
+      expect(label.trim(), isNotEmpty);
+      expect(await _shown(tester, label), isSemantics(isButton: true));
+    }
     final cases = <String, Matcher>{
       'Dark theme': isSemantics(isButton: true, hasTapAction: true),
       'Disabled':

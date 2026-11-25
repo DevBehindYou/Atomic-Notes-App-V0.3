@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:atomic_notes/theme/app_tokens.dart';
 import 'package:atomic_notes/theme/editorial.dart';
+import 'package:atomic_notes/ui/motion/atomic_haptics.dart';
 import 'package:flutter/material.dart';
 
 /// A confirmation that cannot happen by accident: the user drags the thumb
@@ -49,6 +51,7 @@ class _SlideToConfirmState extends State<SlideToConfirm> {
         _dragging = false;
         _running = true;
       });
+      unawaited(AtomicHaptics.play(AtomicHaptic.medium));
       try {
         await widget.onConfirmed();
       } finally {
@@ -126,7 +129,8 @@ class _SlideToConfirmState extends State<SlideToConfirm> {
                           : (details) => setState(() {
                                 _offset = math.max(
                                     0.0,
-                                    math.min(travel, _offset + details.delta.dx));
+                                    math.min(
+                                        travel, _offset + details.delta.dx));
                               }),
                       onHorizontalDragEnd:
                           _running ? null : (_) => _release(travel),

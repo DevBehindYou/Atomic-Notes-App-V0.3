@@ -16,31 +16,61 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 /// or Back dismisses it too; it scrolls instead of overflowing.
 Future<void> showEnergyPopup(BuildContext context) {
   final c = context.colors;
-  final reduced = AtomicMotion.reduced(context);
   return showGeneralDialog(
     context: context,
     barrierDismissible: true,
     barrierLabel: 'Dismiss',
     barrierColor: c.scrim,
     transitionDuration:
-        reduced ? AtomicMotion.reducedFade : const Duration(milliseconds: 200),
+        AtomicMotion.fade(context, const Duration(milliseconds: 200)),
     pageBuilder: (ctx, a1, a2) => const _EnergyPopup(),
-    transitionBuilder: (ctx, anim, sec, child) {
-      final curved = CurvedAnimation(
-          parent: anim,
-          curve: AtomicMotion.standardCurve,
-          reverseCurve: AtomicMotion.exitCurve);
-      return FadeTransition(
-        opacity: curved,
-        child: reduced
-            ? child
-            : ScaleTransition(
-                scale: Tween<double>(begin: 0.92, end: 1).animate(curved),
-                child: child,
-              ),
-      );
-    },
+    transitionBuilder: (_, animation, __, child) =>
+        _EnergyPopupTransition(animation: animation, child: child),
   );
+}
+
+class _EnergyPopupTransition extends StatefulWidget {
+  const _EnergyPopupTransition({required this.animation, required this.child});
+
+  final Animation<double> animation;
+  final Widget child;
+
+  @override
+  State<_EnergyPopupTransition> createState() => _EnergyPopupTransitionState();
+}
+
+class _EnergyPopupTransitionState extends State<_EnergyPopupTransition> {
+  late final CurvedAnimation _fade = CurvedAnimation(
+    parent: widget.animation,
+    curve: AtomicMotion.standardCurve,
+    reverseCurve: AtomicMotion.exitCurve,
+  );
+  late final Animation<double> _scale =
+      Tween<double>(begin: 0.92, end: 1).animate(_fade);
+  bool _skipScale = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Once interrupted, keep this popup at rest even if motion is reenabled
+    // before its existing fade ends.
+    if (AtomicMotion.reduced(context)) _skipScale = true;
+  }
+
+  @override
+  void dispose() {
+    _fade.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => FadeTransition(
+        opacity: _fade,
+        child: ScaleTransition(
+          scale: _skipScale ? const AlwaysStoppedAnimation(1) : _scale,
+          child: widget.child,
+        ),
+      );
 }
 
 class _EnergyPopup extends StatelessWidget {

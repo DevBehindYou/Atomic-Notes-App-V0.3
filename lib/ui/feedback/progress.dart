@@ -11,24 +11,35 @@ class ProgressRing extends StatelessWidget {
     this.value,
     this.size = 24,
     this.semanticsLabel,
+    this.stationary = false,
   });
 
   final double? value;
   final double size;
   final String? semanticsLabel;
 
+  /// Shows a static arc for indeterminate progress without announcing a value.
+  final bool stationary;
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    final staticArc = stationary && value == null;
+    final ring = CircularProgressIndicator(
+      value: staticArc ? 0.25 : value,
+      strokeWidth: 2.5,
+      color: c.accent,
+      backgroundColor: c.surfaceInset,
+      semanticsLabel: semanticsLabel,
+    );
     return SizedBox.square(
       dimension: size,
-      child: CircularProgressIndicator(
-        value: value,
-        strokeWidth: 2.5,
-        color: c.accent,
-        backgroundColor: c.surfaceInset,
-        semanticsLabel: semanticsLabel,
-      ),
+      child: staticArc
+          ? Semantics(
+              label: semanticsLabel,
+              child: ExcludeSemantics(child: ring),
+            )
+          : ring,
     );
   }
 }
