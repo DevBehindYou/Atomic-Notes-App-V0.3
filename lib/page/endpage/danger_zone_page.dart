@@ -1,264 +1,423 @@
 import 'package:atomic_notes/database/notes_repository.dart';
 import 'package:atomic_notes/database/notes_source.dart';
+import 'package:atomic_notes/database/sync_report.dart';
 import 'package:atomic_notes/state/danger_zone/danger_zone_cubit.dart';
-import 'package:atomic_notes/theme/app_tokens.dart';
-import 'package:atomic_notes/theme/editorial.dart';
-import 'package:atomic_notes/utility/component/my_appbar.dart';
-import 'package:atomic_notes/utility/component/my_snackbar.dart';
-import 'package:atomic_notes/utility/component/slide_confirm_dialog.dart';
+import 'package:atomic_notes/theme/atomic_colors.dart';
+import 'package:atomic_notes/theme/atomic_icons.dart';
+import 'package:atomic_notes/theme/atomic_tokens.dart';
+import 'package:atomic_notes/theme/atomic_type.dart';
+import 'package:atomic_notes/ui/buttons/atomic_button.dart';
+import 'package:atomic_notes/ui/cards/atomic_card.dart';
+import 'package:atomic_notes/ui/feedback/atomic_banner.dart';
+import 'package:atomic_notes/ui/headers/page_header.dart';
+import 'package:atomic_notes/ui/motion/slide_to_confirm.dart';
+import 'package:atomic_notes/ui/overlays/atomic_dialog.dart';
+import 'package:atomic_notes/ui/overlays/atomic_snack_bar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
-/// Danger Zone: the two ways to destroy notes, each behind a slide-to-confirm.
-///
-/// The two are deliberately independent. Wiping the cloud never touches this
-/// device, and wiping this device never touches the cloud.
+/// Confirms removal from either cloud storage or this device.
 class DangerZonePage extends StatelessWidget {
-  /// [source] is only given by tests; the app uses the real notes store.
   const DangerZonePage({super.key, this.source});
 
   final NotesSource? source;
 
   @override
   Widget build(BuildContext context) {
-    return BlocProvider<DangerZoneCubit>(
-      create: (_) =>
-          DangerZoneCubit(source: source ?? NotesRepository.instance),
-      child: const _DangerZoneView(),
+    final store = source ?? NotesRepository.instance;
+    return BlocProvider(
+      key: ObjectKey(store),
+      create: (_) => DangerZoneCubit(source: store),
+      child: _DangerZoneView(source: store),
     );
   }
 }
 
+enum _WipeScope {
+  cloud(
+    label: 'Remove cloud notes',
+    title: 'Remove cloud notes?',
+    icon: AtomicIcons.cloudOff,
+    removes: 'This account’s cloud-note records and its existing app-managed '
+        'note files, which move to Google Drive trash.',
+    keeps: 'Notes on this device and other devices, and your account.',
+    body: 'This removes this account’s cloud-note records and moves its '
+        'existing app-managed note files to Google Drive trash. Notes on this '
+        'device and other devices are kept. A device can upload its notes '
+        'again later.',
+    caution: 'This doesn’t delete your account or all account history. You '
+        'can’t undo this cloud-removal action inside Atomic Notes. Google '
+        'Drive manages files in its trash.',
+    success: 'Cloud-note records removed. Device notes were kept.',
+    unconfirmed: 'Cloud removal wasn’t confirmed. Some files may already have '
+        'moved to Drive trash. Device notes were kept. Check your connection '
+        'and retry the same action.',
+  ),
+  local(
+    label: 'Remove local notes',
+    title: 'Remove notes from this device?',
+    icon: AtomicIcons.deviceMobile,
+    removes: 'Notes stored in this app on this device, including its local '
+        'Recycle Bin.',
+    keeps: 'Your account, settings and existing cloud copies. Available cloud '
+        'notes can download again after a successful sync.',
+    body: 'This removes notes stored in this app on this device, including '
+        'its local Recycle Bin. Your account, settings and existing cloud '
+        'copies are kept. Available cloud notes can download again after a '
+        'successful sync.',
+    caution: 'Notes or changes that have no other copy cannot be recovered '
+        'after removal.',
+    success: 'Local notes removed. Existing cloud copies, your account and '
+        'settings were kept.',
+    unconfirmed: 'Local removal wasn’t confirmed. Check your notes and local '
+        'Recycle Bin before trying again.',
+  );
+
+  const _WipeScope({
+    required this.label,
+    required this.title,
+    required this.icon,
+    required this.removes,
+    required this.keeps,
+    required this.body,
+    required this.caution,
+    required this.success,
+    required this.unconfirmed,
+  });
+
+  final String label;
+  final String title;
+  final IconData icon;
+  final String removes;
+  final String keeps;
+  final String body;
+  final String caution;
+  final String success;
+  final String unconfirmed;
+}
+
 class _DangerZoneView extends StatefulWidget {
-  const _DangerZoneView();
+  const _DangerZoneView({required this.source});
+
+  final NotesSource source;
 
   @override
   State<_DangerZoneView> createState() => _DangerZoneViewState();
 }
 
 class _DangerZoneViewState extends State<_DangerZoneView> {
-  void _confirm({
-    required String title,
-    required String slideLabel,
-    required List<String> consequences,
-    required Future<WipeOutcome> Function() run,
-    String? warning,
-  }) {
-    showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) => SlideConfirmDialog(
-        title: title,
-        slideLabel: slideLabel,
-        consequences: consequences,
-        warning: warning,
-        onConfirmed: () async {
-          final outcome = await run();
-          if (dialogContext.mounted) Navigator.pop(dialogContext);
-          if (mounted) {
-            MySnackBar(text: outcome.message, sec: 4000).showMySnackBar(context);
-          }
-        },
-      ),
-    );
+  static const _title = 'Danger Zone';
+  final _scroll = ScrollController();
+  final _titleAway = ValueNotifier(false);
+  bool _confirming = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _scroll.addListener(() => _titleAway.value =
+        _scroll.hasClients && _scroll.offset > AtomicSpace.x10);
+  }
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    _titleAway.dispose();
+    super.dispose();
+  }
+
+  void _show(String text, {bool error = false}) =>
+      AtomicSnackBar(text: text, millis: 4000, error: error).show(context);
+
+  Future<void> _confirm(_WipeScope scope) async {
+    if (_confirming) return;
+    _confirming = true;
+    final source = widget.source;
+    final reports =
+        source is SyncReportSource ? source as SyncReportSource : null;
+    final identity = reports?.syncReportIdentity;
+    bool current() =>
+        mounted &&
+        identical(source, widget.source) &&
+        reports?.syncReportIdentity == identity;
+    final cubit = context.read<DangerZoneCubit>();
+    final pending = cubit.state.unsynced;
+    final local = scope == _WipeScope.local;
+    try {
+      await showAtomicDialog<void>(
+        context: context,
+        title: scope.title,
+        body: scope.body,
+        icon: scope.icon,
+        destructive: true,
+        barrierDismissible: false,
+        actions: const [],
+        content: _WipeConfirmation(
+          scope: scope,
+          pending: local ? pending : 0,
+          onConfirmed: () async {
+            if (!current()) {
+              if (mounted) {
+                _show('The notes session changed. Open the removal again.',
+                    error: true);
+              }
+              return;
+            }
+            if (local && source.pendingCount != pending) {
+              _show('Pending note changes changed. Review the removal again.',
+                  error: true);
+              return;
+            }
+            WipeOutcome? outcome;
+            try {
+              outcome = await (local ? cubit.wipeLocal() : cubit.wipeCloud());
+            } catch (_) {
+              // An exception can arrive after part of the removal has run.
+            }
+            if (!current()) return;
+            if (outcome?.ok == true) {
+              _show(scope.success);
+            } else {
+              final message = outcome?.message;
+              final knownCloudRefusal = !local &&
+                  (message == 'Not signed in.' ||
+                      message ==
+                          'Finish the pending logout before wiping cloud notes.');
+              _show(knownCloudRefusal ? message! : scope.unconfirmed,
+                  error: true);
+            }
+          },
+        ),
+      );
+    } finally {
+      _confirming = false;
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    final c = context.colors;
+    final margin = AtomicSpace.screenMargin(MediaQuery.sizeOf(context).width);
     return Scaffold(
-      backgroundColor: AppColors.paper,
-      appBar: const MyAppBar(text: 'Danger Zone'),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(
-            AppSpace.md, AppSpace.lg, AppSpace.md, AppSpace.xl),
-        child: BlocBuilder<DangerZoneCubit, DangerZoneState>(
-          builder: (context, state) {
-            final cubit = context.read<DangerZoneCubit>();
-            final int onDevice = state.onDevice;
-            final int unsynced = state.unsynced;
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const _HazardStrip(),
-                const SizedBox(height: AppSpace.md),
-                const EditorialHeading('Two actions. No undo.',
-                    style: AppType.headlineMd),
-                const SizedBox(height: AppSpace.xs),
-                const Text(
-                  'Each one asks you to slide across a bar before it runs. '
-                  'They are independent: one never touches the other.',
-                  style: AppType.bodySm,
+      backgroundColor: c.canvas,
+      body: SafeArea(
+        bottom: false,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            ValueListenableBuilder<bool>(
+              valueListenable: _titleAway,
+              builder: (context, away, _) =>
+                  AtomicPageHeader(title: _title, showTitle: away),
+            ),
+            Expanded(
+              child: ListView(
+                controller: _scroll,
+                padding: EdgeInsets.only(
+                  bottom: AtomicSpace.x8 + MediaQuery.paddingOf(context).bottom,
                 ),
-                const SizedBox(height: AppSpace.lg),
-                _WipeCard(
-                  scope: 'Cloud',
-                  icon: Icons.cloud_off_outlined,
-                  title: 'Wipe cloud notes',
-                  removes:
-                      'Every note stored in your Google Drive folder '
-                      '"My-Atomic-Notes" (moved to your Drive trash) and the '
-                      'note records held by the Atomic server.',
-                  keeps: 'Every note on this device, your account, your '
-                      'encryption setup and your energy.',
-                  buttonLabel: 'Wipe cloud notes',
-                  onTap: () => _confirm(
-                    title: 'Wipe cloud notes',
-                    slideLabel: 'wipe cloud',
-                    consequences: const [
-                      'All notes in your cloud storage are removed. Their '
-                          'files move to your Google Drive trash.',
-                      'Notes on this device are not touched.',
-                      'To put them back in the cloud later, edit a note or '
-                          'use "Upload all" in Cloud Notes.',
-                    ],
-                    run: cubit.wipeCloud,
+                children: [
+                  const PageTitle(_title),
+                  Padding(
+                    padding:
+                        EdgeInsets.fromLTRB(margin, AtomicSpace.x4, margin, 0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        const AtomicBanner(
+                          tone: BannerTone.danger,
+                          icon: AtomicIcons.alertTriangle,
+                          title: 'Two actions. No undo.',
+                          body:
+                              'Cloud removal and device removal affect different '
+                              'copies of your notes. Review the consequences '
+                              'before you confirm.',
+                        ),
+                        for (final scope in _WipeScope.values) ...[
+                          const SizedBox(height: AtomicSpace.x3),
+                          _WipeCard(
+                              scope: scope, onPressed: () => _confirm(scope)),
+                        ],
+                      ],
+                    ),
                   ),
-                ),
-                const SizedBox(height: AppSpace.md),
-                _WipeCard(
-                  scope: 'This device',
-                  icon: Icons.phone_android_outlined,
-                  title: 'Wipe local notes',
-                  removes: onDevice == 1
-                      ? '1 note stored on this device.'
-                      : '$onDevice notes stored on this device.',
-                  keeps: 'Every note in the cloud, your account and your '
-                      'settings. Cloud notes download again on the next sync.',
-                  buttonLabel: 'Wipe local notes',
-                  onTap: () => _confirm(
-                    title: 'Wipe local notes',
-                    slideLabel: 'wipe local',
-                    consequences: [
-                      onDevice == 1
-                          ? '1 note is removed from this device.'
-                          : '$onDevice notes are removed from this device.',
-                      'Notes in the cloud are not touched and download again '
-                          'on the next sync.',
-                    ],
-                    warning: unsynced > 0
-                        ? (unsynced == 1
-                            ? '1 note has not been uploaded yet. It exists only '
-                                'on this device and will be lost for good.'
-                            : '$unsynced notes have not been uploaded yet. They '
-                                'exist only on this device and will be lost for '
-                                'good.')
-                        : null,
-                    run: cubit.wipeLocal,
-                  ),
-                ),
-              ],
-            );
-          },
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
 }
 
-/// One destructive action: what it removes, what it keeps, and the button
-/// that opens the slide-to-confirm.
 class _WipeCard extends StatelessWidget {
-  final String scope;
-  final IconData icon;
-  final String title;
-  final String removes;
-  final String keeps;
-  final String buttonLabel;
-  final VoidCallback onTap;
+  const _WipeCard({required this.scope, required this.onPressed});
 
-  const _WipeCard({
-    required this.scope,
-    required this.icon,
-    required this.title,
-    required this.removes,
-    required this.keeps,
-    required this.buttonLabel,
-    required this.onTap,
-  });
+  final _WipeScope scope;
+  final VoidCallback onPressed;
 
   @override
   Widget build(BuildContext context) {
-    return EditorialModule(
-      fill: AppColors.surfaceLowest,
-      padding: const EdgeInsets.all(AppSpace.md),
+    final c = context.colors;
+    return AtomicCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(
             children: [
-              Container(
-                height: 44,
-                width: 44,
-                decoration: const BoxDecoration(
-                  color: AppColors.ink,
-                  borderRadius: AppRadius.std,
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  color: c.danger,
+                  borderRadius: AtomicRadius.mediumAll,
                 ),
-                child: Icon(icon, color: AppColors.paper, size: 22),
+                child: SizedBox.square(
+                  dimension: 44,
+                  child: Icon(scope.icon, color: c.onDanger, size: 22),
+                ),
               ),
-              const SizedBox(width: AppSpace.md),
+              const SizedBox(width: AtomicSpace.x3),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    MonoLabel(scope, color: AppColors.error),
-                    const SizedBox(height: 2),
-                    EditorialHeading(title, style: AppType.headlineSm),
-                  ],
+                child: Semantics(
+                  header: true,
+                  child: Text(
+                    scope == _WipeScope.cloud
+                        ? 'Wipe cloud notes'
+                        : 'Wipe local notes',
+                    style:
+                        AtomicType.titleMedium.copyWith(color: c.textPrimary),
+                  ),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: AppSpace.md),
-          const HairRule(),
-          const SizedBox(height: AppSpace.md),
-          const MonoLabel('Removes', small: true, color: AppColors.error),
-          const SizedBox(height: AppSpace.xs),
-          Text(removes, style: AppType.bodySm),
-          const SizedBox(height: AppSpace.md),
-          const MonoLabel('Keeps', small: true),
-          const SizedBox(height: AppSpace.xs),
-          Text(keeps, style: AppType.bodySm),
-          const SizedBox(height: AppSpace.md),
-          InkActionButton(label: buttonLabel, danger: true, onTap: onTap),
+          for (final (label, text) in [
+            ('Removes', scope.removes),
+            ('Keeps', scope.keeps),
+          ]) ...[
+            const SizedBox(height: AtomicSpace.x3),
+            Text(label,
+                style: AtomicType.labelLarge.copyWith(color: c.textPrimary)),
+            const SizedBox(height: AtomicSpace.x1),
+            Text(text,
+                style: AtomicType.bodyMedium.copyWith(color: c.textSecondary)),
+          ],
+          const SizedBox(height: AtomicSpace.x4),
+          AtomicButton.danger(
+              label: scope.label, expand: true, onPressed: onPressed),
         ],
       ),
     );
   }
 }
 
-/// A row of diagonal red bars: the universal "careful" marking, drawn in the
-/// design system's own error colour.
-class _HazardStrip extends StatelessWidget {
-  const _HazardStrip();
+class _WipeConfirmation extends StatefulWidget {
+  const _WipeConfirmation({
+    required this.scope,
+    required this.pending,
+    required this.onConfirmed,
+  });
+
+  final _WipeScope scope;
+  final int pending;
+  final Future<void> Function() onConfirmed;
 
   @override
-  Widget build(BuildContext context) {
-    return const SizedBox(
-      height: 12,
-      width: double.infinity,
-      child: ClipRect(child: CustomPaint(painter: _HazardPainter())),
-    );
-  }
+  State<_WipeConfirmation> createState() => _WipeConfirmationState();
 }
 
-class _HazardPainter extends CustomPainter {
-  const _HazardPainter();
+class _WipeConfirmationState extends State<_WipeConfirmation> {
+  bool _reviewed = false;
+  bool _locked = false;
 
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()..color = AppColors.error;
-    const double stripe = 12;
-    for (double x = -size.height; x < size.width; x += stripe * 2) {
-      final path = Path()
-        ..moveTo(x, size.height)
-        ..lineTo(x + stripe, size.height)
-        ..lineTo(x + stripe + size.height, 0)
-        ..lineTo(x + size.height, 0)
-        ..close();
-      canvas.drawPath(path, paint);
+  bool get _canSubmit =>
+      mounted && !_locked && ModalRoute.of(context)?.isCurrent == true;
+
+  void _review() {
+    if (_canSubmit && !_reviewed) setState(() => _reviewed = true);
+  }
+
+  Future<void> _confirm() async {
+    // Both input paths can reach this before the next frame.
+    if (!_canSubmit) return;
+    setState(() => _locked = true);
+    await widget.onConfirmed();
+    if (!mounted) return;
+    final route = ModalRoute.of(context);
+    if (route == null || !route.isActive) return;
+    final navigator = Navigator.of(context);
+    if (route.isCurrent) {
+      navigator.pop();
+    } else {
+      navigator.removeRoute(route);
     }
   }
 
+  void _cancel() {
+    if (!_canSubmit) return;
+    _locked = true;
+    Navigator.of(context).pop();
+  }
+
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final scope = widget.scope;
+    final pending = widget.pending;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(scope.caution,
+            style: AtomicType.bodyMedium.copyWith(color: c.textSecondary)),
+        if (pending > 0) ...[
+          const SizedBox(height: AtomicSpace.x3),
+          Text(
+            pending == 1
+                ? '1 note change hasn’t finished syncing. Removing local notes '
+                    'can lose unsynced content and discard pending deletions. '
+                    'Sync first if you want to keep those changes.'
+                : '$pending note changes haven’t finished syncing. Removing '
+                    'local notes can lose unsynced content and discard pending '
+                    'deletions. Sync first if you want to keep those changes.',
+            style: AtomicType.bodyMedium.copyWith(color: c.textPrimary),
+          ),
+        ],
+        const SizedBox(height: AtomicSpace.x4),
+        Text('Slide to ${scope.label.toLowerCase()}',
+            style: AtomicType.labelLarge.copyWith(color: c.textPrimary)),
+        const SizedBox(height: AtomicSpace.x2),
+        IgnorePointer(
+          ignoring: _locked,
+          child: SlideToConfirm(
+            label: scope.label.toLowerCase(),
+            target: scope,
+            allowAlternativeActivation: false,
+            onConfirmed: _confirm,
+          ),
+        ),
+        if (_locked) ...[
+          const SizedBox(height: AtomicSpace.x2),
+          Semantics(
+            liveRegion: true,
+            child: Text('Removing notes…',
+                style: AtomicType.bodyMedium.copyWith(color: c.textPrimary)),
+          ),
+        ],
+        const SizedBox(height: AtomicSpace.x2),
+        AtomicButton.text(
+          label: 'Review removal',
+          onPressed: _locked ? null : _review,
+        ),
+        if (_reviewed)
+          AtomicButton.danger(
+            label: scope.label,
+            busy: _locked,
+            onPressed: _locked ? null : _confirm,
+          ),
+        AtomicButton.text(
+          label: 'Cancel',
+          onPressed: _locked ? null : _cancel,
+        ),
+      ],
+    );
+  }
 }

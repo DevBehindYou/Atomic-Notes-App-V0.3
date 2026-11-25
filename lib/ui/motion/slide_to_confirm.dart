@@ -35,6 +35,7 @@ class SlideToConfirm extends StatefulWidget {
     required this.onConfirmed,
     this.target,
     this.focusNode,
+    this.allowAlternativeActivation = true,
   });
 
   /// What the slide does, in sentence case: "wipe cloud notes" reads
@@ -46,6 +47,10 @@ class SlideToConfirm extends StatefulWidget {
   /// withdrawn, so it can never apply to something else.
   final Object? target;
   final FocusNode? focusNode;
+
+  /// Whether this slider supplies its own two-activation alternative to drag.
+  /// Set false when the enclosing confirmation provides accessible controls.
+  final bool allowAlternativeActivation;
 
   static const double confirmAt = 0.92;
   static const Duration snapBack = Duration(milliseconds: 180);
@@ -98,7 +103,9 @@ class _SlideToConfirmState extends State<SlideToConfirm>
   @override
   void didUpdateWidget(SlideToConfirm old) {
     super.didUpdateWidget(old);
-    if (old.label != widget.label || old.target != widget.target) {
+    if (old.label != widget.label ||
+        old.target != widget.target ||
+        old.allowAlternativeActivation != widget.allowAlternativeActivation) {
       _disarmNow();
       if (!_running) _resetDrag();
     }
@@ -185,7 +192,7 @@ class _SlideToConfirmState extends State<SlideToConfirm>
 
   /// A tap, a screen reader activation, or Enter/Space: arm, then confirm.
   void _activate() {
-    if (_running) return;
+    if (_running || !widget.allowAlternativeActivation) return;
     if (_armed) {
       _confirm();
       return;
@@ -214,6 +221,8 @@ class _SlideToConfirmState extends State<SlideToConfirm>
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    final alternative = widget.allowAlternativeActivation;
+    final canActivate = alternative && !_running;
     final follow = _dragging
         ? Duration.zero
         : AtomicMotion.move(context, SlideToConfirm.snapBack);
@@ -227,16 +236,18 @@ class _SlideToConfirmState extends State<SlideToConfirm>
       final progress = math.min(1.0, _offset / _travel);
       return Semantics(
         container: true,
-        button: true,
-        enabled: !_running,
-        liveRegion: true,
-        label: 'Slide to ${widget.label}',
-        value: _running
-            ? 'Working'
-            : _armed
-                ? 'Armed. Activate again to confirm'
-                : null,
-        onTap: _running ? null : _activate,
+        button: alternative,
+        enabled: alternative ? !_running : null,
+        liveRegion: alternative,
+        label: alternative ? 'Slide to ${widget.label}' : null,
+        value: alternative
+            ? (_running
+                ? 'Working'
+                : _armed
+                    ? 'Armed. Activate again to confirm'
+                    : null)
+            : null,
+        onTap: canActivate ? _activate : null,
         child: ExcludeSemantics(
           child: Focus(
             canRequestFocus: false,
@@ -244,8 +255,10 @@ class _SlideToConfirmState extends State<SlideToConfirm>
             onKeyEvent: _noteKey,
             child: FocusableActionDetector(
               focusNode: widget.focusNode,
-              enabled: !_running,
-              mouseCursor: SystemMouseCursors.click,
+              enabled: canActivate,
+              mouseCursor: alternative
+                  ? SystemMouseCursors.click
+                  : SystemMouseCursors.grab,
               onShowFocusHighlight: (value) {
                 if (_focused != value) setState(() => _focused = value);
               },
@@ -277,31 +290,33 @@ class _SlideToConfirmState extends State<SlideToConfirm>
                           decoration: BoxDecoration(
                               color: c.danger, borderRadius: AtomicRadius.pill),
                         ),
-                        Positioned.fill(
-                          child: Padding(
-                            padding: const EdgeInsets.only(
-                                left: _thumb + _inset * 2,
-                                right: AtomicSpace.x4),
-                            child: Center(
-                              child: Opacity(
-                                opacity: _running || _armed ? 1 : 1 - progress,
-                                child: Text(
-                                  instruction,
-                                  maxLines: 2,
-                                  textAlign: TextAlign.center,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: AtomicType.labelLarge.copyWith(
-                                    color: _running
-                                        ? c.onDanger
-                                        : _armed
-                                            ? c.dangerText
-                                            : c.textSecondary,
+                        if (alternative || _running)
+                          Positioned.fill(
+                            child: Padding(
+                              padding: const EdgeInsets.only(
+                                  left: _thumb + _inset * 2,
+                                  right: AtomicSpace.x4),
+                              child: Center(
+                                child: Opacity(
+                                  opacity:
+                                      _running || _armed ? 1 : 1 - progress,
+                                  child: Text(
+                                    instruction,
+                                    maxLines: 2,
+                                    textAlign: TextAlign.center,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: AtomicType.labelLarge.copyWith(
+                                      color: _running
+                                          ? c.onDanger
+                                          : _armed
+                                              ? c.dangerText
+                                              : c.textSecondary,
+                                    ),
                                   ),
                                 ),
                               ),
                             ),
                           ),
-                        ),
                         AnimatedPositioned(
                           duration: follow,
                           curve: AtomicMotion.standardCurve,
@@ -314,7 +329,7 @@ class _SlideToConfirmState extends State<SlideToConfirm>
                             child: GestureDetector(
                               key: SlideToConfirm.thumbKey,
                               behavior: HitTestBehavior.opaque,
-                              onTap: _running ? null : _activate,
+                              onTap: canActivate ? _activate : null,
                               onHorizontalDragStart: _running
                                   ? null
                                   : (_) => setState(() => _dragging = true),
