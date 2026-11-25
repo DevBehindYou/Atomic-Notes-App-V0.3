@@ -2,6 +2,7 @@
 
 import 'package:atomic_notes/utility/component/slide_to_confirm.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -32,14 +33,29 @@ void main() {
       expect(confirmed, 0);
     });
 
-    testWidgets('sliding all the way confirms exactly once', (tester) async {
+    testWidgets('only a completed Bin slider drag confirms and pulses once',
+        (tester) async {
+      final calls = <Object?>[];
+      final messenger = tester.binding.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+        if (call.method == 'HapticFeedback.vibrate') calls.add(call.arguments);
+        return null;
+      });
+      addTearDown(() =>
+          messenger.setMockMethodCallHandler(SystemChannels.platform, null));
       var confirmed = 0;
       await pumpSlider(tester, () async => confirmed++);
-      await tester.drag(
-          find.byKey(SlideToConfirm.thumbKey), const Offset(600, 0));
+      final thumb = find.byKey(SlideToConfirm.thumbKey);
+      await tester.tap(thumb);
+      await tester.drag(thumb, const Offset(100, 0));
+      await tester.pumpAndSettle();
+      expect(confirmed, 0);
+      expect(calls, isEmpty);
+
+      await tester.drag(thumb, const Offset(600, 0));
       await tester.pumpAndSettle();
       expect(confirmed, 1);
+      expect(calls, ['HapticFeedbackType.mediumImpact']);
     });
   });
-
 }

@@ -2,7 +2,10 @@ import 'package:atomic_notes/database/note.dart';
 import 'package:atomic_notes/database/note_document.dart';
 import 'package:atomic_notes/database/note_projection.dart';
 import 'package:atomic_notes/theme/app_tokens.dart';
+import 'package:atomic_notes/theme/atomic_tokens.dart';
 import 'package:atomic_notes/theme/editorial.dart';
+import 'package:atomic_notes/ui/motion/atomic_haptics.dart';
+import 'package:atomic_notes/ui/motion/atomic_pressable.dart';
 import 'package:flutter/material.dart';
 
 /// A note card. Renders either a text note or a checklist, and doubles as the
@@ -51,10 +54,12 @@ class NotesBulder extends StatelessWidget {
 
     return Padding(
       padding: const EdgeInsets.only(bottom: AppSpace.xs),
-      child: GestureDetector(
+      child: AtomicPressable(
         onTap: onTap,
         onLongPress: onLongPress,
-        behavior: HitTestBehavior.opaque,
+        selected: selectionMode ? selected : null,
+        borderRadius: AppRadius.std,
+        pressScale: 1,
         child: Container(
           padding: const EdgeInsets.symmetric(
               horizontal: AppSpace.md - 2, vertical: AppSpace.sm + 2),
@@ -188,29 +193,12 @@ class NotesBulder extends StatelessWidget {
                           style: AppType.bodySm.copyWith(color: _bodyColor)),
                     ])
                   : lines[i].isChecklist
-                      ? GestureDetector(
-                          onTap: selectionMode ? null : () => onToggleItem(i),
-                          behavior: HitTestBehavior.opaque,
-                          child: ConstrainedBox(
-                              constraints: const BoxConstraints(minHeight: 48),
-                              child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    _Tick(
-                                        on: lines[i].done,
-                                        small: true,
-                                        important: note.important),
-                                    const SizedBox(width: AppSpace.sm),
-                                    Expanded(
-                                        child: Text(lines[i].text,
-                                            maxLines: 2,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: AppType.bodySm.copyWith(
-                                                color: _bodyColor,
-                                                decoration: lines[i].done
-                                                    ? TextDecoration.lineThrough
-                                                    : null))),
-                                  ])))
+                      ? _checklistRow(
+                          index: i,
+                          text: lines[i].text,
+                          done: lines[i].done,
+                          color: _bodyColor,
+                        )
                       : Text(lines[i].text,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
@@ -236,41 +224,13 @@ class NotesBulder extends StatelessWidget {
           for (int i = 0; i < rows.length; i++)
             Padding(
               padding: const EdgeInsets.only(bottom: 6),
-              child: GestureDetector(
-                // In selection mode the whole card is the target, so don't
-                // let a tick steal the tap.
-                onTap: selectionMode ? null : () => onToggleItem(i),
-                behavior: HitTestBehavior.opaque,
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(minHeight: 48),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _Tick(
-                          on: rows[i].done,
-                          small: true,
-                          important: note.important),
-                      const SizedBox(width: AppSpace.sm),
-                      Expanded(
-                        child: Text(
-                          rows[i].text,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: AppType.bodySm.copyWith(
-                            decoration: rows[i].done
-                                ? TextDecoration.lineThrough
-                                : null,
-                            color: note.important
-                                ? AppColors.onImportantSurface
-                                : rows[i].done
-                                    ? AppColors.outline
-                                    : AppColors.onSurface,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+              child: _checklistRow(
+                index: i,
+                text: rows[i].text,
+                done: rows[i].done,
+                color: rows[i].done && !note.important
+                    ? AppColors.outline
+                    : _bodyColor,
               ),
             ),
           if (note.items.length > rows.length)
@@ -278,6 +238,48 @@ class NotesBulder extends StatelessWidget {
                 small: true, color: _metadataColor),
         ],
       ),
+    );
+  }
+
+  Widget _checklistRow({
+    required int index,
+    required String text,
+    required bool done,
+    required Color color,
+  }) {
+    final row = ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: AtomicSpace.minTarget),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _Tick(on: done, small: true, important: note.important),
+          const SizedBox(width: AppSpace.sm),
+          Expanded(
+            child: Text(
+              text,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: AppType.bodySm.copyWith(
+                color: color,
+                decoration: done ? TextDecoration.lineThrough : null,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    // In selection mode the whole card handles taps, including over a tick.
+    if (selectionMode) return row;
+    return AtomicPressable(
+      button: false,
+      checked: done,
+      semanticsLabel:
+          text.trim().isEmpty ? 'Checklist item ${index + 1}' : text,
+      excludeSemantics: true,
+      borderRadius: AppRadius.std,
+      haptic: done ? AtomicHaptic.none : AtomicHaptic.light,
+      onTap: () => onToggleItem(index),
+      child: row,
     );
   }
 }

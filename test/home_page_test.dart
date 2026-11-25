@@ -4,14 +4,18 @@
 import 'dart:async';
 
 import 'package:atomic_notes/database/note.dart';
+import 'package:atomic_notes/database/note_document.dart';
 import 'package:atomic_notes/mascot/mascot_view.dart';
 import 'package:atomic_notes/page/home_page.dart';
 import 'package:atomic_notes/state/notes/notes_bloc.dart';
 import 'package:atomic_notes/ui/buttons/atomic_fab.dart';
 import 'package:atomic_notes/ui/chips/atomic_filter_chip.dart';
 import 'package:atomic_notes/ui/feedback/status_strip.dart';
+import 'package:atomic_notes/ui/motion/atomic_pressable.dart';
 import 'package:atomic_notes/utility/component/notes_builder.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -58,6 +62,7 @@ Future<NotesBloc> _open(
   WidgetTester tester,
   FakeNotesSource source, {
   DateTime Function()? now,
+  bool disableAnimations = false,
 }) async {
   // Tall, so everything is on view and nothing has to be scrolled to.
   tester.view.physicalSize = const Size(1290, 2700);
@@ -77,6 +82,12 @@ Future<NotesBloc> _open(
   });
   await tester.pumpWidget(
     MaterialApp(
+      builder: (context, child) => MediaQuery(
+        data: MediaQuery.of(context).copyWith(
+          disableAnimations: disableAnimations,
+        ),
+        child: child!,
+      ),
       home: BlocProvider<NotesBloc>.value(
         value: bloc,
         child: HomePage(now: now),
@@ -97,7 +108,157 @@ Future<void> _openSearch(WidgetTester tester) async {
 final _newNote = find.byTooltip('New note');
 final _searchButton = find.byTooltip('Search notes');
 
+List<Object?> _haptics(WidgetTester tester) {
+  final calls = <Object?>[];
+  final messenger = tester.binding.defaultBinaryMessenger;
+  messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+    if (call.method == 'HapticFeedback.vibrate') calls.add(call.arguments);
+    return null;
+  });
+  addTearDown(
+      () => messenger.setMockMethodCallHandler(SystemChannels.platform, null));
+  return calls;
+}
+
+bool _focusInside(Finder finder) {
+  final context = FocusManager.instance.primaryFocus?.context;
+  if (context == null) return false;
+  final target = finder.evaluate().single;
+  if (identical(context, target)) return true;
+  var inside = false;
+  context.visitAncestorElements((ancestor) {
+    inside = identical(ancestor, target);
+    return !inside;
+  });
+  return inside;
+}
+
 void main() {
+  testWidgets('Home selection pulses once per entry and keeps the strip inert',
+      (tester) async {
+    final calls = _haptics(tester);
+    final source = _source();
+    final bloc = await _open(tester, source, disableAnimations: true);
+    final mascot = find.byKey(const ValueKey('mascot-character'));
+    for (var i = 0; i < 12 && !_focusInside(mascot); i++) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+    }
+    expect(_focusInside(mascot), isTrue);
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+    expect(find.textContaining('No local changes waiting.'), findsOneWidget);
+    expect(calls, ['HapticFeedbackType.lightImpact']);
+
+    final card = find.byKey(const ValueKey('b'));
+    await tester.longPress(card);
+    await tester.pumpAndSettle();
+    expect(bloc.state.selected, {'b'});
+    expect(_focusInside(mascot), isFalse);
+    for (var i = 0; i < 12; i++) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      expect(_focusInside(mascot), isFalse);
+    }
+
+    // Tapping the task now selects its card.
+    await tester.tap(find.text('milk'));
+    await tester.pumpAndSettle();
+    expect(bloc.state.selected, {'a', 'b'});
+    expect(source.saveCalls, 0);
+    await tester.tap(find.byTooltip('Cancel selection'));
+    await tester.pumpAndSettle();
+    await tester.longPress(card);
+    await tester.pumpAndSettle();
+    expect(calls, [
+      'HapticFeedbackType.lightImpact',
+      'HapticFeedbackType.selectionClick',
+      'HapticFeedbackType.selectionClick',
+    ]);
+  });
+
+  for (final mixed in [false, true]) {
+    testWidgets(
+        '${mixed ? 'Mixed' : 'To-do'} Home checks support keyboard and semantics',
+        (tester) async {
+      final handle = tester.ensureSemantics();
+      final calls = _haptics(tester);
+      final note = mixed
+          ? syncedNote('check',
+              title: 'Supplies',
+              body: 'Context\n- [ ] Milk',
+              items: [TodoItem(text: NoteDocument.formatMarker)])
+          : syncedNote('check',
+              title: 'Supplies',
+              kind: NoteKind.todo,
+              items: [TodoItem(text: 'Milk')]);
+      final source = FakeNotesSource(notes: [note]);
+      await _open(tester, source, disableAnimations: true);
+      await tester.pumpAndSettle();
+
+      final label = find.bySemanticsLabel('Milk');
+      final check = find.byWidgetPredicate(
+          (widget) => widget is AtomicPressable && widget.checked != null);
+      final card = find.byKey(const ValueKey('check'));
+      expect(label, findsOneWidget);
+      final node = tester.getSemantics(label);
+      expect(node, isSemantics(hasCheckedState: true, isChecked: false));
+      expect(node.getSemanticsData().hasAction(SemanticsAction.tap), isTrue);
+      expect(node.rect.height, greaterThanOrEqualTo(48));
+      expect(node.rect.width, greaterThanOrEqualTo(48));
+
+      // The card opens from the keyboard and precedes its checkbox.
+      for (var i = 0; i < 12 && !_focusInside(card); i++) {
+        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+        await tester.pump();
+      }
+      expect(_focusInside(card), isTrue);
+      expect(_focusInside(check), isFalse);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(field('note-title'), findsOneWidget);
+      if (!mixed) {
+        final addText = find.byTooltip('Add text line');
+        final addChecklist = find.byTooltip('Add checklist line');
+        for (var i = 0; i < 24 && !_focusInside(addText); i++) {
+          await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+          await tester.pump();
+        }
+        expect(_focusInside(addText), isTrue);
+        await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+        await tester.pump();
+        expect(_focusInside(addChecklist), isTrue);
+      }
+      await tester.tap(find.byTooltip('Back to notes'));
+      await tester.pumpAndSettle();
+
+      for (var i = 0; i < 12 && !_focusInside(check); i++) {
+        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+        await tester.pump();
+      }
+      expect(_focusInside(check), isTrue);
+      await tester.sendKeyEvent(LogicalKeyboardKey.space);
+      await tester.pumpAndSettle();
+      expect(tester.getSemantics(label), isSemantics(isChecked: true));
+      expect(calls, ['HapticFeedbackType.lightImpact']);
+
+      tester.semantics.tap(find.semantics.byLabel('Milk'));
+      await tester.pumpAndSettle();
+      expect(tester.getSemantics(label), isSemantics(isChecked: false));
+      expect(calls, ['HapticFeedbackType.lightImpact']);
+
+      tester.semantics.tap(find.semantics.byLabel('Milk'));
+      await tester.pumpAndSettle();
+      expect(tester.getSemantics(label), isSemantics(isChecked: true));
+      expect(calls, List.filled(2, 'HapticFeedbackType.lightImpact'));
+      expect(
+          NoteDocument.fromNote(source.byId('check')!).lines.last.done, isTrue);
+      if (mixed) expect(source.byId('check')!.body, 'Context\n- [x] Milk');
+      expect(find.byTooltip('Back to notes'), findsNothing);
+      handle.dispose();
+    });
+  }
+
   testWidgets('mascot alone opens status without starting sync',
       (tester) async {
     final source = _source();

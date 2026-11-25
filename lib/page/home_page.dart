@@ -16,6 +16,7 @@ import 'package:atomic_notes/ui/feedback/status_strip.dart';
 import 'package:atomic_notes/ui/fields/search_field.dart';
 import 'package:atomic_notes/ui/headers/selection_bar.dart';
 import 'package:atomic_notes/ui/mascot/mascot_stage.dart';
+import 'package:atomic_notes/ui/motion/atomic_haptics.dart';
 import 'package:atomic_notes/ui/motion/atomic_pressable.dart';
 import 'package:atomic_notes/ui/motion/editor_route.dart';
 import 'package:atomic_notes/ui/motion/entrance.dart';
@@ -310,15 +311,25 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    return BlocListener<NotesBloc, NotesState>(
-      listenWhen: (previous, current) =>
-          previous.notice != current.notice &&
-          current.notice != null &&
-          !current.notice!.fromSync,
-      listener: (context, state) => MySnackBar(
-        text: state.notice!.text,
-        sec: state.notice!.millis,
-      ).showMySnackBar(context),
+    return MultiBlocListener(
+      listeners: [
+        BlocListener<NotesBloc, NotesState>(
+          listenWhen: (previous, current) =>
+              previous.notice != current.notice &&
+              current.notice != null &&
+              !current.notice!.fromSync,
+          listener: (context, state) => MySnackBar(
+            text: state.notice!.text,
+            sec: state.notice!.millis,
+          ).showMySnackBar(context),
+        ),
+        BlocListener<NotesBloc, NotesState>(
+          listenWhen: (previous, current) =>
+              !previous.selecting && current.selecting,
+          listener: (_, __) =>
+              unawaited(AtomicHaptics.play(AtomicHaptic.selection)),
+        ),
+      ],
       child: BlocSelector<NotesBloc, NotesState, bool>(
         selector: (state) => state.selecting,
         builder: (context, selecting) => Scaffold(
@@ -333,6 +344,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             // focus — otherwise the keyboard and cursor stay put until
             // something else happens to take focus.
             child: GestureDetector(
+              excludeFromSemantics: true,
               onTap: () => FocusScope.of(context).unfocus(),
               behavior: HitTestBehavior.opaque,
               child: NotificationListener<Notification>(
@@ -704,7 +716,10 @@ class _Inert extends StatelessWidget {
             Opacity(opacity: opacity, child: child),
         child: IgnorePointer(
           ignoring: selecting,
-          child: ExcludeSemantics(excluding: selecting, child: child),
+          child: ExcludeFocus(
+            excluding: selecting,
+            child: ExcludeSemantics(excluding: selecting, child: child),
+          ),
         ),
       ),
     );
@@ -763,6 +778,7 @@ class _MascotState extends State<_Mascot> {
   Timer? _autoHide;
 
   void _onTap() {
+    unawaited(AtomicHaptics.play(AtomicHaptic.light));
     _autoHide?.cancel();
     if (_bubble.isShowing) {
       _bubble.hide();

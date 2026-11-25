@@ -97,6 +97,7 @@ Future<(_Feed, _Routes)> _open(
   Size size = const Size(400, 860),
   double textScale = 1,
   bool disableAnimations = false,
+  ValueNotifier<bool>? reducedMotion,
 }) async {
   tester.view.physicalSize = size * 3;
   tester.view.devicePixelRatio = 3;
@@ -115,13 +116,22 @@ Future<(_Feed, _Routes)> _open(
     child: MaterialApp(
       theme: theme ?? AtomicTheme.light,
       navigatorObservers: [routes],
-      builder: (context, child) => MediaQuery(
-        data: MediaQuery.of(context).copyWith(
-          textScaler: TextScaler.linear(textScale),
-          disableAnimations: disableAnimations,
-        ),
-        child: child!,
-      ),
+      builder: (context, child) {
+        Widget withMotion(bool reduced) => MediaQuery(
+              data: MediaQuery.of(context).copyWith(
+                textScaler: TextScaler.linear(textScale),
+                disableAnimations: reduced,
+              ),
+              child: child!,
+            );
+        final preference = reducedMotion;
+        return preference == null
+            ? withMotion(disableAnimations)
+            : ValueListenableBuilder(
+                valueListenable: preference,
+                builder: (context, reduced, _) => withMotion(reduced),
+              );
+      },
       initialRoute: '/notifications',
       routes: {
         '/': (_) => const Scaffold(body: Text('stub home')),
@@ -198,6 +208,30 @@ void main() {
   });
 
   group('states', () {
+    testWidgets('an open loading page stops and restarts with motion settings',
+        (tester) async {
+      final semantics = tester.ensureSemantics();
+      final reduced = ValueNotifier(false);
+      addTearDown(reduced.dispose);
+      await _open(tester, const [], loading: true, reducedMotion: reduced);
+      final label = find.bySemanticsLabel('Loading notifications');
+      final ring = find.byType(CircularProgressIndicator);
+      expect(tester.widget<CircularProgressIndicator>(ring).value, isNull);
+      expect(tester.hasRunningAnimations, isTrue);
+
+      reduced.value = true;
+      await tester.pumpAndSettle();
+      expect(tester.widget<CircularProgressIndicator>(ring).value, isNotNull);
+      expect(tester.getSemantics(label).getSemanticsData().value, isEmpty);
+      expect(tester.hasRunningAnimations, isFalse);
+
+      reduced.value = false;
+      await tester.pump();
+      expect(tester.widget<CircularProgressIndicator>(ring).value, isNull);
+      expect(tester.hasRunningAnimations, isTrue);
+      semantics.dispose();
+    });
+
     testWidgets('loading with nothing yet shows a progress ring',
         (tester) async {
       await _open(tester, const [], loading: true);

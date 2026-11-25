@@ -1070,6 +1070,52 @@ void main() {
       expect(find.text('3'), findsOneWidget);
     });
 
+    testWidgets('changing motion settings cancels a live popup scale',
+        (tester) async {
+      final reduced = ValueNotifier(false);
+      addTearDown(reduced.dispose);
+      await tester.pumpWidget(MaterialApp(
+        theme: AtomicTheme.light,
+        builder: (context, child) => ValueListenableBuilder(
+          valueListenable: reduced,
+          builder: (context, value, _) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(disableAnimations: value),
+            child: child!,
+          ),
+        ),
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: TextButton(
+              onPressed: () => showEnergyPopup(context),
+              child: const Text('Open popup'),
+            ),
+          ),
+        ),
+      ));
+      await tester.tap(find.text('Open popup'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 25));
+      final card = find.byKey(const ValueKey('energy-popup'));
+      final element = tester.element(card);
+      final transition =
+          find.ancestor(of: card, matching: find.byType(ScaleTransition)).first;
+      double scale() => tester.widget<ScaleTransition>(transition).scale.value;
+      expect(scale(), lessThan(1));
+
+      reduced.value = true;
+      await tester.pump();
+      expect(scale(), 1);
+      expect(tester.element(card), same(element));
+
+      reduced.value = false;
+      await tester.pump();
+      expect(scale(), 1);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('energy-popup-dismiss')));
+      await tester.pumpAndSettle();
+      expect(card, findsNothing);
+    });
+
     testWidgets('it scales in, and only fades under reduced motion',
         (tester) async {
       await open(tester);
@@ -1082,11 +1128,10 @@ void main() {
       await tester.pumpAndSettle();
 
       await open(tester, disableAnimations: true);
-      expect(
-          find.ancestor(
-              of: find.byKey(const ValueKey('energy-popup')),
-              matching: find.byType(ScaleTransition)),
-          findsNothing);
+      final scales = tester.widgetList<ScaleTransition>(find.ancestor(
+          of: find.byKey(const ValueKey('energy-popup')),
+          matching: find.byType(ScaleTransition)));
+      expect(scales.every((transition) => transition.scale.value == 1), isTrue);
       expect(find.byKey(const ValueKey('energy-popup')), findsOneWidget);
     });
 
