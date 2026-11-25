@@ -30,10 +30,9 @@ import 'package:atomic_notes/page/endpage/notifications_page.dart';
 import 'package:atomic_notes/page/settings_page.dart';
 import 'package:atomic_notes/page/splash_screen.dart';
 import 'package:atomic_notes/page/account_cache_recovery_page.dart';
+import 'package:atomic_notes/page/startup_failed_page.dart';
 import 'package:atomic_notes/theme/app_theme.dart';
-import 'package:atomic_notes/theme/app_tokens.dart';
 import 'package:atomic_notes/theme/atomic_theme.dart';
-import 'package:atomic_notes/theme/editorial.dart';
 import 'package:atomic_notes/ui/gallery/component_gallery.dart';
 import 'package:atomic_notes/utility/intropages/onboarding_screen.dart';
 import 'package:atomic_notes/utility/intropages/energy_intro_screen.dart';
@@ -42,6 +41,10 @@ import 'package:atomic_notes/utility/startup_trace.dart';
 import 'package:bloc/bloc.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+
+// The startup failure screen lives in lib/page; main.dart keeps exporting it.
+export 'package:atomic_notes/page/startup_failed_page.dart'
+    show StartupFailedApp;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -68,69 +71,6 @@ Future<void> main() async {
 
   trace.finish();
   runApp(const MascotScope(child: MyApp()));
-}
-
-/// Shown when Supabase or Hive can't be initialised at all. There is no usable
-/// app behind this point, so it just explains itself instead of disappearing.
-class StartupFailedApp extends StatelessWidget {
-  final String error;
-  const StartupFailedApp({required this.error, super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      theme: AppTheme.light,
-      home: Scaffold(
-        backgroundColor: AppColors.paper,
-        body: SafeArea(
-          child: Center(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(AppSpace.lg),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const MonoLabel('SYSTEM / STARTUP FAILED',
-                      color: AppColors.error),
-                  const SizedBox(height: AppSpace.sm),
-                  const HairRule(color: AppColors.ink),
-                  const SizedBox(height: AppSpace.lg),
-                  const EditorialHeading(
-                    "Atomic couldn't start",
-                    style: AppType.headlineLg,
-                  ),
-                  const SizedBox(height: AppSpace.sm),
-                  const Text(
-                    'Check your connection and reopen the app. If this keeps '
-                    'happening, the details below will say why.',
-                    style: AppType.bodyMd,
-                  ),
-                  const SizedBox(height: AppSpace.lg),
-                  EditorialModule(
-                    fill: AppColors.errorContainer,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const MonoLabel('TRACE',
-                            color: AppColors.onErrorContainer),
-                        const SizedBox(height: AppSpace.sm),
-                        Text(
-                          error,
-                          style: AppType.labelMonoSm
-                              .copyWith(color: AppColors.onErrorContainer),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 class MyApp extends StatefulWidget {

@@ -1,81 +1,56 @@
-import 'package:atomic_notes/theme/app_tokens.dart';
+import 'package:atomic_notes/theme/atomic_tokens.dart';
+import 'package:atomic_notes/ui/motion/atomic_pressable.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 
-/// Primary auth action: full-bleed Ink block with a Bebas Neue label and the
-/// solid offset shadow. The reference's "GET IN TOUCH" button, essentially.
-class LoginButton extends StatefulWidget {
-  final VoidCallback signIn;
-  final bool isLoading;
-  final String ico;
-  final String text;
+/// The official Google-branded pill, with a native focus target and label.
+class LoginButton extends StatelessWidget {
   const LoginButton({
     super.key,
     required this.isLoading,
     required this.signIn,
-    required this.ico,
     required this.text,
   });
 
-  @override
-  State<LoginButton> createState() => _LoginButtonState();
-}
+  final VoidCallback signIn;
+  final bool isLoading;
+  final String text;
 
-class _LoginButtonState extends State<LoginButton> {
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: widget.isLoading ? null : widget.signIn,
-      behavior: HitTestBehavior.opaque,
-      child: Container(
-        decoration: const BoxDecoration(
-          borderRadius: AppRadius.std,
-          boxShadow: [
-            BoxShadow(
-              color: AppColors.ink,
-              offset: Offset(AppStroke.offset, AppStroke.offset),
-              blurRadius: 0,
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final platform = !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS
+        ? 'ios'
+        : 'android';
+    final theme = dark ? 'light' : 'dark';
+    return AtomicPressable(
+      onTap: isLoading ? null : signIn,
+      semanticsLabel: text,
+      excludeSemantics: true,
+      child: SizedBox(
+        key: const ValueKey('login-google-face'),
+        width: double.infinity,
+        height: 48,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            AnimatedOpacity(
+              opacity: isLoading ? 0 : 1,
+              duration: AtomicMotion.fade(context, AtomicMotion.quick),
+              child: Image.asset(
+                'assets/google-sign-in-$platform-$theme.png',
+                key: const ValueKey('login-google-mark'),
+                height: 48,
+                fit: BoxFit.contain,
+                excludeFromSemantics: true,
+              ),
             ),
+            if (isLoading)
+              const SizedBox.square(
+                dimension: 20,
+                child: CircularProgressIndicator(strokeWidth: 2.5),
+              ),
           ],
-        ),
-        child: Container(
-          height: 54,
-          decoration: BoxDecoration(
-            color: AppColors.ink,
-            borderRadius: AppRadius.std,
-            border: Border.all(color: AppColors.ink, width: AppStroke.hairline),
-          ),
-          child: widget.isLoading
-              ? const Center(
-                  child: SizedBox(
-                    height: 20,
-                    width: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor:
-                          AlwaysStoppedAnimation<Color>(AppColors.paper),
-                    ),
-                  ),
-                )
-              : Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    SizedBox(
-                      height: 18,
-                      width: 18,
-                      child: SvgPicture.asset(
-                        widget.ico,
-                        colorFilter: const ColorFilter.mode(
-                            AppColors.paper, BlendMode.srcIn),
-                      ),
-                    ),
-                    const SizedBox(width: AppSpace.md - 4),
-                    Text(
-                      widget.text.toUpperCase(),
-                      style: AppType.cta.copyWith(color: AppColors.paper),
-                    ),
-                  ],
-                ),
         ),
       ),
     );
