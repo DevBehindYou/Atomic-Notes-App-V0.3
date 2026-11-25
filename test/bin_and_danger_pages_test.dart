@@ -1,9 +1,7 @@
-// The Recycle Bin and Danger Zone screens on top of their cubits, with a fake store. They need
+// The Recycle Bin screen on top of its cubit, with a fake store. It needs
 // neither Hive nor the network.
 
-import 'package:atomic_notes/page/endpage/danger_zone_page.dart';
 import 'package:atomic_notes/page/endpage/recycle_bin_page.dart';
-import 'package:atomic_notes/theme/editorial.dart';
 import 'package:atomic_notes/utility/component/slide_to_confirm.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -93,55 +91,4 @@ void main() {
     });
   });
 
-  group('Danger Zone', () {
-    testWidgets('says how many notes a local wipe removes and warns about the unsynced ones', (tester) async {
-      _tall(tester);
-      final source = FakeNotesSource(notes: [
-        syncedNote('a', title: 'A'),
-        syncedNote('b', title: 'B')..touch(),
-      ]);
-      await tester.pumpWidget(MaterialApp(home: DangerZonePage(source: source)));
-
-      expect(find.text('2 notes stored on this device.'), findsOneWidget);
-
-      await tester.tap(find.widgetWithText(InkActionButton, 'WIPE LOCAL NOTES'));
-      await tester.pumpAndSettle();
-      expect(find.text('2 notes are removed from this device.'), findsOneWidget);
-      expect(
-          find.text('1 note has not been uploaded yet. It exists only on this device and '
-              'will be lost for good.'),
-          findsOneWidget);
-    });
-
-    testWidgets('the local wipe runs after the slide and reports the count', (tester) async {
-      _tall(tester);
-      final source = FakeNotesSource(notes: [syncedNote('a'), syncedNote('b')]);
-      await tester.pumpWidget(MaterialApp(home: DangerZonePage(source: source)));
-
-      await tester.tap(find.widgetWithText(InkActionButton, 'WIPE LOCAL NOTES'));
-      await tester.pumpAndSettle();
-      await tester.drag(find.byKey(SlideToConfirm.thumbKey), const Offset(600, 0));
-      await tester.pumpAndSettle();
-
-      expect(source.count, 0);
-      expect(find.textContaining('Removed 2 notes from this device'), findsOneWidget);
-      expect(find.text('0 notes stored on this device.'), findsOneWidget);
-      await tester.pumpAndSettle(const Duration(seconds: 5));
-    });
-
-    testWidgets('a cloud wipe leaves the device alone', (tester) async {
-      _tall(tester);
-      final source = FakeNotesSource(notes: [syncedNote('a')]);
-      await tester.pumpWidget(MaterialApp(home: DangerZonePage(source: source)));
-
-      await tester.tap(find.widgetWithText(InkActionButton, 'WIPE CLOUD NOTES'));
-      await tester.pumpAndSettle();
-      await tester.drag(find.byKey(SlideToConfirm.thumbKey), const Offset(600, 0));
-      await tester.pumpAndSettle();
-
-      expect(source.count, 1);
-      expect(find.text('Cloud notes wiped. The notes on this device are untouched.'), findsOneWidget);
-      await tester.pumpAndSettle(const Duration(seconds: 5));
-    });
-  });
 }
