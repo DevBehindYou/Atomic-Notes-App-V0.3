@@ -1591,13 +1591,20 @@ class NotesRepository extends ChangeNotifier with WidgetsBindingObserver impleme
         unproven = !consent.allows(now) ||
             (consent.acknowledged(now) && _activeNoteMutations > 1);
       }
+      final attempt = consent == null ? null : _SyncAttemptCollector();
       addListener(watch);
       try {
-        await syncNow();
+        if (attempt == null) {
+          await syncNow();
+        } else {
+          await _syncNow(instant: false, report: attempt);
+        }
       } finally {
         removeListener(watch);
       }
       watch();
+      // Joining an existing sync cannot establish this purge's provenance.
+      if (attempt != null && attempt.activity != SyncAttemptActivity.started) return 0;
       if (unproven || unsent()) return 0;
     }
     final held = <String, Note>{

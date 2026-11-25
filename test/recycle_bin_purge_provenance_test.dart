@@ -268,6 +268,29 @@ void main() {
       expect(box.containsKey(a.id), isTrue);
     });
 
+    test('purge cannot use acknowledgement from a sync it joined', () async {
+      final note = await pendingTombstone('Synthetic A');
+      final consent = repository.binPurgeConsent([note.id]);
+      final entered = Completer<void>();
+      final release = Completer<void>();
+      api.beforePush = () async {
+        entered.complete();
+        await release.future;
+      };
+
+      final background = repository.syncNow(instant: true);
+      await entered.future;
+      final purge = repository.deleteForever([note.id], consent: consent);
+      release.complete();
+
+      expect(await background, isTrue);
+      expect(await purge, 0);
+      final remaining = repository.byId(note.id)!;
+      expect(remaining.deleted, isTrue);
+      expect(remaining.dirty, isFalse);
+      expect(box.containsKey(note.id), isTrue);
+    });
+
     test('an acknowledgement seen while another note change runs is refused',
         () async {
       final a = await pendingTombstone('Synthetic A');
