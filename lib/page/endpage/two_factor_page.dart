@@ -780,8 +780,10 @@ class _TwoFactorPageState extends State<TwoFactorPage> {
                       onCard: true,
                       size: AtomicButtonSize.compact,
                       onPressed: () {
-                        if (_stage != _Stage.setup || !identical(_setup, setup))
+                        if (_stage != _Stage.setup ||
+                            !identical(_setup, setup)) {
                           return;
+                        }
                         _copy(setup.secret, 'Setup key copied', owner);
                       },
                     ),
